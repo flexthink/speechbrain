@@ -1,0 +1,243 @@
+# Generated 2021-06-03 from:
+# /Users/artem/Projects/speechbrain/recipes/LibriSpeech/G2P/hparams/train.yaml
+# yamllint disable
+# ################################
+# Model: LSTM (encoder) + GRU (decoder)
+# Authors: Loren Lugosch & Mirco Ravanelli 2020
+# ################################
+
+# Seed needs to be set at top of yaml, before objects with parameters are made
+seed: 1234
+__set_seed: !apply:torch.manual_seed [1234]
+
+# Data paths
+output_folder: results/RNN/1234
+data_folder: /localscratch/LibriSpeech
+save_folder: results/RNN/1234/save
+train_log: results/RNN/1234/train_log.txt
+
+input_lexicon: results/RNN/1234/save/lexicon.csv
+oov: results/RNN/1234/save/oov.csv
+wer_file: results/RNN/1234/save/wer.txt
+pretrained_path: results/RNN/1234/save
+
+
+# These three files are created from lexicon.csv.
+train_data: results/RNN/1234/save/lexicon_tr.csv
+valid_data: results/RNN/1234/save/lexicon_dev.csv
+test_data: results/RNN/1234/save/lexicon_test.csv
+skip_prep: false
+sorting: random #ascending
+
+# Neural Parameters
+N_epochs: 75
+batch_size: 1024
+lr: 0.002
+
+# Model parameters
+output_neurons: 41
+enc_dropout: 0.5
+enc_neurons: 512
+enc_num_layers: 4
+dec_dropout: 0.5
+dec_neurons: 512
+dec_att_neurons: 256
+dec_num_layers: 4
+embedding_dim: 512
+
+# Special Token information
+bos_index: 0
+eos_index: 0
+
+select_n_sentences: None
+
+phonemes: &id010
+
+
+- AA0
+- AA1
+- AA2
+- AE0
+- AE1
+- AE2
+- AH0
+- AH1
+- AH2
+- AO0
+- AO1
+- AO2
+- AW0
+- AW1
+- AW2
+- AY0
+- AY1
+- AY2
+- B
+- CH
+- D
+- DH
+- EH0
+- EH1
+- EH2
+- ER0
+- ER1
+- ER2
+- EY0
+- EY1
+- EY2
+- F
+- G
+- HH
+- IH0
+- IH1
+- IH2
+- IY0
+- IY1
+- IY2
+- JH
+- K
+- L
+- M
+- N
+- NG
+- OW0
+- OW1
+- OW2
+- OY0
+- OY1
+- OY2
+- P
+- R
+- S
+- SH
+- T
+- TH
+- UH0
+- UH1
+- UH2
+- UW0
+- UW1
+- UW2
+- V
+- W
+- Y
+- Z
+- ZH
+
+
+dataloader_opts:
+  batch_size: 1024
+
+# Models
+enc: &id001 !new:speechbrain.nnet.RNN.LSTM
+  input_shape: [!!null '', !!null '', 512]
+  bidirectional: true
+  hidden_size: 512
+  num_layers: 4
+  dropout: 0.5
+
+lin: &id005 !new:speechbrain.nnet.linear.Linear
+  input_size: 512
+  n_neurons: 41                       # 39 phonemes + 1 eos
+  bias: false
+
+encoder_emb: &id002 !new:speechbrain.nnet.embedding.Embedding
+  num_embeddings: 28    # 27 chars + 1 bos
+  embedding_dim: 512
+
+emb: &id003 !new:speechbrain.nnet.embedding.Embedding
+  num_embeddings: 41                       # 39 phonemes + 1 bos
+  embedding_dim: 512
+
+dec: &id004 !new:speechbrain.nnet.RNN.AttentionalRNNDecoder
+  enc_dim: 1024
+  input_size: 512
+  rnn_type: gru
+  attn_type: content
+  dropout: 0.5
+  hidden_size: 512
+  attn_dim: 256
+  num_layers: 4
+
+log_softmax: &id006 !new:speechbrain.nnet.activations.Softmax
+
+
+  apply_log: true
+
+modules:
+  enc: *id001
+  encoder_emb: *id002
+  emb: *id003
+  dec: *id004
+  lin: *id005
+  out: *id006
+model: &id007 !new:speechbrain.lobes.models.g2p.attnrnn.Model
+  enc: *id001
+  encoder_emb: *id002
+  emb: *id003
+  dec: *id004
+  lin: *id005
+  out: *id006
+opt_class: !name:torch.optim.Adam
+  lr: 0.002
+
+beam_searcher: !new:speechbrain.decoders.S2SRNNBeamSearcher
+  embedding: *id003
+  decoder: *id004
+  linear: *id005
+  bos_index: 0
+  eos_index: 0
+  min_decode_ratio: 0
+  max_decode_ratio: 1.35
+  beam_size: 16
+  eos_threshold: 10.0
+  using_max_attn_shift: false
+  max_attn_shift: 10
+  coverage_penalty: 5.0
+
+
+lr_annealing: &id008 !new:speechbrain.nnet.schedulers.NewBobScheduler
+  initial_value: 0.002
+  improvement_threshold: 0.0
+  annealing_factor: 0.8
+  patient: 0
+
+seq_cost: !name:speechbrain.nnet.losses.nll_loss
+  label_smoothing: 0.1
+
+seq_stats: !name:speechbrain.utils.metric_stats.MetricStats
+  metric: !name:speechbrain.nnet.losses.nll_loss
+    label_smoothing: 0.1
+    reduction: batch
+
+per_stats: !name:speechbrain.utils.metric_stats.ErrorRateStats
+
+
+epoch_counter: &id009 !new:speechbrain.utils.epoch_loop.EpochCounter
+
+  limit: 75
+
+train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
+  save_file: results/RNN/1234/train_log.txt
+
+checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
+  checkpoints_dir: results/RNN/1234/save
+  recoverables:
+    model: *id007
+    scheduler: *id008
+    counter: *id009
+encode_pipeline:
+  batch: false
+  steps:
+  - !apply:speechbrain.lobes.models.g2p.attnrnn.grapheme_pipeline
+
+decoder_pipeline:
+  batch: false
+  steps:
+  - !apply:speechbrain.lobes.models.g2p.attnrnn.phoneme_decoder_pipeline
+    phonemes: *id010
+pretrainer: !new:speechbrain.utils.parameter_transfer.Pretrainer
+  loadables:
+    model: *id007
+  paths:
+    model: results/RNN/1234/save/model.ckpt
