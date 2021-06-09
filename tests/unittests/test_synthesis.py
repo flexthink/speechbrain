@@ -18,11 +18,15 @@ class TestSynthesisModel(nn.Module):
     def forward(self, input):
         return input + 1.0
 
+
 class TestG2PModel(nn.Module):
     def forward(self, input):
         return torch.tensor(
-            [[[0.9, 0.05, 0.05], [0.1, 0.2, 0.7], [0.2, 0.6, 0.2]],
-             [[0.1, 0.1, 0.8], [0.1, 0.7, 0.2], [0.7, 0.1, 0.2]]])
+            [
+                [[0.9, 0.05, 0.05], [0.1, 0.2, 0.7], [0.2, 0.6, 0.2]],
+                [[0.1, 0.1, 0.8], [0.1, 0.7, 0.2], [0.7, 0.1, 0.2]],
+            ]
+        )
 
 
 def test_synthesizer():
@@ -64,6 +68,7 @@ def test_synthesizer():
     output = synthesizer("test")
     assert torch.isclose(output, torch.tensor([3.0, 5.0, 7.0])).all()
 
+
 def test_g2p():
     encoder = TextEncoder()
     encoder.update_from_iterable(ALPHABET)
@@ -85,8 +90,7 @@ def test_g2p():
     @provides("phonemes")
     def decode_g2p(model_output):
         indices = model_output.argmax(dim=-1)
-        return [
-            [phonemes[index] for index in batch] for batch in indices]
+        return [[phonemes[index] for index in batch] for batch in indices]
 
     test_hparams = {
         "model": TestG2PModel(),
@@ -103,9 +107,5 @@ def test_g2p():
     g2p = GraphemeToPhoneme(hparams=test_hparams)
     assert g2p.phonemes == ["EY", "BEE", "SEE"]
     result = g2p(["ACB", "CBA"])
-    ref_phonemes = [
-        ["EY", "SEE", "BEE"],
-        ["SEE", "BEE", "EY"]]
+    ref_phonemes = [["EY", "SEE", "BEE"], ["SEE", "BEE", "EY"]]
     assert ref_phonemes == result
-
-
