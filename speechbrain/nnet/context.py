@@ -183,10 +183,12 @@ def context(name=None):
             raw_filter_items=raw_filter_items,
             raw_child_filter_items=raw_child_filter_items)
         _ctx.stack.append(context)
-    yield _dummy if empty else _ctx.stack[-1]
-    if can_stack:
-        _ctx.stack.pop()
-        _ctx.stack[-1].child(context)
+    try:
+        yield _dummy if empty else _ctx.stack[-1]
+    finally:
+        if can_stack:
+            _ctx.stack.pop()
+            _ctx.stack[-1].child(context)
 
 
 @torch.jit.ignore
@@ -202,6 +204,8 @@ def use_context(items=None):
 
     context = Context(items=items)
     _ctx.stack.append(context)
-    yield context
-    _ctx.stack[:] = []
+    try:
+        yield context
+    finally:
+        _ctx.stack[:] = []
 
