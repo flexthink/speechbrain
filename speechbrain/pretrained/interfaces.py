@@ -1050,6 +1050,8 @@ class EncodeDecodePipelineMixin:
             batch=self.batch_inputs,
         )
         model_input = self._collate(model_input)
+        if hasattr(model_input, "to"):
+            model_input = model_input.to(self.device)
         return self.to_dict(model_input)
 
     def decode_output(self, output):
@@ -1179,6 +1181,7 @@ class GraphemeToPhoneme(Pretrained, EncodeDecodePipelineMixin):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.create_pipelines()
+        self.load_dependencies()
 
     @property
     def phonemes(self):
@@ -1215,12 +1218,19 @@ class GraphemeToPhoneme(Pretrained, EncodeDecodePipelineMixin):
             text = [text]
 
         model_inputs = self.encode_input({"txt": text})
-        model_outputs = self.hparams.model(**model_inputs)
+        model_outputs = self.modules.model(**model_inputs)
         decoded_output = self.decode_output(model_outputs)
         phonemes = decoded_output["phonemes"]
         if single:
             phonemes = phonemes[0]
         return phonemes
+
+    #TODO: Genericize this
+    def load_dependencies(self):
+        deps_pretrainer = getattr(self.hparams, "deps_pretrainer", None)
+        if deps_pretrainer:
+            deps_pretrainer.collect_files()
+            deps_pretrainer.load_collected(device=self.device)
 
     def __call__(self, text):
         """
