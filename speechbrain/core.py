@@ -35,6 +35,7 @@ from speechbrain.dataio.dataloader import LoopedLoader
 from speechbrain.dataio.dataloader import SaveableDataLoader
 from speechbrain.dataio.sampler import DistributedSamplerWrapper
 from speechbrain.dataio.sampler import ReproducibleRandomSampler
+from speechbrain.nnet.context import data_parallel_with_context
 
 logger = logging.getLogger(__name__)
 DEFAULT_LOG_CONFIG = os.path.dirname(os.path.abspath(__file__))
@@ -373,6 +374,8 @@ class Brain:
             Number of devices to run on.
         distributed_backend (str)
             One of ``ddp_nccl``, ``ddp_gloo``, ``ddp_mpi``, ``data_parallel``.
+        distributed_context (bool)
+            Whether or not to enable the use of context in a distributed setting
         device (str)
             The location for performing computations.
         auto_mix_prec (bool)
@@ -426,6 +429,7 @@ class Brain:
             "data_parallel_backend": False,
             "distributed_launch": False,
             "distributed_backend": "nccl",
+            "dirtributed_context": False,
             "find_unused_parameters": False,
             "jit_module_keys": None,
             "auto_mix_prec": False,
@@ -1115,18 +1119,29 @@ class Brain:
             for name, module in self.modules.items():
                 if any(p.requires_grad for p in module.parameters()):
                     module = SyncBatchNorm.convert_sync_batchnorm(module)
-                    module = DDP(
+                    module = self._wrap_distributed_with(
+                        DDP,
                         module,
                         device_ids=[self.device],
-                        find_unused_parameters=self.find_unused_parameters,
-                    )
+                        find_unused_parameters=self.find_unused_parameters)
                     self.modules[name] = module
         else:
             # data_parallel_backend
             for name, module in self.modules.items():
                 if any(p.requires_grad for p in module.parameters()):
-                    module = DP(module)
+                    module = self._wrap_distributed_with(DP, module)
                     self.modules[name] = module
+
+    def _wrap_distributed_with(self, dp_module, module, **kwargs):
+        if self.distributed_context:
+            result = data_parallel_with_context(
+                dp_module=dp_module,
+                module=module,
+                **kwargs
+            )
+        else:
+            result = dp_module(module, **kwargs)
+        return result
 
     def evaluate(
         self,
