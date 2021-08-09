@@ -1181,7 +1181,6 @@ class GraphemeToPhoneme(Pretrained, EncodeDecodePipelineMixin):
         self.create_pipelines()
         self.load_dependencies()
 
-
     @property
     def phonemes(self):
         """
@@ -1224,7 +1223,7 @@ class GraphemeToPhoneme(Pretrained, EncodeDecodePipelineMixin):
             phonemes = phonemes[0]
         return phonemes
 
-    #TODO: Genericize this
+    # TODO: Genericize this
     def load_dependencies(self):
         deps_pretrainer = getattr(self.hparams, "deps_pretrainer", None)
         if deps_pretrainer:
