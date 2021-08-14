@@ -8,7 +8,6 @@ Authors
 
 import csv
 import os
-import shutil
 import tempfile
 from speechbrain.dataio.dataset import DynamicItemDataset
 
@@ -152,16 +151,6 @@ class LJ:
         return sample_record.keys()
 
 
-def _get_fake_data():
-    """
-    Creates a LJ dataset from the included
-    fake data for unit tests
-    """
-    module_path = os.path.dirname(__file__)
-    data_path = os.path.join(module_path, "mockdata", "lj")
-    return LJ(data_path)
-
-
 def load(file_path):
     """
     A convenience function to load an LJ dataset
@@ -179,25 +168,3 @@ def load(file_path):
 
     return LJ(file_path).to_dataset()
 
-
-def test_to_csv():
-    """
-    Unit test for CSV creation
-    """
-    temp_dir = tempfile.mkdtemp()
-    try:
-        file_name = os.path.join(temp_dir, "test.csv")
-        lj = _get_fake_data()
-        lj.to_csv(file_name)
-        with open(file_name) as csv_file:
-            reader = csv.DictReader(csv_file)
-            data = {row["ID"]: row for row in reader}
-            item = data["LJ050-0159"]
-            assert item["wav"].endswith("LJ050-0159.wav")
-            assert item["label"].startswith("The Commission recommends")
-            item = data["LJ050-0160"]
-            assert item["wav"].endswith("LJ050-0160.wav")
-            assert item["label"].startswith("The Commission further")
-    finally:
-        if os.path.isdir(temp_dir):
-            shutil.rmtree(temp_dir)

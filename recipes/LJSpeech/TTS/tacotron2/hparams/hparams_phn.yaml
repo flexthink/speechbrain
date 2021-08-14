@@ -21,13 +21,13 @@ keep_checkpoint_interval: 20
 # Data files and pre-processing #
 #################################
 data_folder: ./ #data_folder: !PLACEHOLDER # e.g, /localscratch/fluent_speech_commands_dataset
-data_folder_rirs: !ref <data_folder>
-train_data_path: ../dataset_utils/mockdata/lj
+data_cache_folder: null
+wav_folder: !ref <data_folder>
 train_filter: null
-valid_data_path: ../dataset_utils/mockdata/lj
 valid_filter: null
-preprocessing_mode: nvidia
 text_cleaners: ['english_cleaners']
+preprocessing_mode: speechbrain
+
 
 ################################
 # Audio Parameters             #
@@ -113,6 +113,51 @@ waveglow_model_file: !ref <waveglow_model_path>/waveglow_256channels.pt
 waveglow_model_key: model
 
 
+# Phonemes
+input_tokens:
+  - AA
+  - AE
+  - AH
+  - AO
+  - AW
+  - AY
+  - B
+  - CH
+  - D
+  - DH
+  - EH
+  - ER
+  - EY
+  - F
+  - G
+  - HH
+  - IH
+  - IY
+  - JH
+  - K
+  - L
+  - M
+  - N
+  - NG
+  - OW
+  - OY
+  - P
+  - R
+  - S
+  - SH
+  - T
+  - TH
+  - UH
+  - UW
+  - V
+  - W
+  - Y
+  - Z
+  - ZH
+  - " "
+
+input_encoder: !new:speechbrain.dataio.encoder.TextEncoder
+
 #model
 model: !new:speechbrain.lobes.models.synthesis.tacotron2.Tacotron2
     mask_padding: !ref <mask_padding>
@@ -189,16 +234,21 @@ checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
         counter: !ref <epoch_counter>
         scheduler: !ref <lr_annealing>
 
-
 datasets:
     train:
-        path: !ref <train_data_path>
-        loader: !name:dataset_utils.lj.load
-        filter: !ref <train_filter>
+        path: !ref <data_folder>
+        loader: !name:speechbrain.dataio.datasets.huggingface.load
+          mappings:
+            label: phn_raw
+          split: train
+          cache_dir: !ref <data_cache_folder>
     valid:
-        path: !ref <valid_data_path>
-        loader: !name:dataset_utils.lj.load
-        filter: !ref <valid_filter>
+        path: !ref <data_folder>
+        loader: !name:speechbrain.dataio.datasets.huggingface.load
+          mappings:
+            label: phn_raw
+          split: valid
+          cache_dir: !ref <data_cache_folder>
 
 model_output_keys:
     - mel
@@ -242,8 +292,7 @@ waveglow: !new:speechbrain.pretrained.interfaces.VocoderWrapper
 
         adapter: !name:speechbrain.lobes.models.synthesis.external.waveglow.adapter
         sigma: !ref <waveglow_sigma>
-    run_opts:
-        device: !ref <model.device>
+
 
 decode_pipeline:
     steps:
@@ -252,5 +301,6 @@ decode_pipeline:
 
 external:
     waveglow: !ref <waveglow>
+
 
 infer: !name:speechbrain.lobes.models.synthesis.tacotron2.model.infer

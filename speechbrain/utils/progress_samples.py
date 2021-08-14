@@ -11,35 +11,13 @@ import torchvision
 from speechbrain.utils.checkpoints import torch_save
 
 
-class PretrainedModelMixin:
-    """
-    A brain mixin that provides a function to save models and other
-    artefacts for pretrained models
-    """
-
-    def save_for_pretrained(self):
-        """
-        Saves the necessary files for the pretrained model
-        """
-        pretrainer = self.hparams.pretrainer
-        for key, value in pretrainer.loadables.items():
-            path = pretrainer.paths[key]
-            torch_save(value, path)
-
 class ProgressSampleImageMixin:
     _FORMATS = {
-        'raw': {
-            'extension': 'pth',
-            'saver': torch.save,
-        },
-        'image': {
-            'extension': 'png',
-            'saver': torchvision.utils.save_image
-        }
+        "raw": {"extension": "pth", "saver": torch.save,},
+        "image": {"extension": "png", "saver": torchvision.utils.save_image},
     }
-    DEFAULT_FORMAT = 'image'
+    DEFAULT_FORMAT = "image"
     PROGRESS_SAMPLE_FORMATS = {}
-
 
     """
     A brain mixin that provides a function to save progress sample
@@ -62,9 +40,12 @@ class ProgressSampleImageMixin:
 
     def get_batch_sample(self, value):
         if isinstance(value, dict):
-            result = {key: self.get_batch_sample(item_value) for key, item_value in value.items()}
+            result = {
+                key: self.get_batch_sample(item_value)
+                for key, item_value in value.items()
+            }
         elif isinstance(value, (torch.Tensor, list)):
-            result = value[:self.hparams.progress_batch_sample_size]
+            result = value[: self.hparams.progress_batch_sample_size]
         else:
             result = value
         return result
@@ -99,11 +80,11 @@ class ProgressSampleImageMixin:
         )
         if not os.path.exists(target_path):
             os.makedirs(target_path)
-        sample_formats = getattr(self, 'PROGRESS_SAMPLE_FORMATS', {})
+        sample_formats = getattr(self, "PROGRESS_SAMPLE_FORMATS", {})
         format = self._FORMATS[sample_formats.get(key, self.DEFAULT_FORMAT)]
         file_name = f"{key}.{format['extension']}"
         effective_file_name = os.path.join(target_path, file_name)
-        format['saver'](data, effective_file_name)
+        format["saver"](data, effective_file_name)
 
 
 def _detach(value):
@@ -131,7 +112,7 @@ def scalarize(value):
     result: dict
         a result dictionary
     """
-    if hasattr(value, '_asdict'):
+    if hasattr(value, "_asdict"):
         value_dict = value._asdict()
     else:
         value_dict = value
