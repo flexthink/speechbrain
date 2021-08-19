@@ -1190,14 +1190,12 @@ class GraphemeToPhoneme(Pretrained, EncodeDecodePipelineMixin):
 
     @property
     def language(self):
-        """
-        Returns the language for which this model is available
+        """Returns the language for which this model is available
         """
         return self.hparams.language
 
     def g2p(self, text):
-        """
-        Performs the Grapheme-to-Phoneme conversion
+        """Performs the Grapheme-to-Phoneme conversion
 
         Arguments
         ---------
@@ -1223,7 +1221,6 @@ class GraphemeToPhoneme(Pretrained, EncodeDecodePipelineMixin):
             phonemes = phonemes[0]
         return phonemes
 
-    # TODO: Genericize this
     def load_dependencies(self):
         deps_pretrainer = getattr(self.hparams, "deps_pretrainer", None)
         if deps_pretrainer:
@@ -1235,3 +1232,5 @@ class GraphemeToPhoneme(Pretrained, EncodeDecodePipelineMixin):
         Calls g2p
         """
         return self.g2p(text)
+
+
