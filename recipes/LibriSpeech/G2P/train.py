@@ -31,6 +31,7 @@ from hyperpyyaml import load_hyperpyyaml
 from speechbrain.utils.distributed import run_on_main
 from speechbrain.pretrained.training import PretrainedModelMixin
 from speechbrain.lobes.models.g2p.attnrnn.dataio import (
+    enable_eos_bos,
     grapheme_pipeline,
     phoneme_pipeline,
     tokenizer_encode_pipeline,
@@ -69,6 +70,7 @@ class G2PBrain(sb.Brain, PretrainedModelMixin):
         self.mode = TrainMode(train_step.get("mode", TrainMode.NORMAL))
         self.last_attn = None
         self.use_word_emb = getattr(self.hparams, "use_word_emb", False)
+        self.phn_tokenize = getattr(self.hparams, "phn_tokenize", False)
 
     def compute_forward(self, batch, stage):
         """Forward computations from the char batches to the output probabilities."""
@@ -125,6 +127,13 @@ class G2PBrain(sb.Brain, PretrainedModelMixin):
             loss = loss_seq
 
         if self.mode == TrainMode.HOMOGRAPH:
+            # When tokenization is use, the length of the words
+            # in the original phoneme space is not equal to the tokenized
+            # words but the raw data only supplies non-tokenized information
+            phns_base, phn_lens_base = (
+                batch.phn_raw_encoded if self.phn_tokenize
+                else (None, None)
+            )
             homograph_loss = (
                 self.hparams.homograph_loss_weight
                 * self.hparams.homograph_cost(
@@ -133,6 +142,8 @@ class G2PBrain(sb.Brain, PretrainedModelMixin):
                     p_seq=predictions.p_seq,
                     subsequence_phn_start=batch.homograph_phn_start,
                     subsequence_phn_end=batch.homograph_phn_end,
+                    phns_base=phns_base,
+                    phn_lens_base=phn_lens_base
                 )
             )
             loss += homograph_loss
@@ -155,6 +166,10 @@ class G2PBrain(sb.Brain, PretrainedModelMixin):
 
     def _add_homograph_metrics(self, predictions, batch):
         phns, phn_lens = batch.phn_encoded
+        phns_base, phn_base_lens = (
+            batch.phn_raw_encoded
+            if self.phn_tokenize
+            else (None, None))
         ids = batch.id
         (
             p_seq_homograph,
@@ -166,9 +181,11 @@ class G2PBrain(sb.Brain, PretrainedModelMixin):
             predictions.p_seq,
             subsequence_phn_start=batch.homograph_phn_start,
             subsequence_phn_end=batch.homograph_phn_end,
+            phns_base=phns_base,
+            phn_base_lens=phn_base_lens
         )
         hyps_homograph = self.hparams.homograph_extractor.extract_hyps(
-            phns, predictions.hyps, batch.homograph_phn_start
+            phns_base, predictions.hyps, batch.homograph_phn_start
         )
         self.seq_metrics_homograph.append(
             ids, p_seq_homograph, phns_homograph, phn_lens_homograph
@@ -245,9 +262,17 @@ class G2PBrain(sb.Brain, PretrainedModelMixin):
             self.modules.word_emb = self.hparams.word_emb().to(self.device)
 
     def _set_word_separator(self):
-        word_separator_idx = self.phoneme_encoder.lab2ind[" "]
+        if self.hparams.phn_tokenize:
+            word_separator_idx = self.hparams.token_space_index
+            word_separator_base_idx = self.phoneme_encoder.lab2ind[" "]
+        else:
+            word_separator_base_idx = word_separator_idx = (
+                self.phoneme_encoder.lab2ind[" "])
+
         self.hparams.homograph_cost.word_separator = word_separator_idx
+        self.hparams.homograph_cost.word_separator_base = word_separator_base_idx
         self.hparams.homograph_extractor.word_separator = word_separator_idx
+        self.hparams.homograph_extractor.word_separator_base = word_separator_base_idx
 
     def on_stage_end(self, stage, stage_loss, epoch):
         """Gets called at the end of a epoch."""
@@ -489,6 +514,9 @@ def dataio_prep(hparams, train_step=None):
         raise NotImplementedError(
             "sorting must be random, ascending or descending"
         )
+    is_homograph = (
+        TrainMode(train_step.get("mode", TrainMode.NORMAL))
+        == TrainMode.HOMOGRAPH)
 
     train_data = sort_data(train_data, hparams)
 
@@ -517,6 +545,11 @@ def dataio_prep(hparams, train_step=None):
             space_separated=hparams["phonemes_space_separated"],
             token_space_index=hparams["token_space_index"],
         )
+        enable_eos_bos(
+            tokens=hparams["phonemes"],
+            encoder=phoneme_encoder,
+            bos_index=hparams["bos_index"],
+            eos_index=hparams["eos_index"])
     else:
         grapheme_pipeline_item = grapheme_pipeline(
             graphemes=hparams["graphemes"],
@@ -538,6 +571,11 @@ def dataio_prep(hparams, train_step=None):
             hparams["grapheme_tokenizer"]()
         if "phoneme_tokenizer" in hparams:
             hparams["phoneme_tokenizer"]()
+        enable_eos_bos(
+            tokens=hparams["phonemes"],
+            encoder=phoneme_encoder,
+            bos_index=hparams["bos_index"],
+            eos_index=hparams["eos_index"])
     else:
         phoneme_pipeline_item = phoneme_pipeline(
             phoneme_encoder=phoneme_encoder,
@@ -556,6 +594,17 @@ def dataio_prep(hparams, train_step=None):
         phoneme_pipeline_item,
         bos_eos_pipeline_item,
     ]
+
+    if hparams.get("phn_tokenize") and is_homograph:
+        # A raw tokenizer is needed to determine the correct
+        # word boundaries from data
+        phoneme_raw_pipeline = phoneme_pipeline(
+            phoneme_encoder=phoneme_encoder,
+            space_separated=hparams["phonemes_space_separated"],
+            provides_prefix="phn_raw"
+        )
+        dynamic_items.append(phoneme_raw_pipeline)
+
     for dynamic_item in dynamic_items:
         sb.dataio.dataset.add_dynamic_item(datasets, dynamic_item)
 
@@ -567,15 +616,14 @@ def dataio_prep(hparams, train_step=None):
         "phn_encoded_eos",
         "phn_encoded_bos",
     ]
-    if (
-        TrainMode(train_step.get("mode", TrainMode.NORMAL))
-        == TrainMode.HOMOGRAPH
-    ):
+    if is_homograph:
         output_keys += [
             "homograph_wordid",
             "homograph_phn_start",
             "homograph_phn_end",
+            "phn_raw_encoded"
         ]
+
     if hparams.get("use_word_emb", False):
         output_keys.append("char")
     sb.dataio.dataset.set_output_keys(

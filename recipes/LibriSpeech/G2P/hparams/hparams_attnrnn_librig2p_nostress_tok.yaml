@@ -78,7 +78,6 @@ save_for_pretrained: True
 
 # Model parameters
 output_neurons: !ref <phn_token_output> + 1
-#output_neurons: 1000
 enc_dropout: 0.5
 enc_neurons: 512
 enc_num_layers: 4
@@ -93,14 +92,13 @@ bos_index: 0
 eos_index: 1
 blank_index: 2
 unk_index: 2
-token_space_index: 512
-#token_space_index: 999
+token_space_index: !ref <phn_token_output>
 
 # Language Model
 lm_emb_dim: 256 # dimension of the embeddings
 lm_rnn_size: 512 # dimension of hidden layers
 lm_layers: 2 # number of hidden layers
-lm_output_neurons: !ref <phonemes_count>
+lm_output_neurons: !ref <output_neurons>
 
 # Beam Searcher
 use_language_model: False
@@ -506,6 +504,19 @@ train_steps:
       dataloader_opts:
           batch_size: !ref <sentence_batch_size>
 
+    - name: homograph
+      train_data: !ref <homograph_train_data>
+      valid_data: !ref <homograph_valid_data>
+      test_data: !ref <homograph_test_data>
+      epoch_counter: !ref <homograph_epoch_counter>
+      ctc_epochs: !ref <homograph_ctc_epochs>
+      mode: homograph
+      balance: !ref <homograph_balance>
+      balance_on: homograph_wordid
+      wer_file: !ref <save_folder>/wer_homograph.txt
+      homograph_stats_file: !ref <save_folder>/homograph_stats.txt
+      dataloader_opts:
+          batch_size: !ref <homograph_batch_size>
 
 deps_pretrainer: !new:speechbrain.utils.parameter_transfer.Pretrainer
     collect_in: !ref <save_folder>
