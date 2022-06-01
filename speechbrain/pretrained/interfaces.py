@@ -8,7 +8,6 @@ Authors:
  * Titouan Parcollet 2021
  * Abdel Heba 2021
 """
-import logging
 import hashlib
 import sys
 import speechbrain
@@ -22,14 +21,12 @@ from speechbrain.pretrained.fetching import fetch
 from speechbrain.dataio.preprocess import AudioNormalizer
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
-from speechbrain.utils.data_utils import split_path
-from speechbrain.utils.distributed import run_on_main
 from speechbrain.dataio.batch import PaddedBatch, PaddedData
 from speechbrain.utils.data_pipeline import DataPipeline
+from speechbrain.utils.data_utils import split_path
+from speechbrain.utils.distributed import run_on_main
 from speechbrain.utils.callchains import lengths_arg_exists
 from speechbrain.utils.superpowers import import_from_path
-
-logger = logging.getLogger(__name__)
 
 
 def foreign_class(
@@ -384,7 +381,7 @@ class EndToEndSLU(Pretrained):
     ...     source="speechbrain/slu-timers-and-such-direct-librispeech-asr",
     ...     savedir=tmpdir,
     ... )
-    >>> slu_model.decode_file("samples/audio_samples/example6.wav")
+    >>> slu_model.decode_file("tests/samples/single-mic/example6.wav")
     "{'intent': 'SimpleMath', 'slots': {'number1': 37.67, 'number2': 75.7, 'op': ' minus '}}"
     """
 
@@ -500,7 +497,7 @@ class EncoderDecoderASR(Pretrained):
     ...     source="speechbrain/asr-crdnn-rnnlm-librispeech",
     ...     savedir=tmpdir,
     ... )
-    >>> asr_model.transcribe_file("samples/audio_samples/example2.flac")
+    >>> asr_model.transcribe_file("tests/samples/single-mic/example2.flac")
     "MY FATHER HAS REVEALED THE CULPRIT'S NAME"
     """
 
@@ -748,7 +745,7 @@ class EncoderClassifier(Pretrained):
     ... )
 
     >>> # Compute embeddings
-    >>> signal, fs = torchaudio.load("samples/audio_samples/example1.wav")
+    >>> signal, fs = torchaudio.load("tests/samples/single-mic/example1.wav")
     >>> embeddings =  classifier.encode_batch(signal)
 
     >>> # Classification
@@ -901,8 +898,8 @@ class SpeakerRecognition(EncoderClassifier):
     ... )
 
     >>> # Perform verification
-    >>> signal, fs = torchaudio.load("samples/audio_samples/example1.wav")
-    >>> signal2, fs = torchaudio.load("samples/audio_samples/example2.flac")
+    >>> signal, fs = torchaudio.load("tests/samples/single-mic/example1.wav")
+    >>> signal2, fs = torchaudio.load("tests/samples/single-mic/example2.flac")
     >>> score, prediction = verification.verify_batch(signal, signal2)
     """
 
@@ -999,7 +996,7 @@ class VAD(Pretrained):
     ... )
 
     >>> # Perform VAD
-    >>> boundaries = VAD.get_speech_segments("samples/audio_samples/example1.wav")
+    >>> boundaries = VAD.get_speech_segments("tests/samples/single-mic/example1.wav")
     """
 
     HPARAMS_NEEDED = ["sample_rate", "time_resolution", "device"]
@@ -2011,103 +2008,14 @@ class SepformerSeparation(Pretrained):
             batch = tf(batch)
 
         est_sources = self.separate_batch(batch)
-        est_sources = est_sources / est_sources.max(dim=1, keepdim=True)[0]
+        est_sources = (
+            est_sources / est_sources.abs().max(dim=1, keepdim=True)[0]
+        )
         return est_sources
 
     def forward(self, mix):
         """Runs separation on the input mix"""
         return self.separate_batch(mix)
-
-
-class SpectralMaskEnhancement(Pretrained):
-    """A ready-to-use model for speech enhancement.
-
-    Arguments
-    ---------
-    See ``Pretrained``.
-
-    Example
-    -------
-    >>> import torchaudio
-    >>> from speechbrain.pretrained import SpectralMaskEnhancement
-    >>> # Model is downloaded from the speechbrain HuggingFace repo
-    >>> tmpdir = getfixture("tmpdir")
-    >>> enhancer = SpectralMaskEnhancement.from_hparams(
-    ...     source="speechbrain/mtl-mimic-voicebank",
-    ...     savedir=tmpdir,
-    ... )
-    >>> noisy, fs = torchaudio.load("samples/audio_samples/example_noisy.wav")
-    >>> # Channel dimension is interpreted as batch dimension here
-    >>> enhanced = enhancer.enhance_batch(noisy)
-    """
-
-    HPARAMS_NEEDED = ["compute_stft", "spectral_magnitude", "resynth"]
-    MODULES_NEEDED = ["enhance_model"]
-
-    def compute_features(self, wavs):
-        """Compute the log spectral magnitude features for masking.
-
-        Arguments
-        ---------
-        wavs : torch.tensor
-            A batch of waveforms to convert to log spectral mags.
-        """
-        feats = self.hparams.compute_stft(wavs)
-        feats = self.hparams.spectral_magnitude(feats)
-        return torch.log1p(feats)
-
-    def enhance_batch(self, noisy, lengths=None):
-        """Enhance a batch of noisy waveforms.
-
-        Arguments
-        ---------
-        noisy : torch.tensor
-            A batch of waveforms to perform enhancement on.
-        lengths : torch.tensor
-            The lengths of the waveforms if the enhancement model handles them.
-
-        Returns
-        -------
-        torch.tensor
-            A batch of enhanced waveforms of the same shape as input.
-        """
-        noisy = noisy.to(self.device)
-        noisy_features = self.compute_features(noisy)
-
-        # Perform masking-based enhancement, multiplying output with input.
-        if lengths is not None:
-            mask = self.mods.enhance_model(noisy_features, lengths=lengths)
-        else:
-            mask = self.mods.enhance_model(noisy_features)
-        enhanced = torch.mul(mask, noisy_features)
-
-        # Return resynthesized waveforms
-        return self.hparams.resynth(torch.expm1(enhanced), noisy)
-
-    def enhance_file(self, filename, output_filename=None):
-        """Enhance a wav file.
-
-        Arguments
-        ---------
-        filename : str
-            Location on disk to load file for enhancement.
-        output_filename : str
-            If provided, writes enhanced data to this file.
-        """
-        noisy = self.load_audio(filename)
-        noisy = noisy.to(self.device)
-
-        # Fake a batch:
-        batch = noisy.unsqueeze(0)
-        if lengths_arg_exists(self.enhance_batch):
-            enhanced = self.enhance_batch(batch, lengths=torch.tensor([1.0]))
-        else:
-            enhanced = self.enhance_batch(batch)
-
-        if output_filename is not None:
-            torchaudio.save(output_filename, enhanced, channels_first=False)
-
-        return enhanced.squeeze(0)
 
 
 class EncodeDecodePipelineMixin:
@@ -2408,6 +2316,97 @@ class GraphemeToPhoneme(Pretrained, EncodeDecodePipelineMixin):
         """
         return self.g2p(text)
 
+
+class SpectralMaskEnhancement(Pretrained):
+    """A ready-to-use model for speech enhancement.
+
+    Arguments
+    ---------
+    See ``Pretrained``.
+
+    Example
+    -------
+    >>> import torchaudio
+    >>> from speechbrain.pretrained import SpectralMaskEnhancement
+    >>> # Model is downloaded from the speechbrain HuggingFace repo
+    >>> tmpdir = getfixture("tmpdir")
+    >>> enhancer = SpectralMaskEnhancement.from_hparams(
+    ...     source="speechbrain/mtl-mimic-voicebank",
+    ...     savedir=tmpdir,
+    ... )
+    >>> noisy, fs = torchaudio.load("tests/samples/single-mic/example1.wav")
+    >>> # Channel dimension is interpreted as batch dimension here
+    >>> enhanced = enhancer.enhance_batch(noisy)
+    """
+
+    HPARAMS_NEEDED = ["compute_stft", "spectral_magnitude", "resynth"]
+    MODULES_NEEDED = ["enhance_model"]
+
+    def compute_features(self, wavs):
+        """Compute the log spectral magnitude features for masking.
+
+        Arguments
+        ---------
+        wavs : torch.tensor
+            A batch of waveforms to convert to log spectral mags.
+        """
+        feats = self.hparams.compute_stft(wavs)
+        feats = self.hparams.spectral_magnitude(feats)
+        return torch.log1p(feats)
+
+    def enhance_batch(self, noisy, lengths=None):
+        """Enhance a batch of noisy waveforms.
+
+        Arguments
+        ---------
+        noisy : torch.tensor
+            A batch of waveforms to perform enhancement on.
+        lengths : torch.tensor
+            The lengths of the waveforms if the enhancement model handles them.
+
+        Returns
+        -------
+        torch.tensor
+            A batch of enhanced waveforms of the same shape as input.
+        """
+        noisy = noisy.to(self.device)
+        noisy_features = self.compute_features(noisy)
+
+        # Perform masking-based enhancement, multiplying output with input.
+        if lengths is not None:
+            mask = self.mods.enhance_model(noisy_features, lengths=lengths)
+        else:
+            mask = self.mods.enhance_model(noisy_features)
+        enhanced = torch.mul(mask, noisy_features)
+
+        # Return resynthesized waveforms
+        return self.hparams.resynth(torch.expm1(enhanced), noisy)
+
+    def enhance_file(self, filename, output_filename=None):
+        """Enhance a wav file.
+
+        Arguments
+        ---------
+        filename : str
+            Location on disk to load file for enhancement.
+        output_filename : str
+            If provided, writes enhanced data to this file.
+        """
+        noisy = self.load_audio(filename)
+        noisy = noisy.to(self.device)
+
+        # Fake a batch:
+        batch = noisy.unsqueeze(0)
+        if lengths_arg_exists(self.enhance_batch):
+            enhanced = self.enhance_batch(batch, lengths=torch.tensor([1.0]))
+        else:
+            enhanced = self.enhance_batch(batch)
+
+        if output_filename is not None:
+            torchaudio.save(output_filename, enhanced, channels_first=False)
+
+        return enhanced.squeeze(0)
+
     def forward(self, noisy, lengths=None):
         """Runs enhancement on the noisy input"""
         return self.separate_batch(noisy, lengths)
@@ -2505,7 +2504,7 @@ class Tacotron2(Pretrained):
 
     Example
     -------
-    >>> tacotron2 = Tacotron2.from_hparams(source="speechbrain/TTS_Tacotron2", savedir=tmpdir)
+    >>> tacotron2 = Tacotron2.from_hparams(source="speechbrain/TTS_Tacotron2", savedir="tmpdir")
     >>> mel_output, mel_length, alignment = tacotron2.encode_text("Mary had a little lamb")
     >>> items = [
     ...   "A quick brown fox jumped over the lazy dog",
@@ -2513,6 +2512,14 @@ class Tacotron2(Pretrained):
     ...   "Never odd or even"
     ... ]
     >>> mel_outputs, mel_lengths, alignments = tacotron2.encode_batch(items)
+
+    >>> # One can combine the TTS model with a vocoder (that generates the final waveform)
+    >>> # Intialize the Vocoder (HiFIGAN)
+    >>> hifi_gan = HIFIGAN.from_hparams(source="speechbrain/Vocoder_HiFIGAN", savedir="tmpdir_vocoder")
+    >>> # Running the TTS
+    >>> mel_output, mel_length, alignment = tacotron2.encode_text("Mary had a little lamb")
+    >>> # Running Vocoder (spectrogram-to-waveform)
+    >>> waveforms = hifi_gan.decode_batch(mel_output)
     """
 
     def __init__(self, *args, **kwargs):
@@ -2544,7 +2551,11 @@ class Tacotron2(Pretrained):
         """
         with torch.no_grad():
             inputs = [
-                {"text_sequences": torch.tensor(self.text_to_seq(item)[0])}
+                {
+                    "text_sequences": torch.tensor(
+                        self.text_to_seq(item)[0], device=self.device
+                    )
+                }
                 for item in texts
             ]
             inputs = speechbrain.dataio.batch.PaddedBatch(inputs)
@@ -2553,7 +2564,7 @@ class Tacotron2(Pretrained):
             assert lens == sorted(
                 lens, reverse=True
             ), "ipnut lengths must be sorted in decreasing order"
-            input_lengths = torch.tensor(lens)
+            input_lengths = torch.tensor(lens, device=self.device)
 
             mel_outputs_postnet, mel_lengths, alignments = self.infer(
                 inputs.text_sequences.data, input_lengths
@@ -2581,14 +2592,23 @@ class HIFIGAN(Pretrained):
 
     Example
     -------
-    >>> hifi_gan = HIFIGAN.from_hparams('path/to/model')
-    >>> mel_specs = torch.rand(2, 80, 35)
+    >>> hifi_gan = HIFIGAN.from_hparams(source="speechbrain/Vocoder_HiFIGAN", savedir="tmpdir_vocoder")
+    >>> mel_specs = torch.rand(2, 80,298)
     >>> waveforms = hifi_gan.decode_batch(mel_specs)
+
+    >>> # You can use the vocoder coupled with a TTS system
+    >>>	# Intialize TTS (tacotron2)
+    >>>	tacotron2 = Tacotron2.from_hparams(source="speechbrain/TTS_Tacotron2", savedir="tmpdir_tts")
+    >>>	# Running the TTS
+    >>>	mel_output, mel_length, alignment = tacotron2.encode_text("Mary had a little lamb")
+    >>>	# Running Vocoder (spectrogram-to-waveform)
+    >>>	waveforms = hifi_gan.decode_batch(mel_output)
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.infer = self.hparams.generator.inference
+        self.first_call = True
 
     def decode_batch(self, spectrogram):
         """Computes waveforms from a batch of mel-spectrograms
@@ -2604,8 +2624,12 @@ class HIFIGAN(Pretrained):
             Batch of mel-waveforms [batch, 1, time]
 
         """
+        # Prepare for inference by removing the weight norm
+        if self.first_call:
+            self.hparams.generator.remove_weight_norm()
+            self.first_call = False
         with torch.no_grad():
-            waveform = self.infer(spectrogram)
+            waveform = self.infer(spectrogram.to(self.device))
         return waveform
 
     def decode_spectrogram(self, spectrogram):
@@ -2626,8 +2650,11 @@ class HIFIGAN(Pretrained):
         >>> sample_rate = 22050
         >>> torchaudio.save("test.wav", waveform, sample_rate)
         """
+        if self.first_call:
+            self.hparams.generator.remove_weight_norm()
+            self.first_call = False
         with torch.no_grad():
-            waveform = self.infer(spectrogram.unsqueeze(0))
+            waveform = self.infer(spectrogram.unsqueeze(0).to(self.device))
         return waveform.squeeze(0)
 
     def forward(self, spectrogram):

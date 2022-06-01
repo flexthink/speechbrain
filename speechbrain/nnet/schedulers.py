@@ -744,12 +744,14 @@ class CyclicLRScheduler:
 class IntervalScheduler:
     """A simple scheduler implementation that sets the learning rate to
     specific values after a specific number of steps has been reached.
+
     Arguments
     ---------
     intervals: list
         a list of dictionaries: {"steps": <number of steps>, "lr": the learning rate}
         'steps' indicates the global step count at which a given
         rate will apply
+
     Example
     -------
     >>> import torch
