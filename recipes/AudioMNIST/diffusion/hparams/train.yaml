@@ -92,6 +92,9 @@ pad_level_db: -50.
 model_channels: 64
 model_norm_num_groups: 32
 model_num_res_blocks: 4
+model_modulation_down: null
+model_modulation_middle: null
+model_modulation_up: film
 diffusion_channels: 1
 
 # Conditioning
@@ -174,6 +177,10 @@ unet: !new:speechbrain.nnet.unet.UNetModel
     cond_emb: !ref <cond_emb>
     use_cond_emb: !ref <use_cond_emb>
     dropout: !ref <dropout>
+    modulation_down: !ref <model_modulation_down>
+    modulation_middle: !ref <model_modulation_middle>
+    modulation_up: !ref <model_modulation_up>
+
 
 noise: !new:speechbrain.nnet.diffusion.LengthMaskedGaussianNoise
 

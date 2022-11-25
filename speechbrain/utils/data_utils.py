@@ -600,6 +600,25 @@ def unsqueeze_as(x, target):
     return x.view(x.shape + (1,) * (target.dim() - x.dim()))
 
 
+def unsqueeze_match_feature_dim(x, target, dim):
+    """Unsqueezes the tensor to align the feature dimension with the target tensor.
+
+    Arguments
+    ---------
+    x: torch.Tensor
+        the tensor to unsqueeze
+    target: torch.Tensor
+        the target tensor
+    dim: int
+        the index of the feature dimension
+    """
+    for _ in range(dim - 1):
+        x = x.unsqueeze(1)
+    while x.dim() < target.dim():
+        x = x.unsqueeze(-1)
+    return x
+
+
 def pad_divisible(tensor, length=None, factor=2, len_dim=1, pad_value=0):
     """Adds extra padding to the specified dimension of a tensor to make
     it divisible  by the specified factor. This is useful when passing

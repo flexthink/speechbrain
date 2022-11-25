@@ -34,6 +34,7 @@ from abc import abstractmethod
 
 from speechbrain.utils.data_utils import pad_divisible
 from .autoencoder import VariationalAutoencoder
+from speechbrain.nnet.modulation import modulate
 
 
 import math
@@ -289,7 +290,9 @@ class Downsample(nn.Module):
         downsampling occurs in the inner-two dimensions.
     """
 
-    def __init__(self, channels, use_conv, dims=2, out_channels=None):
+    def __init__(
+        self, channels, use_conv, dims=2, out_channels=None, kernel_size=3
+    ):
         super().__init__()
         self.channels = channels
         self.out_channels = out_channels or channels
@@ -301,7 +304,7 @@ class Downsample(nn.Module):
                 dims,
                 self.channels,
                 self.out_channels,
-                3,
+                kernel_size,
                 stride=stride,
                 padding=1,
             )
@@ -352,6 +355,8 @@ class ResBlock(TimestepBlock):
         if True, use this block for downsampling.
     use_fixup_init: bool
         whether to use FixUp initialization
+    modulation: str|callable
+        the type of modulation to use
     """
 
     def __init__(
@@ -366,19 +371,14 @@ class ResBlock(TimestepBlock):
         down=False,
         norm_num_groups=32,
         use_fixup_init=True,
+        modulation=None,
+        modulation_args=None,
     ):
         super().__init__()
         self.channels = channels
-        self.emb_channels = emb_channels
         self.dropout = dropout
         self.out_channels = out_channels or channels
         self.use_conv = use_conv
-
-        self.in_layers = nn.Sequential(
-            nn.GroupNorm(norm_num_groups, channels),
-            nn.SiLU(),
-            conv_nd(dims, channels, self.out_channels, 3, padding=1),
-        )
 
         self.updown = up or down
 
@@ -391,12 +391,17 @@ class ResBlock(TimestepBlock):
         else:
             self.h_upd = self.x_upd = nn.Identity()
 
-        if emb_channels is not None:
-            self.emb_layers = nn.Sequential(
-                nn.SiLU(), nn.Linear(emb_channels, self.out_channels,),
-            )
-        else:
-            self.emb_layers = None
+        self.in_layers = nn.Sequential(
+            nn.GroupNorm(norm_num_groups, channels),
+            nn.SiLU(),
+            self.h_upd,
+            conv_nd(dims, channels, self.out_channels, 3, padding=1),
+        )
+        if modulation_args is None:
+            modulation_args = None
+
+        self.in_layers = modulate(self.in_layers, modulation, **modulation_args)
+
         self.out_layers = nn.Sequential(
             nn.GroupNorm(norm_num_groups, self.out_channels),
             nn.SiLU(),
@@ -434,22 +439,8 @@ class ResBlock(TimestepBlock):
         result: torch.Tensor
             an [N x C x ...] Tensor of outputs.
         """
-        if self.updown:
-            in_rest, in_conv = self.in_layers[:-1], self.in_layers[-1]
-            h = in_rest(x)
-            h = self.h_upd(h)
-            x = self.x_upd(x)
-            h = in_conv(h)
-        else:
-            h = self.in_layers(x)
-        if emb is not None:
-            emb_out = self.emb_layers(emb).type(h.dtype)
-            while len(emb_out.shape) < len(h.shape):
-                emb_out = emb_out[..., None]
-        else:
-            emb_out = torch.zeros_like(h)
-
-        h = h + emb_out
+        h = self.in_layers(x, mod_input=emb)
+        x = self.x_upd(x)
         h = self.out_layers(h)
         return self.skip_connection(x) + h
 
@@ -678,6 +669,9 @@ class UNetModel(nn.Module):
         norm_num_groups=32,
         resblock_updown=False,
         use_fixup_init=True,
+        modulation_down="output",
+        modulation_middle="output",
+        modulation_up="output",
     ):
         super().__init__()
 
@@ -701,6 +695,7 @@ class UNetModel(nn.Module):
 
         if emb_dim is None:
             emb_dim = model_channels * 4
+        self.emb_dim = emb_dim
         self.time_embed = EmbeddingProjection(model_channels, emb_dim)
 
         self.cond_emb_proj = build_emb_proj(
@@ -719,16 +714,24 @@ class UNetModel(nn.Module):
         input_block_chans = [ch]
         ds = 1
         for level, mult in enumerate(channel_mult):
+            layer_out_channels = int(mult * model_channels)
             for _ in range(num_res_blocks):
                 layers = [
                     ResBlock(
                         ch,
                         emb_dim,
                         dropout,
-                        out_channels=int(mult * model_channels),
+                        out_channels=layer_out_channels,
                         dims=dims,
                         norm_num_groups=norm_num_groups,
                         use_fixup_init=use_fixup_init,
+                        modulation=modulation_down,
+                        modulation_args={
+                            "mod_size": self.emb_dim,
+                            "input_size": ch,
+                            "output_size": layer_out_channels,
+                            "feature_dim": 1,
+                        },
                     )
                 ]
                 ch = int(mult * model_channels)
@@ -758,6 +761,13 @@ class UNetModel(nn.Module):
                             down=True,
                             norm_num_groups=norm_num_groups,
                             use_fixup_init=use_fixup_init,
+                            modulation=modulation_down,
+                            modulation_args={
+                                "mod_size": self.emb_dim,
+                                "input_size": ch,
+                                "output_size": out_ch,
+                                "feature_dim": 1,
+                            },
                         )
                         if resblock_updown
                         else Downsample(
@@ -778,6 +788,13 @@ class UNetModel(nn.Module):
                 dims=dims,
                 norm_num_groups=norm_num_groups,
                 use_fixup_init=use_fixup_init,
+                modulation=modulation_middle,
+                modulation_args={
+                    "mod_size": self.emb_dim,
+                    "input_size": ch,
+                    "output_size": ch,
+                    "feature_dim": 1,
+                },
             ),
             AttentionBlock(
                 ch,
@@ -793,6 +810,13 @@ class UNetModel(nn.Module):
                 dims=dims,
                 norm_num_groups=norm_num_groups,
                 use_fixup_init=use_fixup_init,
+                modulation=modulation_middle,
+                modulation_args={
+                    "mod_size": self.emb_dim,
+                    "input_size": ch,
+                    "output_size": ch,
+                    "feature_dim": 1,
+                },
             ),
         )
         self._feature_size += ch
@@ -801,15 +825,24 @@ class UNetModel(nn.Module):
         for level, mult in list(enumerate(channel_mult))[::-1]:
             for i in range(num_res_blocks + 1):
                 ich = input_block_chans.pop()
+                layer_in_channels = ch + ich
+                layer_out_channels = int(model_channels * mult)
                 layers = [
                     ResBlock(
-                        ch + ich,
+                        layer_in_channels,
                         emb_dim,
                         dropout,
-                        out_channels=int(model_channels * mult),
+                        out_channels=layer_out_channels,
                         dims=dims,
                         norm_num_groups=norm_num_groups,
                         use_fixup_init=use_fixup_init,
+                        modulation=modulation_up,
+                        modulation_args={
+                            "mod_size": self.emb_dim,
+                            "input_size": layer_in_channels,
+                            "output_size": layer_out_channels,
+                            "feature_dim": 1,
+                        },
                     )
                 ]
                 ch = int(model_channels * mult)
@@ -835,6 +868,13 @@ class UNetModel(nn.Module):
                             up=True,
                             norm_num_groups=norm_num_groups,
                             use_fixup_init=use_fixup_init,
+                            modulation=modulation_up,
+                            modulation_args={
+                                "mod_size": self.emb_dim,
+                                "input_size": ch,
+                                "output_size": out_ch,
+                                "feature_dim": 1,
+                            },
                         )
                         if resblock_updown
                         else Upsample(
