@@ -689,8 +689,6 @@ class DynamicBatchSampler(Sampler):
         if self._batch_ordering == "random":
             # we randomly permute the batches only --> faster
             self._permute_batches()
-        else:
-            pass
 
     def set_epoch(self, epoch):
         """
@@ -707,7 +705,8 @@ class DynamicBatchSampler(Sampler):
 # Heavily inspired by Catalyst, which is under Apache 2.0 licence.
 # https://github.com/catalyst-team/catalyst/blob/51428d7756e62b9b8ee5379f38e9fd576eeb36e5/catalyst/data/sampler.py#L522
 class DistributedSamplerWrapper(DistributedSampler):
-    """This wrapper allows using any sampler with Distributed Data Parallel (DDP) correctly.
+    """This wrapper allows using any sampler (for example batch) with Distributed Data Parallel (DDP)
+    correctly.
 
     Passing blindly the sampler to each DDP process will cause to have access
     within each process to all the data in the dataset instead of only a subset
