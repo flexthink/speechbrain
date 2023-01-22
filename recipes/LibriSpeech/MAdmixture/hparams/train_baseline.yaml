@@ -17,7 +17,8 @@ __set_seed: !apply:torch.manual_seed [!ref <seed>]
 # It allows you to read the data much faster without slowing down the shared filesystem.
 
 data_folder: ../data # In this case, data will be automatically downloaded here.
-data_folder_rirs: !ref <data_folder> # noise/ris dataset will automatically be downloaded here
+# Path to the Librispeech-Alignments dataset
+data_folder_alignments: ../alignments 
 output_folder: !ref results/madmixture-baseline/<seed>
 wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
@@ -25,13 +26,23 @@ train_log: !ref <output_folder>/train_log.txt
 
 # Path where data manifest files will be stored. The data manifest files are created by the
 # data preparation script
-train_annotation: !ref <output_folder>/train.csv
-valid_annotation: !ref <output_folder>/dev-clean.csv
-test_annotation: !ref <output_folder>/test-clean.csv
+train_annotation: !ref <output_folder>/train.json
+valid_annotation: !ref <output_folder>/dev-clean.json
+test_annotation: !ref <output_folder>/test-clean.json
 train_splits: ["train-clean-100"]
 dev_splits: ["dev-clean"]
 test_splits: ["test-clean"]
+char_list_file: ./hparams/char_en.txt
+phn_list_file: ./hparams/phn_en_arpabet.txt
 skip_prep: False
+
+# Training curriculum parameters
+curriculum_enabled: True
+curriculum_min_words: 1
+curriculum_max_words: 3
+curriculum_num_samples: 1000
+bos_index: 0
+eos_index: 0
 
 # The train logger writes training statistics to a file, as well as stdout.
 train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
@@ -61,25 +72,39 @@ test_dataloader_opts:
 # Feature parameters
 sample_rate: 16000
 n_fft: 400
-n_mels: 40
+n_mels: 80
 
-# Model parameters
-activation: !name:torch.nn.LeakyReLU
-dropout: 0.15
-cnn_blocks: 2
-cnn_channels: (128, 256)
-inter_layer_pooling_size: (2, 2)
-cnn_kernelsize: (3, 3)
-time_pooling_size: 4
-rnn_class: !name:speechbrain.nnet.RNN.LSTM
-rnn_layers: 4
-rnn_neurons: 1024
-rnn_bidirectional: True
-dnn_blocks: 2
-dnn_neurons: 512
-emb_size: 128
-dec_neurons: 1024
-output_neurons: 1000  # Number of tokens (same as LM)
+# Audio Encoder Parameters
+audio_enc_activation: !name:torch.nn.LeakyReLU
+audio_enc_dropout: 0.15
+audio_enc_cnn_blocks: 2
+audio_enc_cnn_channels: (128, 256)
+audio_enc_inter_layer_pooling_size: (2, 2)
+audio_enc_cnn_kernelsize: (3, 3)
+audio_enc_time_pooling_size: 4
+audio_enc_rnn_class: !name:speechbrain.nnet.RNN.LSTM
+audio_enc_rnn_layers: 4
+audio_enc_rnn_neurons: 1024
+audio_enc_rnn_bidirectional: True
+audio_enc_dnn_blocks: 2
+audio_enc_dnn_neurons: 128
+audio_enc_emb_size: 128
+
+audio_dec_n_frames_per_step: 1
+audio_dec_decoder_rnn_dim: 1024
+audio_dec_prenet_dim: 256
+audio_dec_max_decoder_steps: 1000
+audio_dec_gate_threshold: 0.5
+audio_dec_p_attention_dropout: 0.1
+audio_dec_p_decoder_dropout: 0.1
+audio_dec_decoder_no_early_stopping: False
+
+audio_rec_loss_weight: 1.
+
+#MAdmixture model parameters
+madmixture_latent_dim: 32
+
+
 
 # The first object passed to the Brain class is this "Epoch Counter"
 # which is saved by the Checkpointer so that training can be resumed
@@ -87,7 +112,8 @@ output_neurons: 1000  # Number of tokens (same as LM)
 epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
     limit: !ref <number_of_epochs>
 
-label_encoder: !new:speechbrain.dataio.encoder.CTCTextEncoder
+char_label_encoder: !new:speechbrain.dataio.encoder.TextEncoder
+phn_label_encoder: !new:speechbrain.dataio.encoder.TextEncoder
 
 
 # Feature extraction
@@ -105,33 +131,55 @@ normalize: !new:speechbrain.processing.features.InputNormalization
 # The CRDNN model is an encoder that combines CNNs, RNNs, and DNNs.
 audio_enc: !new:speechbrain.lobes.models.CRDNN.CRDNN
     input_shape: [null, null, !ref <n_mels>]
-    activation: !ref <activation>
-    dropout: !ref <dropout>
-    cnn_blocks: !ref <cnn_blocks>
-    cnn_channels: !ref <cnn_channels>
-    cnn_kernelsize: !ref <cnn_kernelsize>
-    inter_layer_pooling_size: !ref <inter_layer_pooling_size>
+    activation: !ref <audio_enc_activation>
+    dropout: !ref <audio_enc_dropout>
+    cnn_blocks: !ref <audio_enc_cnn_blocks>
+    cnn_channels: !ref <audio_enc_cnn_channels>
+    cnn_kernelsize: !ref <audio_enc_cnn_kernelsize>
+    inter_layer_pooling_size: !ref <audio_enc_inter_layer_pooling_size>
     time_pooling: True
     using_2d_pooling: False
-    time_pooling_size: !ref <time_pooling_size>
-    rnn_class: !ref <rnn_class>
-    rnn_layers: !ref <rnn_layers>
-    rnn_neurons: !ref <rnn_neurons>
-    rnn_bidirectional: !ref <rnn_bidirectional>
+    time_pooling_size: !ref <audio_enc_time_pooling_size>
+    rnn_class: !ref <audio_enc_rnn_class>
+    rnn_layers: !ref <audio_enc_rnn_layers>
+    rnn_neurons: !ref <audio_enc_rnn_neurons>
+    rnn_bidirectional: !ref <audio_enc_rnn_bidirectional>
     rnn_re_init: True
-    dnn_blocks: !ref <dnn_blocks>
-    dnn_neurons: !ref <dnn_neurons>
+    dnn_blocks: !ref <audio_enc_dnn_blocks>
+    dnn_neurons: !ref <audio_enc_dnn_neurons>
     use_rnnp: False
 
-# Embedding (from indexes to an embedding space of dimension emb_size).
-embedding: !new:speechbrain.nnet.embedding.Embedding
-    num_embeddings: !ref <output_neurons>
-    embedding_dim: !ref <emb_size>
+audio_dec: !new:speechbrain.lobes.models.madmixture.adapters.TacotronDecoder
+    decoder_input_key: audio
+    n_mel_channels: !ref <n_mels>
+    encoder_embedding_dim: !ref <madmixture_latent_dim>
+    n_frames_per_step: !ref <audio_dec_n_frames_per_step>
+    max_decoder_steps: !ref <audio_dec_max_decoder_steps>
+    gate_threshold: !ref <audio_dec_gate_threshold>
+    p_attention_dropout: !ref <audio_dec_p_attention_dropout>
+    p_decoder_dropout: !ref <audio_dec_p_decoder_dropout>
+    early_stopping: False
+
+audio_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
+    dim: !ref <madmixture_latent_dim>
+    in_dim: !ref <audio_enc_dnn_neurons>
 
 # TODO: This is a placeholder
-model: !new:torch.nn.Linear
-  in_features: 40
-  out_features: 4
+model: !new:speechbrain.lobes.models.madmixture.MadMixture
+    modalities:
+        audio:
+            encoder: !ref <audio_enc>
+            decoder: !ref <audio_dec>
+            aligner: !ref <audio_aligner>
+    anchor_name: audio
+    latent_size: !ref <madmixture_latent_dim>
+
+compute_cost_rec_audio: !name:speechbrain.nnet.losses.mse_loss
+
+modalities:
+    audio:
+        rec_loss: !ref <compute_cost_rec_audio>
+        rec_loss_weight: !ref <audio_rec_loss_weight>
 
 
 # Objects in "modules" dict will have their parameters moved to the correct
@@ -169,3 +217,9 @@ checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
         normalizer: !ref <normalize>
         counter: !ref <epoch_counter>
 
+
+# The training curriculum
+curriculum:
+    min_words: !ref <curriculum_min_words>
+    max_words: !ref <curriculum_max_words>
+    num_samples: !ref <curriculum_num_samples>

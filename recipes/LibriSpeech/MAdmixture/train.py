@@ -10,9 +10,11 @@ import sys
 import torch
 import logging
 import speechbrain as sb
+import os
 from hyperpyyaml import load_hyperpyyaml
-from librispeech_prepare import prepare_librispeech
+from librispeech_prepare import prepare_librispeech, LibriSpeechMode
 from speechbrain.utils.distributed import run_on_main
+from collections import namedtuple
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +43,9 @@ class MadMixtureBrain(sb.Brain):
         """
         # We first move the batch to the appropriate device.
         batch = batch.to(self.device)
-        feats, self.feat_lens = self.prepare_features(stage, batch.sig)
-        predictions = self.modules.model(feats)
-        return predictions
+        feats, lengths, context = self.prepare_features(stage, batch.sig)
+        latents, alignments, enc_out, rec = self.modules.model.train_step(feats, lengths, context)
+        return MadMixturePredictions(latents,alignments, enc_out, rec, feats)
 
     def prepare_features(self, stage, wavs):
         """Prepare features for computation on-the-fly
@@ -56,11 +58,23 @@ class MadMixtureBrain(sb.Brain):
             The input signals (tensor) and their lengths (tensor).
         """
         wavs, wav_lens = wavs
-        # Feature computation and normalization
-        feats = self.hparams.compute_features(wavs)
-        feats = self.modules.normalize(feats, wav_lens)
 
-        return feats, wav_lens
+        # Feature computation and normalization
+        feats_audio = self.hparams.compute_features(wavs)
+        feats_audio = self.modules.normalize(feats_audio, wav_lens)
+        feats = {
+            "audio": feats_audio,
+        }
+
+        lengths = {
+            "audio": wav_lens
+        }
+
+        context = {
+            "audio": feats_audio
+        }
+
+        return feats, lengths, context
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss given the predicted and targeted outputs. We here
@@ -69,8 +83,8 @@ class MadMixtureBrain(sb.Brain):
 
         Arguments
         ---------
-        predictions : dict
-            The output dict from `compute_forward`.
+        predictions : MadMixturePredictions
+            The output from `compute_forward`.
         batch : PaddedBatch
             This batch object contains all the relevant tensors for computation.
         stage : sb.Stage
@@ -81,8 +95,19 @@ class MadMixtureBrain(sb.Brain):
         loss : torch.Tensor
             A one-element tensor used for backpropagating the gradient.
         """
-        #TODO: Implement this and remove the placeholder
-        loss = predictions.mean()
+        latents, alignments, enc_out, rec, feats = predictions
+        rec_loss = {
+            key: spec["rec_loss"](rec[key], feats[key])
+            for key, spec in self.hparams.modalities.items()
+        }
+        rec_loss_weighted = {
+            key: self.hparams.modalities[key]["rec_loss_weight"] * mod_rec_loss
+            for key, mod_rec_loss in rec_loss.items()
+        }
+
+        rec_loss_total = sum(rec_loss_weighted.values())
+
+        loss = rec_loss_total
         return loss
 
     def on_stage_start(self, stage, epoch):
@@ -146,6 +171,37 @@ class MadMixtureBrain(sb.Brain):
                 test_stats=stage_stats,
             )
 
+MadMixturePredictions = namedtuple(
+    "MadMixturePredictions",
+    [
+        "latents",
+        "alignments",
+        "enc_out",
+        "rec",
+        "feats"
+    ]
+)
+
+LIBRISPEECH_OUTPUT_KEYS = [
+    "wrd_count",
+    "sig",
+    "wrd_start",
+    "wrd_end",
+    "phn_start",
+    "phn_end",
+    "wrd",
+    "char",
+    "phn",
+]
+
+LIBRISPEECH_OUTPUT_KEYS_DYNAMIC = LIBRISPEECH_OUTPUT_KEYS + [
+    "phn_encoded",
+    "phn_encoded_bos",
+    "phn_encoded_eos",
+    "char_encoded",
+    "char_encoded_bos",
+    "char_encoded_eos"
+]
 
 def dataio_prepare(hparams):
     """This function prepares the datasets to be used in the brain class.
@@ -173,24 +229,28 @@ def dataio_prepare(hparams):
         sig = sb.dataio.dataio.read_audio(wav)
         return sig
 
-    label_encoder = hparams["label_encoder"]
-
-    @sb.utils.data_pipeline.takes("wrd")
-    @sb.utils.data_pipeline.provides(
-        "wrd", "char_list"
-    )
-    def text_pipeline(wrd):
-        yield wrd
-        char_list = list(wrd)
-        yield char_list
-        tokens_list = label_encoder.encode_sequence(char_list)
-        yield tokens_list
-        tokens_bos = torch.LongTensor([hparams["bos_index"]] + (tokens_list))
-        yield tokens_bos
-        tokens_eos = torch.LongTensor(tokens_list + [hparams["eos_index"]])
-        yield tokens_eos
-        tokens = torch.LongTensor(tokens_list)
-        yield tokens
+    def sequence_pipeline(prefix, label_encoder):
+        @sb.utils.data_pipeline.takes(f"{prefix}")
+        @sb.utils.data_pipeline.provides(
+            f"{prefix}",
+            f"{prefix}_list",
+            f"{prefix}_encoded_bos",
+            f"{prefix}_encoded_eos",
+            f"{prefix}_encoded"
+        )
+        def pipeline_fn(seq):
+            yield seq
+            seq_list = list(seq)
+            yield seq_list
+            tokens_list = label_encoder.encode_sequence(seq_list)
+            yield tokens_list
+            tokens_bos = label_encoder.prepend_bos_index(tokens_list)
+            yield tokens_bos
+            tokens_eos = label_encoder.append_eos_index(tokens_list)
+            yield tokens_eos
+            tokens = torch.LongTensor(tokens_list)
+            yield tokens
+        return pipeline_fn
 
         
 
@@ -209,17 +269,47 @@ def dataio_prepare(hparams):
         "test": hparams["test_annotation"],
     }
 
+    char_encoder = init_sequence_encoder(hparams, "char")
+    char_pipeline = sequence_pipeline("char", char_encoder)
+    phn_encoder = init_sequence_encoder(hparams, "phn")
+    phn_pipeline = sequence_pipeline("phn", phn_encoder)
+    dynamic_items = [audio_pipeline, char_pipeline, phn_pipeline]
+
     for dataset in data_info:
-        datasets[dataset] = sb.dataio.dataset.DynamicItemDataset.from_csv(
+        # Load the full LibriSpeech dataset
+        dynamic_dataset = sb.dataio.dataset.DynamicItemDataset.from_json(
             data_info[dataset],
             replacements={"data_root": data_folder},
-            dynamic_items=[audio_pipeline, text_pipeline],
-            output_keys=[
-                "id",
-                "sig",
-                "wrd"
-            ],
+            dynamic_items=dynamic_items,
+            output_keys=LIBRISPEECH_OUTPUT_KEYS_DYNAMIC
         )
+
+        # Use the curriculum sampler to reduce the dataset's complexity
+        if hparams["curriculum_enabled"]:
+            curriculum = hparams["curriculum"]
+            logger.info(
+                "Using curriculum sampling with %d-%d words, %d samples",
+                curriculum["min_words"],
+                curriculum["max_words"],
+                curriculum["num_samples"]
+            )
+            curriculum_generator = torch.Generator()
+            curriculum_generator.manual_seed(hparams["seed"])
+            dynamic_dataset = sb.dataio.curriculum.CurriculumSpeechDataset(
+                from_dataset=dynamic_dataset,
+                min_words=curriculum["min_words"],
+                max_words=curriculum["max_words"],
+                num_samples=curriculum["num_samples"],
+                sample_rate=hparams["sample_rate"],
+                generator=curriculum_generator,
+            )
+        else:
+            logger.info("Curriculum sampling is disabled, using the complete dataset")
+        dynamic_dataset.set_output_keys(LIBRISPEECH_OUTPUT_KEYS_DYNAMIC)
+
+        for dynamic_item in dynamic_items:
+            dynamic_dataset.add_dynamic_item(dynamic_item)
+        datasets[dataset] = dynamic_dataset
         hparams[f"{dataset}_dataloader_opts"]["shuffle"] = False
 
     # Sorting training data with ascending order makes the code  much
@@ -246,6 +336,37 @@ def dataio_prepare(hparams):
     return datasets
 
 
+def read_token_list(file_name):
+    """Reads a simple text file with tokens (e.g. characters or phonemes) listed
+    one per line
+    
+    Arguments
+    ---------
+    file_name: str
+        the file name
+        
+    Returns
+    -------
+    result: list
+        a list of tokens
+    """
+    if not os.path.isfile(file_name):
+        raise ValueError(f"Token file {file_name} not found")
+    with open(file_name) as token_file:
+        return [line.strip() for line in token_file if line]
+    
+
+def init_sequence_encoder(hparams, prefix):
+    encoder = hparams[f"{prefix}_label_encoder"]
+    token_list_file_name = hparams[f"{prefix}_list_file"]
+    tokens = read_token_list(token_list_file_name)
+    encoder.add_bos_eos()
+    encoder.add_unk()
+    encoder.update_from_iterable(tokens)
+    return encoder
+
+
+
 if __name__ == "__main__":
 
     # Reading command line arguments
@@ -270,13 +391,15 @@ if __name__ == "__main__":
         prepare_librispeech,
         kwargs={
             "data_folder": hparams["data_folder"],
+            "alignments_folder": hparams["data_folder_alignments"],
             "tr_splits": hparams["train_splits"],
             "dev_splits": hparams["dev_splits"],
             "te_splits": hparams["test_splits"],
             "save_folder": hparams["output_folder"],
             "merge_lst": hparams["train_splits"],
-            "merge_name": "train.csv",
+            "merge_name": "train.json",
             "skip_prep": hparams["skip_prep"],
+            "mode": LibriSpeechMode.ALIGNMENT
         },
     )
 
@@ -284,7 +407,7 @@ if __name__ == "__main__":
     datasets = dataio_prepare(hparams)
 
     # Trainer initialization
-    asr_brain = MadMixtureBrain(
+    madmixture_brain = MadMixtureBrain(
         modules=hparams["modules"],
         opt_class=hparams["opt_class"],
         hparams=hparams,
@@ -296,8 +419,8 @@ if __name__ == "__main__":
     # necessary to update the parameters of the model. Since all objects
     # with changing state are managed by the Checkpointer, training can be
     # stopped at any point, and will be resumed on next call.
-    asr_brain.fit(
-        asr_brain.hparams.epoch_counter,
+    madmixture_brain.fit(
+        madmixture_brain.hparams.epoch_counter,
         datasets["train"],
         datasets["valid"],
         train_loader_kwargs=hparams["train_dataloader_opts"],
@@ -305,7 +428,7 @@ if __name__ == "__main__":
     )
 
     # Load best checkpoint for evaluation
-    test_stats = asr_brain.evaluate(
+    test_stats = madmixture_brain.evaluate(
         test_set=datasets["test"],
         min_key="WER",
         test_loader_kwargs=hparams["test_dataloader_opts"],
