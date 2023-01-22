@@ -46,3 +46,88 @@ class TacotronDecoder(nn.Module):
             memory_lengths=raw_lengths
         )
         return mel_outputs.transpose(-1, -2)
+    
+
+class RNNEncoder(nn.Module):
+    """An encoder adapter for RNN modules (LSTM, GRU, etc)
+    
+    Arguments
+    ---------
+    rnn: torch.Module
+        a module compatible with speechbrain.nnet.RNN.*
+    """
+    def __init__(self, rnn):
+        super().__init__()
+        self.rnn = rnn
+
+    def forward(self, input, lengths):
+        """Performs the encoding forward pass. Hidden
+        states from the RNN are discarded
+        
+        Arguments
+        ---------
+        input: torch.Tensor
+            the input features
+
+        Returns
+        -------
+        output: torch.Tensor
+            the encoded inputs
+        """
+        output, _ = self.rnn(input, lengths=lengths)
+        return output
+    
+class RNNDecoder(nn.Module):
+    """An encoder adapter for RNN modules (LSTM, GRU, etc)
+    
+    Arguments
+    ---------
+    rnn: torch.Module
+        an RNN module with an interface compatible to
+        speechbrain.nnet.RNN.AttentionalRNNDecoder
+
+    input_key: str
+        the context key corresponding to the RNN input
+        sequence
+    
+    out_dim: int
+        the output dimension
+        If specified, a linear layer will be added to
+        output the correct shape
+    """
+    def __init__(self, rnn, input_key, out_dim=None):
+        super().__init__()
+        self.rnn = rnn
+        if out_dim is None:
+            self.lin_out = nn.Identity()
+        else:                
+            self.lin_out = nn.Linear(
+                in_features=rnn.hidden_size,
+                out_features=out_dim,
+                bias=False
+            )
+        self.input_key = input_key
+        self.out_dim = out_dim
+
+    def forward(self, latent, lengths, context):
+        """Performs the decoding forward pass
+        
+        Arguments
+        ---------
+        latent: torch.Tensor
+            The latent representation to be decoded
+
+        lengths: torch.Tensor
+            Relative lengths
+
+        context: dict
+            A str -> Tensor context from MadMixture
+            the input_key will be fed as ground truth
+            encoder outputs during training
+        """
+        input_value = context[self.input_key]
+        #TODO: Add support for the default dummy value
+        output, _ = self.rnn(input_value, latent, wav_len=lengths)
+        output = self.lin_out(output)
+        return output
+    

@@ -43,11 +43,11 @@ class MadMixtureBrain(sb.Brain):
         """
         # We first move the batch to the appropriate device.
         batch = batch.to(self.device)
-        feats, lengths, context = self.prepare_features(stage, batch.sig)
+        feats, lengths, context = self.prepare_features(stage, batch)
         latents, alignments, enc_out, rec = self.modules.model.train_step(feats, lengths, context)
         return MadMixturePredictions(latents,alignments, enc_out, rec, feats)
 
-    def prepare_features(self, stage, wavs):
+    def prepare_features(self, stage, batch):
         """Prepare features for computation on-the-fly
 
         Arguments
@@ -57,21 +57,33 @@ class MadMixtureBrain(sb.Brain):
         wavs : tuple
             The input signals (tensor) and their lengths (tensor).
         """
-        wavs, wav_lens = wavs
+        wavs, wav_lens = batch.sig
+
+        #TODO: This can be made more modular
 
         # Feature computation and normalization
         feats_audio = self.hparams.compute_features(wavs)
         feats_audio = self.modules.normalize(feats_audio, wav_lens)
+        
+        feats_char_emb = self.hparams.char_emb(batch.char_encoded.data)
+        feats_phn_emb = self.hparams.phn_emb(batch.phn_encoded.data)
+
         feats = {
             "audio": feats_audio,
+            "char": feats_char_emb,
+            "phn": feats_phn_emb,
         }
 
         lengths = {
-            "audio": wav_lens
+            "audio": wav_lens,
+            "char": batch.char_encoded.lengths,
+            "phn": batch.phn_encoded.lengths,
         }
 
         context = {
-            "audio": feats_audio
+            "audio": feats_audio,
+            "char_emb": feats_char_emb,
+            "phn_emb": feats_phn_emb,
         }
 
         return feats, lengths, context
@@ -242,7 +254,7 @@ def dataio_prepare(hparams):
             yield seq
             seq_list = list(seq)
             yield seq_list
-            tokens_list = label_encoder.encode_sequence(seq_list)
+            tokens_list = label_encoder.encode_sequence_torch(seq_list)
             yield tokens_list
             tokens_bos = label_encoder.prepend_bos_index(tokens_list)
             yield tokens_bos

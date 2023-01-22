@@ -344,7 +344,7 @@ class LengthsCallWrapper(CallWrapper):
         result: torch.Tensor
             the encoder or decoder output
         """
-        return self.module(x, lengths)
+        return self.module(x, lengths=lengths)
 
 
 class ContextCallWrapper(CallWrapper):

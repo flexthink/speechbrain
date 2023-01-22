@@ -33,7 +33,9 @@ train_splits: ["train-clean-100"]
 dev_splits: ["dev-clean"]
 test_splits: ["test-clean"]
 char_list_file: ./hparams/char_en.txt
+char_count: 30
 phn_list_file: ./hparams/phn_en_arpabet.txt
+phn_count: 42
 skip_prep: False
 
 # Training curriculum parameters
@@ -74,7 +76,7 @@ sample_rate: 16000
 n_fft: 400
 n_mels: 80
 
-# Audio Encoder Parameters
+# Audio Encoder/Decoder Parameters
 audio_enc_activation: !name:torch.nn.LeakyReLU
 audio_enc_dropout: 0.15
 audio_enc_cnn_blocks: 2
@@ -89,7 +91,6 @@ audio_enc_rnn_bidirectional: True
 audio_enc_dnn_blocks: 2
 audio_enc_dnn_neurons: 128
 audio_enc_emb_size: 128
-
 audio_dec_n_frames_per_step: 1
 audio_dec_decoder_rnn_dim: 1024
 audio_dec_prenet_dim: 256
@@ -98,13 +99,31 @@ audio_dec_gate_threshold: 0.5
 audio_dec_p_attention_dropout: 0.1
 audio_dec_p_decoder_dropout: 0.1
 audio_dec_decoder_no_early_stopping: False
-
 audio_rec_loss_weight: 1.
+
+# Character Encoder/Decoder Parameters
+char_embedding_dim: 512
+char_enc_dropout: 0.5
+char_enc_neurons: 512
+char_enc_num_layers: 4
+char_dec_dropout: 0.5
+char_dec_neurons: 512
+char_dec_att_neurons: 256
+char_dec_num_layers: 4
+
+# Phoneme Encoder/Decoder Parameters
+phn_embedding_dim: 512
+phn_enc_dropout: 0.5
+phn_enc_neurons: 512
+phn_enc_num_layers: 4
+phn_dec_dropout: 0.5
+phn_dec_neurons: 512
+phn_dec_att_neurons: 256
+phn_dec_num_layers: 4
+
 
 #MAdmixture model parameters
 madmixture_latent_dim: 32
-
-
 
 # The first object passed to the Brain class is this "Epoch Counter"
 # which is saved by the Checkpointer so that training can be resumed
@@ -160,9 +179,76 @@ audio_dec: !new:speechbrain.lobes.models.madmixture.adapters.TacotronDecoder
     p_decoder_dropout: !ref <audio_dec_p_decoder_dropout>
     early_stopping: False
 
+char_emb: !new:speechbrain.nnet.embedding.Embedding
+    num_embeddings: !ref <char_count>
+    embedding_dim: !ref <char_embedding_dim>
+
+char_enc_rnn: !new:speechbrain.nnet.RNN.GRU
+    input_shape: [null, null, !ref <char_embedding_dim>]
+    bidirectional: False
+    hidden_size: !ref <char_enc_neurons>
+    num_layers: !ref <char_enc_num_layers>
+    dropout: !ref <char_enc_dropout>
+
+char_enc: !new:speechbrain.lobes.models.madmixture.adapters.RNNEncoder
+    rnn: !ref <char_enc_rnn>
+
+char_dec_rnn: !new:speechbrain.nnet.RNN.AttentionalRNNDecoder
+    enc_dim: !ref <madmixture_latent_dim>
+    input_size: !ref <char_embedding_dim>
+    rnn_type: gru
+    attn_type: content
+    dropout: !ref <char_dec_dropout>
+    hidden_size: !ref <char_dec_neurons>
+    attn_dim: !ref <char_dec_att_neurons>
+    num_layers: !ref <char_dec_num_layers>
+
+char_dec: !new:speechbrain.lobes.models.madmixture.adapters.RNNDecoder
+    rnn: !ref <char_dec_rnn>
+    out_dim: !ref <char_count>
+    input_key: char_emb
+
+phn_emb: !new:speechbrain.nnet.embedding.Embedding
+    num_embeddings: !ref <phn_count>
+    embedding_dim: !ref <phn_embedding_dim>
+
+phn_enc_rnn: !new:speechbrain.nnet.RNN.GRU
+    input_shape: [null, null, !ref <char_embedding_dim>]
+    bidirectional: False
+    hidden_size: !ref <char_enc_neurons>
+    num_layers: !ref <char_enc_num_layers>
+    dropout: !ref <char_enc_dropout>
+
+phn_enc: !new:speechbrain.lobes.models.madmixture.adapters.RNNEncoder
+    rnn: !ref <phn_enc_rnn>
+
+phn_dec_rnn: !new:speechbrain.nnet.RNN.AttentionalRNNDecoder
+    enc_dim: !ref <madmixture_latent_dim>
+    input_size: !ref <phn_embedding_dim>
+    rnn_type: gru
+    attn_type: content
+    dropout: !ref <phn_dec_dropout>
+    hidden_size: !ref <phn_dec_neurons>
+    attn_dim: !ref <phn_dec_att_neurons>
+    num_layers: !ref <phn_dec_num_layers>
+
+phn_dec: !new:speechbrain.lobes.models.madmixture.adapters.RNNDecoder
+    rnn: !ref <phn_dec_rnn>
+    out_dim: !ref <phn_count>
+    input_key: phn_emb
+
 audio_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <audio_enc_dnn_neurons>
+
+char_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
+    dim: !ref <madmixture_latent_dim>
+    in_dim: !ref <char_enc_neurons>
+
+phn_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
+    dim: !ref <madmixture_latent_dim>
+    in_dim: !ref <char_enc_neurons>
+
 
 # TODO: This is a placeholder
 model: !new:speechbrain.lobes.models.madmixture.MadMixture
@@ -171,6 +257,16 @@ model: !new:speechbrain.lobes.models.madmixture.MadMixture
             encoder: !ref <audio_enc>
             decoder: !ref <audio_dec>
             aligner: !ref <audio_aligner>
+        char:
+            encoder: !ref <char_enc>
+            decoder: !ref <char_dec>
+            aligner: !ref <char_aligner>
+        phn:
+            encoder: !ref <phn_enc>
+            decoder: !ref <phn_dec>
+            aligner: !ref <phn_aligner>
+
+
     anchor_name: audio
     latent_size: !ref <madmixture_latent_dim>
 
