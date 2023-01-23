@@ -45,7 +45,7 @@ class MadMixtureBrain(sb.Brain):
         batch = batch.to(self.device)
         feats, lengths, context = self.prepare_features(stage, batch)
         latents, alignments, enc_out, rec = self.modules.model.train_step(feats, lengths, context)
-        return MadMixturePredictions(latents,alignments, enc_out, rec, feats)
+        return MadMixturePredictions(latents,alignments, enc_out, rec, feats, lengths)
 
     def prepare_features(self, stage, batch):
         """Prepare features for computation on-the-fly
@@ -65,13 +65,14 @@ class MadMixtureBrain(sb.Brain):
         feats_audio = self.hparams.compute_features(wavs)
         feats_audio = self.modules.normalize(feats_audio, wav_lens)
         
+        # TODO: Embeddings are computed twice, avoid this
         feats_char_emb = self.hparams.char_emb(batch.char_encoded.data)
         feats_phn_emb = self.hparams.phn_emb(batch.phn_encoded.data)
 
         feats = {
             "audio": feats_audio,
-            "char": feats_char_emb,
-            "phn": feats_phn_emb,
+            "char": batch.char_encoded.data,
+            "phn": batch.phn_encoded.data,
         }
 
         lengths = {
@@ -107,21 +108,15 @@ class MadMixtureBrain(sb.Brain):
         loss : torch.Tensor
             A one-element tensor used for backpropagating the gradient.
         """
-        latents, alignments, enc_out, rec, feats = predictions
-        rec_loss = {
-            key: spec["rec_loss"](rec[key], feats[key])
-            for key, spec in self.hparams.modalities.items()
-        }
-        rec_loss_weighted = {
-            key: self.hparams.modalities[key]["rec_loss_weight"] * mod_rec_loss
-            for key, mod_rec_loss in rec_loss.items()
-        }
-
-        rec_loss_total = sum(rec_loss_weighted.values())
-
-        loss = rec_loss_total
+        loss = self.hparams.compute_cost(
+            inputs=predictions.feats,
+            latents=predictions.latents,
+            alignments=predictions.alignments,
+            rec=predictions.rec,
+            length=predictions.lengths
+        )
         return loss
-
+    
     def on_stage_start(self, stage, epoch):
         """Gets called at the beginning of each epoch.
 
@@ -190,7 +185,8 @@ MadMixturePredictions = namedtuple(
         "alignments",
         "enc_out",
         "rec",
-        "feats"
+        "feats",
+        "lengths"
     ]
 )
 
@@ -377,6 +373,26 @@ def init_sequence_encoder(hparams, prefix):
     encoder.update_from_iterable(tokens)
     return encoder
 
+def check_tensorboard(hparams):
+    """Checks whether Tensorboard is enabled and initializes the logger if it is
+
+    Arguments
+    ---------
+    hparams: dict
+        the hyperparameter dictionary
+    """
+    if hparams["use_tensorboard"]:
+        try:
+            from speechbrain.utils.train_logger import TensorboardLogger
+
+            hparams["tensorboard_train_logger"] = TensorboardLogger(
+                hparams["tensorboard_logs"]
+            )
+        except ImportError:
+            logger.warning(
+                "Could not enable TensorBoard logging - TensorBoard is not available"
+            )
+            hparams["use_tensorboard"] = False
 
 
 if __name__ == "__main__":
@@ -390,6 +406,9 @@ if __name__ == "__main__":
     # Load hyperparameters file with command-line overrides
     with open(hparams_file) as fin:
         hparams = load_hyperpyyaml(fin, overrides)
+
+    # Check whether Tensorboard is available and enabled
+    check_tensorboard(hparams)
 
     # Create experiment directory
     sb.create_experiment_directory(

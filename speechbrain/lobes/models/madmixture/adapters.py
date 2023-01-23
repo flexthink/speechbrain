@@ -56,9 +56,12 @@ class RNNEncoder(nn.Module):
     rnn: torch.Module
         a module compatible with speechbrain.nnet.RNN.*
     """
-    def __init__(self, rnn):
+    def __init__(self, rnn, emb=None):
         super().__init__()
         self.rnn = rnn
+        if emb is None:
+            emb = nn.Identity()
+        self.emb = emb
 
     def forward(self, input, lengths):
         """Performs the encoding forward pass. Hidden
@@ -74,7 +77,8 @@ class RNNEncoder(nn.Module):
         output: torch.Tensor
             the encoded inputs
         """
-        output, _ = self.rnn(input, lengths=lengths)
+        emb = self.emb(input)
+        output, _ = self.rnn(emb, lengths=lengths)
         return output
     
 class RNNDecoder(nn.Module):

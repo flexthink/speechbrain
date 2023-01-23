@@ -23,6 +23,8 @@ output_folder: !ref results/madmixture-baseline/<seed>
 wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
+use_tensorboard: true
+tensorboard_logs: <output_folder>/logs
 
 # Path where data manifest files will be stored. The data manifest files are created by the
 # data preparation script
@@ -99,7 +101,6 @@ audio_dec_gate_threshold: 0.5
 audio_dec_p_attention_dropout: 0.1
 audio_dec_p_decoder_dropout: 0.1
 audio_dec_decoder_no_early_stopping: False
-audio_rec_loss_weight: 1.
 
 # Character Encoder/Decoder Parameters
 char_embedding_dim: 512
@@ -191,6 +192,7 @@ char_enc_rnn: !new:speechbrain.nnet.RNN.GRU
     dropout: !ref <char_enc_dropout>
 
 char_enc: !new:speechbrain.lobes.models.madmixture.adapters.RNNEncoder
+    emb: !ref <char_emb>
     rnn: !ref <char_enc_rnn>
 
 char_dec_rnn: !new:speechbrain.nnet.RNN.AttentionalRNNDecoder
@@ -220,6 +222,7 @@ phn_enc_rnn: !new:speechbrain.nnet.RNN.GRU
     dropout: !ref <char_enc_dropout>
 
 phn_enc: !new:speechbrain.lobes.models.madmixture.adapters.RNNEncoder
+    emb: !ref <phn_emb>
     rnn: !ref <phn_enc_rnn>
 
 phn_dec_rnn: !new:speechbrain.nnet.RNN.AttentionalRNNDecoder
@@ -271,11 +274,19 @@ model: !new:speechbrain.lobes.models.madmixture.MadMixture
     latent_size: !ref <madmixture_latent_dim>
 
 compute_cost_rec_audio: !name:speechbrain.nnet.losses.mse_loss
+compute_cost_rec_char: !name:speechbrain.nnet.losses.nll_loss
+compute_cost_rec_phn: !name:speechbrain.nnet.losses.nll_loss
 
-modalities:
-    audio:
-        rec_loss: !ref <compute_cost_rec_audio>
-        rec_loss_weight: !ref <audio_rec_loss_weight>
+
+compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
+    modalities:
+    - audio
+    - char
+    - phn
+    rec_loss_fn:
+        audio: !ref <compute_cost_rec_audio>
+        phn: !ref <compute_cost_rec_char>
+        char: !ref <compute_cost_rec_phn>
 
 
 # Objects in "modules" dict will have their parameters moved to the correct
