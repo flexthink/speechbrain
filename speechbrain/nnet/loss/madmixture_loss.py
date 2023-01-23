@@ -33,6 +33,7 @@ class MadMixtureLoss(nn.Module):
     modality_weights: float
         the weights of individual modalities. If ommitted,
         modalities will be equally weighted
+        
     """
     def __init__(
             self,
@@ -51,11 +52,11 @@ class MadMixtureLoss(nn.Module):
             modality_weights = {key: 1. for key in modalities}
         self.modality_weights = modality_weights
 
-    def forward(self, inputs, length, latents, alignments, rec):
-        details = self.details(inputs, length, latents, alignments, rec)
+    def forward(self, inputs, length, latents, alignments, rec, reduction="mean"):
+        details = self.details(inputs, length, latents, alignments, rec, reduction)
         return details["loss"]
 
-    def details(self, inputs, length, latents, alignments, rec):
+    def details(self, inputs, length, latents, alignments, rec, reduction="mean"):
         """Computes the MadMixture loss with the detailed breakdown
         of all loss components
         
@@ -71,6 +72,11 @@ class MadMixtureLoss(nn.Module):
             alignments
         rec: dict
             reconstructions in each modality
+        reduction : str
+            Options are 'mean', 'batch', 'batchmean', 'sum'.
+            See pytorch for 'mean', 'sum'. The 'batch' option returns
+            one loss per item in the batch, 'batchmean' returns sum / batch size.
+
 
         Returns
         -------
@@ -79,15 +85,18 @@ class MadMixtureLoss(nn.Module):
             for tracking in Tensorboard, etc
         """
         rec_loss, modality_rec_loss, weighted_modality_weight_loss = (
-            self.compute_rec_loss(inputs, rec, length)
+            self.compute_rec_loss(inputs, rec, length, reduction)
         )
         loss_details = {
             "rec_loss": rec_loss
         }
         modality_rec_details = self._modality_expand(
-            "rec", modality_rec_loss)
+            "rec", modality_rec_loss
+        )
         modality_rec_weighted_details = self._modality_expand(
-            "rec_weighted", weighted_modality_weight_loss)
+            "rec_weighted",
+            weighted_modality_weight_loss
+        )
         loss_details.update(modality_rec_details)
         loss_details.update(modality_rec_weighted_details)
         loss = self.rec_loss_weight * rec_loss
@@ -100,7 +109,7 @@ class MadMixtureLoss(nn.Module):
             for key, value in loss_dict.items()
         }
     
-    def compute_rec_loss(self, inputs, rec, lengths):
+    def compute_rec_loss(self, inputs, rec, lengths, reduction="mean"):
         """Computes the recreation losses
         
         Arguments
@@ -111,6 +120,10 @@ class MadMixtureLoss(nn.Module):
             modality reconstructions
         lengths: dict
             relative lengths in each modality
+        reduction : str
+            Options are 'mean', 'batch', 'batchmean', 'sum'.
+            See pytorch for 'mean', 'sum'. The 'batch' option returns
+            one loss per item in the batch, 'batchmean' returns sum / batch size.
         
         Returns
         -------
@@ -128,6 +141,7 @@ class MadMixtureLoss(nn.Module):
                 rec[key],            
                 inputs[key],
                 length=lengths[key],
+                reduction=reduction
             )
             for key in self.modalities
         }
@@ -137,5 +151,5 @@ class MadMixtureLoss(nn.Module):
         }
         rec_loss = torch.stack(
             list(weighted_modality_losses.values())
-        ).sum()
+        ).sum(dim=0)
         return rec_loss, modality_rec_loss, weighted_modality_losses

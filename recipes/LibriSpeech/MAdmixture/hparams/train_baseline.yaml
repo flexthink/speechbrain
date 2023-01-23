@@ -23,8 +23,10 @@ output_folder: !ref results/madmixture-baseline/<seed>
 wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
-use_tensorboard: true
-tensorboard_logs: <output_folder>/logs
+use_tensorboard: True
+tensorboard_logs: !ref <output_folder>/logs
+enable_train_metrics: True
+train_log_interval: 1
 
 # Path where data manifest files will be stored. The data manifest files are created by the
 # data preparation script
@@ -44,7 +46,7 @@ skip_prep: False
 curriculum_enabled: True
 curriculum_min_words: 1
 curriculum_max_words: 3
-curriculum_num_samples: 1000
+curriculum_num_samples: 10000
 bos_index: 0
 eos_index: 0
 
@@ -54,10 +56,8 @@ train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
 
 # Training parameters
 number_of_epochs: 15
-number_of_ctc_epochs: 5
 batch_size: 8
-lr: 1.0
-ctc_weight: 0.5
+lr: 0.001
 sorting: ascending
 ckpt_interval_minutes: 15 # save checkpoint every N min
 label_smoothing: 0.1

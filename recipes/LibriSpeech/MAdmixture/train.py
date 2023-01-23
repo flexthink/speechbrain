@@ -24,8 +24,8 @@ class MadMixtureBrain(sb.Brain):
     """Class that manages the training loop. See speechbrain.core.Brain."""
 
     def compute_forward(self, batch, stage):
-        """Runs all the computation of the CTC + seq2seq ASR. It returns the
-        posterior probabilities of the CTC and seq2seq networks.
+        """Runs the computation of the MadMixture model latents and
+        reconstructions for each modality
 
         Arguments
         ---------
@@ -36,17 +36,51 @@ class MadMixtureBrain(sb.Brain):
 
         Returns
         -------
-        predictions : dict
-            At training time it returns predicted seq2seq log probabilities.
-            If needed it also returns the ctc output log probabilities.
-            At validation/test time, it returns the predicted tokens as well.
+        predictions : MadMixturePredictions
+            A namedtuple containing the following
+                latents: dict
+                    latent representations for each modality
+                alignments: dict
+                    alignment matrices for all aligned modalities
+                enc_out: dict
+                    raw encoder outputs (before alignment)
+                rec: dict
+                    modality reconstructions
+
+
         """
         # We first move the batch to the appropriate device.
         batch = batch.to(self.device)
         feats, lengths, context = self.prepare_features(stage, batch)
         latents, alignments, enc_out, rec = self.modules.model.train_step(feats, lengths, context)
-        return MadMixturePredictions(latents,alignments, enc_out, rec, feats, lengths)
+        return MadMixturePredictions(latents, alignments, enc_out, rec, feats, lengths)
+    
+    def fit_batch(self, batch):
+        result = super().fit_batch(batch)
+        if (
+            self.hparams.enable_train_metrics
+            and self.hparams.use_tensorboard
+            and (
+                self.step == 1
+                or self.step % self.hparams.train_log_interval == 0
+            )
+        ):
+            self.log_batch()
+        return result
 
+    
+    
+    def log_batch(self):
+        stats = {
+            "lr": self.optimizer.param_groups[0]["lr"],
+            **self.loss_metric.summarize(field="average")
+        }
+        self.hparams.tensorboard_train_logger.log_stats(
+            stats_meta={"step": self.step}, train_stats=stats
+        )
+
+
+    
     def prepare_features(self, stage, batch):
         """Prepare features for computation on-the-fly
 
@@ -115,6 +149,17 @@ class MadMixtureBrain(sb.Brain):
             rec=predictions.rec,
             length=predictions.lengths
         )
+
+        if self.hparams.enable_train_metrics:
+            self.loss_metric.append(
+                batch.snt_id,
+                inputs=predictions.feats,
+                latents=predictions.latents,
+                alignments=predictions.alignments,
+                rec=predictions.rec,
+                length=predictions.lengths,
+                reduction="batch"
+            )
         return loss
     
     def on_stage_start(self, stage, epoch):
@@ -128,6 +173,10 @@ class MadMixtureBrain(sb.Brain):
             The currently-starting epoch. This is passed
             `None` during the test stage.
         """
+        self.loss_metric = sb.utils.metric_stats.MultiMetricStats(
+            metric=self.hparams.compute_cost.details,
+            batch_eval=True
+        )
 
     def on_stage_end(self, stage, stage_loss, epoch):
         """Gets called at the end of an epoch.
@@ -191,6 +240,7 @@ MadMixturePredictions = namedtuple(
 )
 
 LIBRISPEECH_OUTPUT_KEYS = [
+    "snt_id",
     "wrd_count",
     "sig",
     "wrd_start",
