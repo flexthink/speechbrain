@@ -9,8 +9,11 @@ from torch import nn, Tensor
 from typing import Dict
 from speechbrain.nnet.attention import MultiheadAttention
 from speechbrain.nnet.CNN import Conv1d, ConvTranspose1d
+from speechbrain.nnet.normalization import LayerNorm
 from speechbrain.dataio.dataio import length_to_mask
 from speechbrain.utils.callchains import arg_exists
+from speechbrain.lobes.models.transformer.Transformer import (
+    PositionalEncoding, get_key_padding_mask)
 from math import floor, ceil
 from enum import Enum
 
@@ -476,6 +479,13 @@ class AttentionalAligner(nn.Module):
             d_model=dim,
             dropout=dropout
         )
+        self.in_norm = LayerNorm(
+            input_shape=[None, None, dim]
+        )
+        self.out_norm = LayerNorm(
+            input_shape=[None, None, dim]
+        )
+
         if scale is None:
             scale = 1
         self.scale = scale
@@ -498,7 +508,7 @@ class AttentionalAligner(nn.Module):
         else:
             stride = floor(1 / scale)
             if kernel_size is None:
-                kernel_size = scale
+                kernel_size = stride
             self.compressor = Conv1d(
                 in_channels=in_dim,
                 out_channels=dim,
@@ -513,13 +523,16 @@ class AttentionalAligner(nn.Module):
                 in_channels=in_dim, out_channels=dim, padding="same", kernel_size=1)
         else:
             self.feature_scale = nn.Identity()
+        self.pos_emb = PositionalEncoding(
+            input_size=dim
+        )
 
     def get_queries(self, enc_out):
         """Upsamples or downsamples raw encoder outputs
         before applying attention   
         
         """
-        enc_out_scaled = self.compressor(enc_out)
+        enc_out_scaled = self.out_norm(self.compressor(enc_out))
         new_length = floor(enc_out.size(1) * self.scale)
         return enc_out_scaled[:, :new_length, :]
 
@@ -539,9 +552,22 @@ class AttentionalAligner(nn.Module):
         mod_enc_out = enc_out[key]
         mod_length = lengths[key]
         queries = self.get_queries(mod_enc_out)
-        max_len = queries.size(1)
-        mask = length_to_mask(mod_length * max_len, max_len).unsqueeze(-1)
-        masked_queries = queries * mask
-        mod_enc_out_scaled = self.feature_scale(mod_enc_out) * mask
-        output, alignment = self.attn(masked_queries, mod_enc_out_scaled, mod_enc_out_scaled)
-        return output * mask, alignment
+        queries_max_len = queries.size(1)
+        queries_mask = length_to_mask(mod_length * queries_max_len, queries_max_len).unsqueeze(-1)
+        masked_queries = queries * queries_mask
+        
+        mod_enc_out_scaled = self.feature_scale(mod_enc_out)
+        mod_enc_out_scaled = self.in_norm(mod_enc_out_scaled)
+        mod_enc_out_scaled_max_len = mod_enc_out.size(1)
+        out_mask = length_to_mask(
+            mod_length * mod_enc_out_scaled_max_len, mod_enc_out_scaled_max_len).unsqueeze(-1)
+        pos_embs = self.pos_emb(mod_enc_out_scaled)
+        mod_enc_out_scaled += pos_embs
+        mod_enc_out_scaled *= out_mask
+        
+        output, alignment = self.attn(
+            query=masked_queries,
+            key=mod_enc_out_scaled,
+            value=mod_enc_out_scaled
+        )
+        return output * queries_mask, alignment

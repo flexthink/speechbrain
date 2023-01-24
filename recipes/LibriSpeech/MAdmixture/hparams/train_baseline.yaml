@@ -247,10 +247,12 @@ audio_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
 char_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <char_enc_neurons>
+    scale: 0.25
 
 phn_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <char_enc_neurons>
+    scale: 0.25
 
 
 # TODO: This is a placeholder
@@ -276,6 +278,7 @@ model: !new:speechbrain.lobes.models.madmixture.MadMixture
 compute_cost_rec_audio: !name:speechbrain.nnet.losses.mse_loss
 compute_cost_rec_char: !name:speechbrain.nnet.losses.nll_loss
 compute_cost_rec_phn: !name:speechbrain.nnet.losses.nll_loss
+compute_cost_alignment: !new:speechbrain.nnet.loss.guidedattn_loss.GuidedAttentionLoss
 
 
 compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
@@ -287,6 +290,8 @@ compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
         audio: !ref <compute_cost_rec_audio>
         phn: !ref <compute_cost_rec_char>
         char: !ref <compute_cost_rec_phn>
+    align_attention_loss_fn: !ref <compute_cost_alignment>
+    
 
 
 # Objects in "modules" dict will have their parameters moved to the correct
@@ -308,10 +313,9 @@ lr_annealing: !new:speechbrain.nnet.schedulers.NewBobScheduler
 
 # This optimizer will be constructed by the Brain class after all parameters
 # are moved to the correct device. Then it will be added to the checkpointer.
-opt_class: !name:torch.optim.Adadelta
-    lr: !ref <lr>
-    rho: 0.95
-    eps: 1.e-8
+opt_class: !name:torch.optim.Adam
+     lr: !ref <lr>
+
 
 # This object is used for saving the state of training both so that it
 # can be resumed if it gets interrupted, and also so that the best checkpoint

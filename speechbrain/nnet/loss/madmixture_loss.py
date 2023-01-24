@@ -28,6 +28,8 @@ class MadMixtureLoss(nn.Module):
     rec_loss_fn: dict
         the reconstruction loss function to be used for
         each modality
+    align_attention_loss_fn: callable
+        the loss function used to compute alignment losses
     align_attention_loss_weight: float
         the weight of the alignment attention loss
     modality_weights: float
@@ -39,6 +41,7 @@ class MadMixtureLoss(nn.Module):
             self,
             modalities,
             rec_loss_fn,
+            align_attention_loss_fn=None,
             rec_loss_weight=1.,
             align_attention_loss_weight=0.25,
             modality_weights=None,
@@ -47,6 +50,7 @@ class MadMixtureLoss(nn.Module):
         self.modalities = modalities
         self.rec_loss_weight = rec_loss_weight
         self.rec_loss_fn = rec_loss_fn
+        self.align_attention_loss_fn = align_attention_loss_fn
         self.align_attention_loss_weight = align_attention_loss_weight
         if modality_weights is None:
             modality_weights = {key: 1. for key in modalities}
@@ -84,7 +88,7 @@ class MadMixtureLoss(nn.Module):
             a complete breakdown of each loss, per modality, useful
             for tracking in Tensorboard, etc
         """
-        rec_loss, modality_rec_loss, weighted_modality_weight_loss = (
+        rec_loss, modality_rec_loss, weighted_modality_rec_loss = (
             self.compute_rec_loss(inputs, rec, length, reduction)
         )
         loss_details = {
@@ -95,15 +99,44 @@ class MadMixtureLoss(nn.Module):
         )
         modality_rec_weighted_details = self._modality_expand(
             "rec_weighted",
-            weighted_modality_weight_loss
+            weighted_modality_rec_loss
         )
         loss_details.update(modality_rec_details)
         loss_details.update(modality_rec_weighted_details)
-        loss = self.rec_loss_weight * rec_loss
+        if self.align_attention_loss_fn is not None:
+            alignment_loss, modality_alignment_loss = self.compute_alignment_loss(
+                alignments, length, reduction
+            )
+            modality_alignment_loss_details = self._modality_expand(
+                "align",
+                modality_alignment_loss
+            )
+            loss_details.update(modality_alignment_loss_details)
+            
+        else:
+            alignment_loss = 0.
+        loss = (
+            self.rec_loss_weight * rec_loss 
+            + self.align_attention_loss_weight * alignment_loss
+        )
         loss_details["loss"] = loss
         return loss_details
     
     def _modality_expand(self, prefix, loss_dict):
+        """Adds a modality prefix to the specified loss dictionary
+        
+        Arguments
+        ---------
+        prefix: str
+            the modality prefix
+        loss_dict
+            the raw loss values for the modality
+            
+        Arguments
+        ---------
+        result: dict
+            a new dictionary with keys rewritten as "{prefix}_{key}_loss
+        """
         return {
             f"{prefix}_{key}_loss": value
             for key, value in loss_dict.items()
@@ -145,11 +178,38 @@ class MadMixtureLoss(nn.Module):
             )
             for key in self.modalities
         }
-        weighted_modality_losses = {
+        rec_loss, weighted_modality_rec_loss = self._weighted_modality_loss(
+            modality_rec_loss
+        )
+        return rec_loss, modality_rec_loss, weighted_modality_rec_loss
+    
+    def _weighted_modality_loss(self, modality_loss):
+        weighted_modality_loss = {
             key: self.modality_weights[key] * loss_value
-            for key, loss_value in modality_rec_loss.items()
+            for key, loss_value in modality_loss.items()
         }
-        rec_loss = torch.stack(
-            list(weighted_modality_losses.values())
+        total_loss = torch.stack(
+            list(weighted_modality_loss.values())
         ).sum(dim=0)
-        return rec_loss, modality_rec_loss, weighted_modality_losses
+        return total_loss, weighted_modality_loss
+
+
+    def compute_alignment_loss(self, alignments, lengths, reduction):
+        alignments_with_lengths = [
+            (key, alignment, alignment.size(2) * lengths[key], alignment.size(1) * lengths[key])
+            for key, alignment in alignments.items()
+        ]
+        modality_alignment_loss = {
+            key: self.align_attention_loss_fn(
+                attention=modality_alignment, 
+                input_lengths=input_lengths,
+                target_lengths=target_lengths,
+                reduction=reduction
+            )
+            for key, modality_alignment, input_lengths, target_lengths
+            in alignments_with_lengths
+        }
+        alignment_loss, modality_alignment_loss = self._weighted_modality_loss(
+            modality_alignment_loss
+        )
+        return alignment_loss, modality_alignment_loss

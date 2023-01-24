@@ -78,6 +78,7 @@ class GuidedAttentionLoss(nn.Module):
         target_lengths,
         max_input_len=None,
         max_target_len=None,
+        reduction="mean"
     ):
         """
         Computes the guided attention loss for a single batch
@@ -111,7 +112,14 @@ class GuidedAttentionLoss(nn.Module):
         soft_mask = self.guided_attentions(
             input_lengths, target_lengths, max_input_len, max_target_len
         )
-        return (attention * soft_mask.transpose(-1, -2)).mean()
+        result = (attention * soft_mask.transpose(-1, -2))
+        if reduction == "mean":
+            result = result.mean()
+        elif reduction == "batch":
+            result = result.mean(-1).mean(-1)
+        else:
+            raise ValueError(f"Invalid reducton {reduction}")
+        return result
 
     def guided_attentions(
         self,
