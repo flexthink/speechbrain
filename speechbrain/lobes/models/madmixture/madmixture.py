@@ -36,15 +36,16 @@ class MadMixture(nn.Module):
     def __init__(self, modalities, anchor_name, latent_size=32):
         super().__init__()
         if isinstance(modalities, dict):
-            self.modalities = {
+            modalities_dict = {
                 name: Modality(name=name, **modality_kwargs)
                 for name, modality_kwargs in modalities.items()
             }
         else:
-            self.modalities = {
+            modalities_dict = {
                 modality.name: modality
                 for modality in modalities            
             }
+        self.modalities = nn.ModuleDict(modalities_dict)
         self.anchor_name = anchor_name
         self.anchor = self.modalities[anchor_name]
         self.latent_size = latent_size
@@ -195,7 +196,7 @@ class MadMixture(nn.Module):
         return result
 
 
-    def decode_single(self, latent, lengths, context=None):
+    def decode_single(self, latent, lengths, tgt=None, context=None):
         """Decodes a single latent-space representation to all modalities. This
         can be useful during inference (e.g. to reconstruct one modality from another
         where applicable
@@ -204,13 +205,57 @@ class MadMixture(nn.Module):
         ---------
         latent: torch.Tensor
             a single latent space batch
+
+        target: list
+            the target modalities    
         
         length: torch.Tensor
             the lengths of individual items"""
+        
+        if tgt is None:
+            targets = self.modalities.keys()
+        if isinstance(tgt, str):
+            targets = [tgt]
+        else:
+            targets = tgt
+
+
         return {
-            key: modality.decode(latent, lengths=lengths, context=context)
-            for key, modality in self.modalities.items()
+            key: self.modalities[key].decode(latent, lengths=lengths, context=context)
+            for key in targets
         }
+    
+    def transfer(self, inputs, lengths, src, tgt=None):
+        """Transfers representations from one modality to another (e.g. speech to text,
+        text to speech, graphemes to phonemes, etc)
+        
+        Arguments
+        ---------
+        inputs: torch.Tensor
+            A str -> tensor dictionary representing inputs in all available / relevant
+            modalities
+        src: str
+            the source modality from which the transfer will be made
+        tgt: str|list
+            the target(s) to which the transfer will be performed
+        
+
+        Returns
+        -------
+        rec: dict
+            a str -> tensor dictinaries with reconstructions in all applicable modalities
+        latents: dict
+
+        """
+        # NOTE: Support for auxiliary modalities will need to be added later
+
+        # Isolate the source modality
+        src_inputs = {src: inputs[src]}
+        src_lengths = {src: lengths[src]}
+        latents, alignments, enc_out = self.latent(src_inputs, src_lengths)
+        rec = self.decode_single(latents[src], src_lengths, tgt=tgt)
+        return rec, latents, alignments, enc_out
+
 
     def decode_multiple(self, latent, lengths, context=None):
         """Decodes multiple latent-space representations using the decoder for
@@ -412,9 +457,19 @@ class Modality(nn.Module):
     aligner: nn.Module
         an optional aligner module, aligning the outputs
         to the latent representation
+    
+    mod_type: str
+        the modality type
+
+    mod_family: str
+        the modality family (e.g. token_sequence, spectrogram, etc).
+        MAdmixture itself does not use this property, but it can be
+        useful during evaluation to determine the type of report to
+        generate, when rendering a UI, etc
+        
 
     """
-    def __init__(self, name, encoder, decoder, aligner=None):
+    def __init__(self, name, encoder, decoder, aligner=None, mod_type=ModalityType.PRIMARY, mod_family="token_sequence"):
         super().__init__()
         self.name = name
         self.encoder = encoder
@@ -422,6 +477,10 @@ class Modality(nn.Module):
         self.aligner = aligner
         self.encoder = wrap_module(encoder)
         self.decoder = wrap_module(decoder)
+        if isinstance(mod_type, str):
+            mod_type = ModalityType(mod_type)
+        self.mod_type = mod_type
+        self.mod_family = mod_family
 
     def forward(self, input, lengths=None):
         """Performs the encode operation (the default)

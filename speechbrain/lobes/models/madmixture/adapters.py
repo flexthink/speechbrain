@@ -98,8 +98,11 @@ class RNNDecoder(nn.Module):
         the output dimension
         If specified, a linear layer will be added to
         output the correct shape
+    
+    act: nn.Module
+        the final activation layer to use (softmax by default)
     """
-    def __init__(self, rnn, input_key, out_dim=None):
+    def __init__(self, rnn, input_key, act=None, out_dim=None):
         super().__init__()
         self.rnn = rnn
         if out_dim is None:
@@ -110,8 +113,11 @@ class RNNDecoder(nn.Module):
                 out_features=out_dim,
                 bias=False
             )
-        self.input_key = input_key
+        self.input_key = input_key        
         self.out_dim = out_dim
+        if act is None:
+            act = nn.Softmax()
+        self.act = act
 
     def forward(self, latent, lengths, context):
         """Performs the decoding forward pass
@@ -133,5 +139,6 @@ class RNNDecoder(nn.Module):
         #TODO: Add support for the default dummy value
         output, _ = self.rnn(input_value, latent, wav_len=lengths)
         output = self.lin_out(output)
+        output = self.act(output)
         return output
     
