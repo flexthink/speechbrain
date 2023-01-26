@@ -9,12 +9,18 @@ components to be computed
 - Attention losses
 - Latent space structure losses
 
+The approach to tying embeddings is borrowed from the
+Amazon Alexa research paper titled Tie Your Embeddings Down
+
+https://arxiv.org/pdf/2011.09044.pdf
+
 Authors
 * Artem Ploujnikov 2023
 """
 
 import torch
 from torch import nn
+from speechbrain.nnet.losses import truncate
 
 class MadMixtureLoss(nn.Module):
     """The MAdmixture model loss
@@ -35,6 +41,15 @@ class MadMixtureLoss(nn.Module):
     modality_weights: float
         the weights of individual modalities. If ommitted,
         modalities will be equally weighted
+    anchor: str
+        the "anchor" modality used for distance loss calculations,
+        i.e. the modality to which latent representations for other
+        modalities are compared
+    latent_distance_loss_fn: callable
+        the distance function used to tie embeddings together
+        in latent space
+    latent_distance_loss_weight: float
+        the relative weight of the latent distance loss
         
     """
     def __init__(
@@ -45,6 +60,9 @@ class MadMixtureLoss(nn.Module):
             rec_loss_weight=1.,
             align_attention_loss_weight=0.25,
             modality_weights=None,
+            anchor=None,
+            latent_distance_loss_fn=None,
+            latent_distance_loss_weight=1.
         ):
         super().__init__()
         self.modalities = modalities
@@ -55,6 +73,10 @@ class MadMixtureLoss(nn.Module):
         if modality_weights is None:
             modality_weights = {key: 1. for key in modalities}
         self.modality_weights = modality_weights
+        self.anchor = anchor
+        self.latent_distance_loss_fn = latent_distance_loss_fn
+        self.latent_distance_loss_weight = latent_distance_loss_weight
+    
 
     def forward(self, inputs, length, latents, alignments, rec, reduction="mean"):
         details = self.details(inputs, length, latents, alignments, rec, reduction)
@@ -77,9 +99,9 @@ class MadMixtureLoss(nn.Module):
         rec: dict
             reconstructions in each modality
         reduction : str
-            Options are 'mean', 'batch', 'batchmean', 'sum'.
-            See pytorch for 'mean', 'sum'. The 'batch' option returns
-            one loss per item in the batch, 'batchmean' returns sum / batch size.
+            Options are 'mean', 'batch'
+            See pytorch for 'mean' The 'batch' option returns
+            one loss per item in the batch
 
 
         Returns
@@ -103,23 +125,34 @@ class MadMixtureLoss(nn.Module):
         )
         loss_details.update(modality_rec_details)
         loss_details.update(modality_rec_weighted_details)
-        if self.align_attention_loss_fn is not None:
-            alignment_loss, modality_alignment_loss = self.compute_alignment_loss(
-                alignments, length, reduction
-            )
-            modality_alignment_loss_details = self._modality_expand(
-                "align",
-                modality_alignment_loss
-            )
-            loss_details.update(modality_alignment_loss_details)
-            
-        else:
-            alignment_loss = 0.
+        alignment_loss, modality_alignment_loss = self.compute_alignment_loss(
+            alignments, length, reduction
+        )
+        modality_alignment_loss_details = self._modality_expand(
+            "align",
+            modality_alignment_loss
+        )
+        loss_details.update(modality_alignment_loss_details)
+
+        latent_distance_loss, modality_distance_loss = self.compute_latent_distance_loss(
+            latents=latents,
+            lengths=length,
+            reduction=reduction
+        )
+        modality_distance_loss_details = self._modality_expand(
+            "distance",
+            modality_distance_loss
+        )
+        loss_details.update(modality_distance_loss_details)
+
         loss = (
             self.rec_loss_weight * rec_loss 
             + self.align_attention_loss_weight * alignment_loss
+            + self.latent_distance_loss_weight * latent_distance_loss
         )
         loss_details["loss"] = loss
+        if reduction != "batch":
+            print({k: v.item() for k, v in loss_details.items()})
         return loss_details
     
     def _modality_expand(self, prefix, loss_dict):
@@ -195,6 +228,37 @@ class MadMixtureLoss(nn.Module):
 
 
     def compute_alignment_loss(self, alignments, lengths, reduction):
+        """Computes the loss on alignment matrices output by aligner modules,
+        such as a guided attention loss
+        
+        Arguments
+        ---------
+        alignments: dict
+            an str -> tensor dictionary with alignments for all aligned
+            modalities
+        
+        lengths: dict
+            an str -> tensor dictionary with relative lengths
+            for all aligned modalities
+        
+        reduction: str
+            reduction mode: "batch" or "mean"
+            when set to "mean", a single value is returned
+            when set to "batch", a value is returned for each batch
+            
+        Returns
+        -------
+        alignment_loss: torch.Tensor
+            the total alignment loss
+        modality_alignment_loss: dict
+            an str -> tensor dictionary with alignment loss values
+            for all aligned modalities
+
+        """
+        if self.align_attention_loss_fn is None:
+            # NOTE: In this case, there is nothing to compute, the loss is 0
+            first_alignment = next(iter(alignments.values()))
+            return torch.tensor(0.).to(first_alignment.device), {}
         alignments_with_lengths = [
             (key, alignment, alignment.size(2) * lengths[key], alignment.size(1) * lengths[key])
             for key, alignment in alignments.items()
@@ -213,3 +277,71 @@ class MadMixtureLoss(nn.Module):
             modality_alignment_loss
         )
         return alignment_loss, modality_alignment_loss
+    
+    def compute_latent_distance_loss(self, latents, lengths, reduction="mean"):
+        """Computes a distance loss across modalities, which is
+        used to ensure that the latent representations of a single
+        sample are similar in different modalities
+        
+        Arguments
+        ---------
+        latents: torch.Tensor
+            an str -> tensor dictionary with latent representations
+            for each modality
+        lengths: dict
+            an str -> tensor dictionary with relative lengths
+            for all aligned modalities
+        """
+        if self.latent_distance_loss_fn is None:
+            # NOTE: In this case, there is nothing to compute, the loss is 0
+            first_alignment = next(iter(latents.values()))
+            return torch.tensor(0.).to(first_alignment.device), {}
+
+        anchor_latent = latents[self.anchor]
+        anchor_length = lengths[self.anchor]
+
+        sec_latent = dict(latents)
+        sec_lengths = dict(lengths)
+        del sec_latent[self.anchor]
+        del sec_lengths[self.anchor]
+
+        modality_latent_distance_loss = {
+            key: self.compute_modality_latent_distance_loss(
+                anchor_latent, anchor_length, sec_latent[key], sec_lengths[key],
+                reduction=reduction)
+            for key in sec_latent            
+        }
+        total_loss = torch.stack(
+            list(modality_latent_distance_loss.values())
+        ).sum(dim=0)
+
+        return total_loss, modality_latent_distance_loss
+
+    def compute_modality_latent_distance_loss(
+        self,
+        anchor_latent,
+        anchor_length,
+        sec_latent,
+        sec_length,
+        reduction
+    ):
+        # It is important to ensure the lentgths match, and only
+        # unpadded locations are used for loss calculations
+        # Find the max length of anchor and secondary modalities
+        sec_latent_trunc, anchor_latent_trunc = truncate(
+            sec_latent, anchor_latent, torch.inf
+        )
+        anchor_max_length = anchor_latent_trunc.size(1)
+        sec_max_length = sec_latent.size(1)
+        max_len_trunc = sec_latent_trunc.size(1)
+        # Recalculate the lengths post-truncation
+        length = torch.minimum(
+            anchor_length * anchor_max_length / max_len_trunc, 
+            sec_length * sec_max_length / max_len_trunc
+        ).clamp(0., 1.)
+        return self.latent_distance_loss_fn(
+            sec_latent_trunc,
+            anchor_latent_trunc,
+            length=length,
+            reduction=reduction
+        )
