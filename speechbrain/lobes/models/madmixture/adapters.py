@@ -7,6 +7,7 @@ Authors
 """
 from torch import nn
 from speechbrain.lobes.models import Tacotron2
+from speechbrain.nnet.activations import Softmax
 
 class TacotronDecoder(nn.Module):
     """An audio / spectrogram decoder that uses the speechbrain Tacotron implementation
@@ -116,7 +117,7 @@ class RNNDecoder(nn.Module):
         self.input_key = input_key        
         self.out_dim = out_dim
         if act is None:
-            act = nn.Softmax()
+            act = Softmax(apply_log=True)
         self.act = act
 
     def forward(self, latent, lengths, context):

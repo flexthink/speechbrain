@@ -164,7 +164,7 @@ class MadMixture(nn.Module):
         }
         alignments = {
             key: alignment
-            for key, (alignment, _) in aligner_out.items()
+            for key, (_, alignment) in aligner_out.items()
         }
         return latents, alignments, enc_out
 

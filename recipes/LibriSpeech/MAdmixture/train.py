@@ -288,7 +288,7 @@ def dataio_prepare(hparams):
         return sig
 
     def sequence_pipeline(prefix, label_encoder):
-        @sb.utils.data_pipeline.takes(f"{prefix}")
+        @sb.utils.data_pipeline.takes(f"_{prefix}")
         @sb.utils.data_pipeline.provides(
             f"{prefix}",
             f"{prefix}_list",
@@ -338,7 +338,6 @@ def dataio_prepare(hparams):
         dynamic_dataset = sb.dataio.dataset.DynamicItemDataset.from_json(
             data_info[dataset],
             replacements={"data_root": data_folder},
-            dynamic_items=dynamic_items,
             output_keys=LIBRISPEECH_OUTPUT_KEYS_DYNAMIC
         )
 
@@ -364,7 +363,6 @@ def dataio_prepare(hparams):
         else:
             logger.info("Curriculum sampling is disabled, using the complete dataset")
         dynamic_dataset.set_output_keys(LIBRISPEECH_OUTPUT_KEYS_DYNAMIC)
-
         for dynamic_item in dynamic_items:
             dynamic_dataset.add_dynamic_item(dynamic_item)
         datasets[dataset] = dynamic_dataset

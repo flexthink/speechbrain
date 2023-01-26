@@ -247,12 +247,12 @@ audio_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
 char_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <char_enc_neurons>
-    scale: 0.25
+    scale: 2.5
 
 phn_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <char_enc_neurons>
-    scale: 0.25
+    scale: 2.5
 
 
 # TODO: This is a placeholder
