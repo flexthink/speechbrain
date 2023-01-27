@@ -8,9 +8,16 @@ Authors:
 import torch
 from joblib import Parallel, delayed
 from speechbrain.utils.data_utils import undo_padding
-from speechbrain.utils.edit_distance import wer_summary, wer_details_for_batch
+from speechbrain.utils.edit_distance import (
+    wer_details_for_batch,
+    wer_summary, 
+    token_error_rate_details_for_batch,
+    token_error_rate_summary
+)
 from speechbrain.dataio.dataio import merge_char, split_word
-from speechbrain.dataio.wer import print_wer_summary, print_alignments
+from speechbrain.dataio.wer import (
+    print_wer_summary, print_alignments, print_error_rate_summary)
+from functools import partial
 
 
 class MetricStats:
@@ -185,6 +192,7 @@ def sequence_evaluation(metric, predict, target, lengths=None):
         scores.append(score)
     return scores
 
+DETAILS_LABEL_GENERIC = "DETAILS"
 
 class ErrorRateStats(MetricStats):
     """A class for tracking error rates (e.g., WER, PER).
@@ -204,6 +212,18 @@ class ErrorRateStats(MetricStats):
         this represents character to split on after merge.
         Used with ``split_tokens`` the sequence is joined with
         this token in between, and then the whole sequence is split.
+
+    mode: str
+        "wer" -  assume tokens are words and items are sentences (compatibility)
+        "generic" - allow labels to be customized
+
+    token_error_rate_label: str
+        the label for the error rate used for tokens (e.g. WER, PER, CER, etc)
+        available only if mode == "generic"
+    
+    sample_error_rate_label: str
+        the label for the error rate used for individual data samples (e.g. SER)
+        available only if mode == "generic"
 
     Example
     -------
@@ -227,11 +247,45 @@ class ErrorRateStats(MetricStats):
     1
     """
 
-    def __init__(self, merge_tokens=False, split_tokens=False, space_token="_"):
+    def __init__(
+            self,
+            merge_tokens=False,
+            split_tokens=False,
+            space_token="_",
+            mode="wer",
+            token_error_rate_label="TER",
+            sample_error_rate_label="SER",
+            sample_id_label="sample-id",
+        ):
         self.clear()
         self.merge_tokens = merge_tokens
         self.split_tokens = split_tokens
         self.space_token = space_token
+        self.mode = mode
+        self.token_error_rate_label = token_error_rate_label
+        self.sample_error_rate_label = sample_error_rate_label
+        if mode == "generic":
+            self.summary_fn = token_error_rate_summary
+            self.print_summary_fn = partial(
+                print_error_rate_summary,
+                token_error_rate_label=token_error_rate_label,
+                sample_error_rate_label=sample_error_rate_label
+            )
+            self.details_for_batch_fn = token_error_rate_details_for_batch
+            self.print_alignments_fn = partial(
+                print_alignments,
+                error_rate_key="token_error_rate",
+                error_rate_label=token_error_rate_label,
+                details_label=DETAILS_LABEL_GENERIC,
+                sample_id_label=sample_id_label
+            )
+        elif mode == "wer":
+            self.summary_fn = wer_summary
+            self.print_summary_fn = print_wer_summary
+            self.details_for_batch_fn = wer_details_for_batch
+            self.print_alignments_fn = print_alignments
+        else:
+            raise ValueError(f"Unsupported mode {mode}")
 
     def append(
         self,
@@ -284,7 +338,7 @@ class ErrorRateStats(MetricStats):
             predict = split_word(predict, space=self.space_token)
             target = split_word(target, space=self.space_token)
 
-        scores = wer_details_for_batch(ids, target, predict, True)
+        scores = self.details_for_batch_fn(ids, target, predict, True)
 
         self.scores.extend(scores)
 
@@ -293,10 +347,12 @@ class ErrorRateStats(MetricStats):
 
         * See MetricStats.summarize()
         """
-        self.summary = wer_summary(self.scores)
+        self.summary = self.summary_fn(self.scores)
 
         # Add additional, more generic key
-        self.summary["error_rate"] = self.summary["WER"]
+       
+        error_rate_key = "WER"  if self.mode == "wer" else "token_error_rate"
+        self.summary["error_rate"] = self.summary[error_rate_key]
 
         if field is not None:
             return self.summary[field]
@@ -310,8 +366,8 @@ class ErrorRateStats(MetricStats):
         if not self.summary:
             self.summarize()
 
-        print_wer_summary(self.summary, filestream)
-        print_alignments(self.scores, filestream)
+        self.print_summary_fn(self.summary, filestream)
+        self.print_alignments_fn(self.scores, filestream)
 
 
 class BinaryMetricStats(MetricStats):

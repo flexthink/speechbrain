@@ -52,6 +52,49 @@ def print_wer_summary(wer_details, file=sys.stdout):
         file=file,
     )
 
+def print_error_rate_summary(details, file=sys.stdout, token_error_rate_label="TER", sample_error_rate_label="SER"):
+    """A generic equivalent of print_wer_summary useful for phoneme error rates, character error rates,
+    etc
+
+    This function essentially mirrors the Kaldi compute-wer output format.
+
+    Arguments
+    ---------
+    wer_details : dict
+        Dict of wer summary details,
+        see ``speechbrain.utils.edit_distance.wer_summary``
+        for format.
+    file : stream
+        Where to write. (default: sys.stdout)
+    """
+    print(
+        "%{token_error_rate_label} {token_error_rate:.2f} [ {num_edits} / {num_scored_tokens}, {insertions} ins, {deletions} del, {substitutions} sub ]".format(  # noqa
+            token_error_rate_label=token_error_rate_label,
+            **details
+        ),
+        file=file,
+        end="",
+    )
+    print(
+        " [PARTIAL]"
+        if details["num_scored_samples"] < details["num_ref_samples"]
+        else "",
+        file=file,
+    )
+    print(
+        "%{sample_error_rate_label} {sample_error_rate:.2f} [ {num_err_samples} / {num_scored_samples} ]".format(
+            sample_error_rate_label=sample_error_rate_label,
+            **details
+        ),
+        file=file,
+    )
+    print(
+        "Scored {num_scored_samples} samples, {num_absent_samples} not present in hyp.".format(  # noqa
+            **details
+        ),
+        file=file,
+    )    
+
 
 def print_alignments(
     details_by_utterance,
@@ -60,8 +103,13 @@ def print_alignments(
     separator=" ; ",
     print_header=True,
     sample_separator=None,
+    error_rate_key="WER",
+    error_rate_label="WER",
+    details_label="WER DETAILS",
+    sample_id_label="utterance-id"
+
 ):
-    """Print WER summary and alignments.
+    """Print token error rate (e.g. WER) summary and alignments.
 
     Arguments
     ---------
@@ -83,12 +131,17 @@ def print_alignments(
     """
     if print_header:
         _print_alignments_global_header(
-            file=file, empty_symbol=empty_symbol, separator=separator
+            file=file, empty_symbol=empty_symbol, separator=separator,
+            details_label=details_label, sample_id_label=sample_id_label
         )
     for dets in details_by_utterance:
         if dets["scored"]:
             if print_header:
-                _print_alignment_header(dets, file=file)
+                _print_alignment_header(
+                    dets, file=file,
+                    error_rate_key=error_rate_key,
+                    error_rate_label=error_rate_label,                    
+                )
             _print_alignment(
                 dets["alignment"],
                 dets["ref_tokens"],
@@ -158,13 +211,15 @@ def _print_alignment(
 
 
 def _print_alignments_global_header(
-    empty_symbol="<eps>", separator=" ; ", file=sys.stdout
+    empty_symbol="<eps>", separator=" ; ", file=sys.stdout,
+    details_label="WER DETAILS",
+    sample_id_label="utterance-id"
 ):
     print("=" * 80, file=file)
     print("ALIGNMENTS", file=file)
     print("", file=file)
     print("Format:", file=file)
-    print("<utterance-id>, WER DETAILS", file=file)
+    print(f"<{sample_id_label}>, {details_label}", file=file)
     # Print the format with the actual
     # print_alignment function, using artificial data:
     a = ["reference", "on", "the", "first", "line"]
@@ -187,10 +242,12 @@ def _print_alignments_global_header(
     )
 
 
-def _print_alignment_header(wer_details, file=sys.stdout):
-    print("=" * 80, file=file)
+def _print_alignment_header(wer_details, file=sys.stdout, error_rate_label="WER", error_rate_key="WER"):
+    error_rate = wer_details[error_rate_key]
     print(
-        "{key}, %WER {WER:.2f} [ {num_edits} / {num_ref_tokens}, {insertions} ins, {deletions} del, {substitutions} sub ]".format(  # noqa
+        "{key}, %{error_rate_label} {error_rate:.2f} [ {num_edits} / {num_ref_tokens}, {insertions} ins, {deletions} del, {substitutions} sub ]".format(  # noqa
+            error_rate_label=error_rate_label,
+            error_rate=error_rate,
             **wer_details
         ),
         file=file,
