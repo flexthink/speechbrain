@@ -151,8 +151,6 @@ class MadMixtureLoss(nn.Module):
             + self.latent_distance_loss_weight * latent_distance_loss
         )
         loss_details["loss"] = loss
-        if reduction != "batch":
-            print({k: v.item() for k, v in loss_details.items()})
         return loss_details
     
     def _modality_expand(self, prefix, loss_dict):

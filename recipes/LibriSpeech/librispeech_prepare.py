@@ -13,6 +13,7 @@ import json
 import os
 import csv
 import random
+import re
 from collections import Counter, namedtuple
 from enum import Enum
 import logging
@@ -28,6 +29,9 @@ from speechbrain.dataio.dataio import (
 logger = logging.getLogger(__name__)
 OPT_FILE = "opt_librispeech_prepare.pkl"
 SAMPLERATE = 16000
+RE_STRESS_MARK = re.compile(
+    r"\d$"
+)
 
 
 class LibriSpeechMode(Enum):
@@ -591,10 +595,11 @@ def parse_alignments(file_name):
     try:
         import textgrids
     except ImportError:
-        print(
+        logger.error(
             "Parsing LibriSpeech-alignments requires the"
             "praat-textgrids package"
         )
+        raise
 
     text_grid = textgrids.TextGrid()
     text_grid.read(file_name)
@@ -605,8 +610,30 @@ def parse_alignments(file_name):
     phn_intervals = text_grid.interval_tier_to_array("phones")
     details = {}
     details.update(intervals_to_dict(word_intervals, "wrd"))
-    details.update(intervals_to_dict(phn_intervals, "phn"))
+    phn = intervals_to_dict(phn_intervals, "phn")
+    phn_stress = phn["phn"]
+    phn_nostress = remove_stress_marks(phn_stress)
+    phn["phn"] = phn_nostress
+    phn["phn_stress"] = phn_stress
+    details.update(phn)
+
+
     return details
+
+def remove_stress_marks(phn):
+    """Removes stress marks from a phoneme annotation
+    
+    Arguments
+    ---------
+    phn: list
+        a list of phoneme annotations with or without stress marks
+        
+    Returns
+    -------
+    result: list
+        a list of phoneme annotations without stress marks
+    """
+    return [RE_STRESS_MARK.sub("", item) for item in phn]
 
 
 INTERVAL_MAP = [("label", ""), ("begin", "_start"), ("end", "_end")]

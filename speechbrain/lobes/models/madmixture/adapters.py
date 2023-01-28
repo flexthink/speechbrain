@@ -5,6 +5,7 @@ the MAdmixture model
 Authors
  * Artem Ploujnikov 2023
 """
+import torch
 from torch import nn
 from speechbrain.lobes.models import Tacotron2
 from speechbrain.nnet.activations import Softmax
@@ -41,13 +42,19 @@ class TacotronDecoder(nn.Module):
 
         """
         raw_lengths = lengths * latent.size(1)
-        mel_outputs, gate_outputs, alignments = self.decoder(
-            memory=latent,
-            decoder_inputs=context[self.decoder_input_key].transpose(-1, -2),
-            memory_lengths=raw_lengths
-        )
-        return mel_outputs.transpose(-1, -2)
-    
+        if context is not None and self.decoder_input_key in context:
+            mel_outputs, gate_outputs, alignments = self.decoder(
+                memory=latent,
+                decoder_inputs=context[self.decoder_input_key].transpose(-1, -2),
+                memory_lengths=raw_lengths
+            )
+        else:
+            mel_outputs, gate_outputs, alignments, mel_lengths = self.decoder.infer(
+                memory=latent,
+                memory_lengths=raw_lengths
+            )
+        #TODO: Develop an "output context"
+        return mel_outputs.transpose(-1, -2)    
 
 class RNNEncoder(nn.Module):
     """An encoder adapter for RNN modules (LSTM, GRU, etc)
@@ -102,8 +109,11 @@ class RNNDecoder(nn.Module):
     
     act: nn.Module
         the final activation layer to use (softmax by default)
+    
+    bos_index: int
+        the index of the BOS token (needed during inference)
     """
-    def __init__(self, rnn, input_key, act=None, out_dim=None):
+    def __init__(self, rnn, input_key, emb, act=None, out_dim=None, bos_index=0):
         super().__init__()
         self.rnn = rnn
         if out_dim is None:
@@ -119,6 +129,8 @@ class RNNDecoder(nn.Module):
         if act is None:
             act = Softmax(apply_log=True)
         self.act = act
+        self.emb = emb
+        self.bos_index = bos_index
 
     def forward(self, latent, lengths, context):
         """Performs the decoding forward pass
@@ -136,10 +148,21 @@ class RNNDecoder(nn.Module):
             the input_key will be fed as ground truth
             encoder outputs during training
         """
-        input_value = context[self.input_key]
+        if context is not None and self.input_key in context:
+            input_value = context[self.input_key]
+        else:
+            input_value = self._get_dummy_sequence(
+                latent.size(0),
+                latent.device
+            )
         #TODO: Add support for the default dummy value
         output, _ = self.rnn(input_value, latent, wav_len=lengths)
         output = self.lin_out(output)
         output = self.act(output)
         return output
+    
+    def _get_dummy_sequence(self, batch_size, device):
+        seq = torch.tensor([[self.bos_index]], device=device)
+        seq = seq.repeat(batch_size, 1)
+        return self.emb(seq)
     

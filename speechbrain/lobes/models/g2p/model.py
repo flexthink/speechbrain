@@ -109,7 +109,7 @@ class AttentionSeq2Seq(nn.Module):
         emb_char = self.encoder_emb(chars)
         if self.use_word_emb:
             emb_char = _apply_word_emb(self.word_emb_enc, emb_char, word_emb)
-
+        
         encoder_out, _ = self.enc(emb_char)
         e_in = self.emb(phn_bos)
         h, w = self.dec(e_in, encoder_out, char_lens)

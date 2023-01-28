@@ -162,6 +162,40 @@ class MadMixtureBrain(sb.Brain):
             )
         return loss
     
+    def evaluate_batch(self, batch, stage):
+        """Evaluate one batch, performing the various tasks configured in
+        hparams (e.g. same-modality reconstruction, cross-modality evaluation,
+        etc)
+
+        The default implementation depends on two methods being defined
+        with a particular behavior:
+
+        * ``compute_forward()``
+        * ``compute_objectives()``
+
+        Arguments
+        ---------
+        batch : list of torch.Tensors
+            Batch of data to use for evaluation. Default implementation assumes
+            this batch has two elements: inputs and targets.
+        stage : Stage
+            The stage of the experiment: Stage.VALID, Stage.TEST
+
+        Returns
+        -------
+        detached loss
+        """
+
+        out = self.compute_forward(batch, stage=stage)
+        loss = self.compute_objectives(out, batch, stage=stage)
+        self.hparams.evaluator.append(
+            ids=batch.snt_id,
+            inputs=out.feats,
+            lengths=out.lengths,
+            targets=out.feats
+        )        
+        return loss.detach().cpu()
+    
     def on_stage_start(self, stage, epoch):
         """Gets called at the beginning of each epoch.
 
@@ -216,8 +250,20 @@ class MadMixtureBrain(sb.Brain):
             )
 
             # Save the current checkpoint and delete previous checkpoints.
-            self.checkpointer.save_and_keep_only(
-                meta={"loss": stage_stats["loss"]}, min_keys=["loss"],
+            # NOTE: Checkpoints can be skipped during debugging to avoid undue
+            # stress on the SSD
+            if not self.hparams.skip_checkpoint:
+                self.checkpointer.save_and_keep_only(
+                    meta={"loss": stage_stats["loss"]}, min_keys=["loss"],
+                )
+
+            # Write evaluation reports for the epoch
+            epoch_report_path = os.path.join(
+                self.hparams.reports_folder,
+                str(epoch)
+            )
+            self.hparams.evaluator.report(
+                epoch_report_path
             )
 
         # We also write statistics about test data to stdout and to the logfile.
@@ -226,6 +272,13 @@ class MadMixtureBrain(sb.Brain):
                 stats_meta={"Epoch loaded": self.hparams.epoch_counter.current},
                 test_stats=stage_stats,
             )
+
+    def evaluation_report(self):
+        report_path = os.path.join(
+            self.hparams.reports_path,
+            str(self.hparams.epoch_counter.current)
+        )
+        self.hparams.evaluator.report(report_path)
 
 MadMixturePredictions = namedtuple(
     "MadMixturePredictions",
@@ -409,16 +462,33 @@ def read_token_list(file_name):
     if not os.path.isfile(file_name):
         raise ValueError(f"Token file {file_name} not found")
     with open(file_name) as token_file:
-        return [line.strip() for line in token_file if line]
+        return [line.strip("\r\n") for line in token_file if line]
     
 
 def init_sequence_encoder(hparams, prefix):
+    """Initialize a sequence encoder
+    
+    Arguments
+    ---------
+    hparams: dict
+        parsed hyperparameters
+    prefix: str
+        the prefix to be prepended to hyperparameter keys, per the naming
+        convention
+        
+        {prefix}_label_encoder: the hparams key for the label encoder
+        {prefix}_list_file: 
+    
+    Returns
+    -------
+    encoder: speechbrain.dataio.encoder.TextEncoder
+        an encoder instance"""
     encoder = hparams[f"{prefix}_label_encoder"]
     token_list_file_name = hparams[f"{prefix}_list_file"]
     tokens = read_token_list(token_list_file_name)
     encoder.add_bos_eos()
     encoder.add_unk()
-    encoder.update_from_iterable(tokens)
+    encoder.update_from_iterable(tokens, sequence_input=False)
     return encoder
 
 def check_tensorboard(hparams):

@@ -237,7 +237,7 @@ class ProgressSampleLogger:
     Example:
 
     In hparams.yaml
-    progress_sample_logger: !new:speechbrain.utils.progress_samples.ProgressSampleLogger
+    progress_sample_logger: !new:speechbrain.utils.train_logger.ProgressSampleLogger
         output_path: output/samples
         progress_batch_sample_size: 3
         format_defs:

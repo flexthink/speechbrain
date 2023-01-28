@@ -54,8 +54,24 @@ class MadMixture(nn.Module):
             for key, modality in self.modalities.items()
             if modality.aligner
         }
+        self.primary_modalities = {
+            key            
+            for key, modality in self.modalities.items()
+            if modality.mod_type == ModalityType.PRIMARY
+        }
+        self.possible_transfers = [
+            (src, tgt)
+            for src in self.primary_modalities
+            for tgt in self.primary_modalities
+        ]
+        self.cross_transfers = [
+            (src, tgt)
+            for src, tgt in self.possible_transfers
+            if src != tgt
+        ]
         modalities = set(self.modalities.keys())
         self.unaligned_modalities = modalities - self.aligned_modalities
+
 
     def forward(self, inputs, lengths=None, context=None):
         """Runs the forward pass (encodes inputs)
@@ -214,7 +230,7 @@ class MadMixture(nn.Module):
         
         if tgt is None:
             targets = self.modalities.keys()
-        if isinstance(tgt, str):
+        elif isinstance(tgt, str):
             targets = [tgt]
         else:
             targets = tgt
@@ -252,8 +268,12 @@ class MadMixture(nn.Module):
         # Isolate the source modality
         src_inputs = {src: inputs[src]}
         src_lengths = {src: lengths[src]}
+        # Find latents
         latents, alignments, enc_out = self.latent(src_inputs, src_lengths)
-        rec = self.decode_single(latents[src], src_lengths, tgt=tgt)
+
+        # Reconstruct
+        rec = self.decode_single(latents[src], src_lengths[src], tgt=tgt)
+
         return rec, latents, alignments, enc_out
 
 

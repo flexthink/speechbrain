@@ -23,10 +23,12 @@ output_folder: !ref results/madmixture-baseline/<seed>
 wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
+reports_folder: !ref <output_folder>/reports
 use_tensorboard: True
 tensorboard_logs: !ref <output_folder>/logs
 enable_train_metrics: True
 train_log_interval: 1
+skip_checkpoint: False
 
 # Path where data manifest files will be stored. The data manifest files are created by the
 # data preparation script
@@ -37,9 +39,9 @@ train_splits: ["train-clean-100"]
 dev_splits: ["dev-clean"]
 test_splits: ["test-clean"]
 char_list_file: ./hparams/char_en.txt
-char_count: 30
+char_count: 31
 phn_list_file: ./hparams/phn_en_arpabet.txt
-phn_count: 42
+phn_count: 43
 skip_prep: False
 
 # Training curriculum parameters
@@ -47,8 +49,18 @@ curriculum_enabled: True
 curriculum_min_words: 1
 curriculum_max_words: 3
 curriculum_num_samples: 10000
+
+# Character and phoneme parameters
 bos_index: 0
-eos_index: 0
+eos_index: 1
+char_min_decode_ratio: 0
+char_max_decode_ratio: 1.0
+char_beam_size: 1
+phn_min_decode_ratio: 0
+phn_max_decode_ratio: 1.0
+phn_beam_size: 1
+
+
 
 # The train logger writes training statistics to a file, as well as stdout.
 train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
@@ -210,6 +222,9 @@ char_dec: !new:speechbrain.lobes.models.madmixture.adapters.RNNDecoder
     rnn: !ref <char_dec_rnn>
     out_dim: !ref <char_count>
     input_key: char_emb
+    emb: !ref <char_emb>
+    bos_index: !ref <bos_index>
+
 
 phn_emb: !new:speechbrain.nnet.embedding.Embedding
     num_embeddings: !ref <phn_count>
@@ -240,6 +255,9 @@ phn_dec: !new:speechbrain.lobes.models.madmixture.adapters.RNNDecoder
     rnn: !ref <phn_dec_rnn>
     out_dim: !ref <phn_count>
     input_key: phn_emb
+    emb: !ref <phn_emb>
+    bos_index: !ref <bos_index>
+
 
 audio_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
     dim: !ref <madmixture_latent_dim>
@@ -296,8 +314,39 @@ compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
     latent_distance_loss_weight: !ref <madmixture_latent_distance_loss_weight>
     latent_distance_loss_fn: !ref <compute_cost_distance>
     anchor: audio
-    
 
+char_beam_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
+    embedding: !ref <char_emb>
+    decoder: !ref <char_dec_rnn>
+    linear: !ref <char_dec.lin_out>
+    bos_index: !ref <bos_index>
+    eos_index: !ref <eos_index>
+    min_decode_ratio: !ref <char_min_decode_ratio>
+    max_decode_ratio: !ref <char_max_decode_ratio>
+    beam_size: !ref <char_beam_size>
+
+phn_beam_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
+    embedding: !ref <phn_emb>
+    decoder: !ref <phn_dec_rnn>
+    linear: !ref <phn_dec.lin_out>
+    bos_index: !ref <bos_index>
+    eos_index: !ref <eos_index>
+    min_decode_ratio: !ref <phn_min_decode_ratio>
+    max_decode_ratio: !ref <phn_max_decode_ratio>
+    beam_size: !ref <phn_beam_size>
+
+
+evaluator: !new:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
+    model: !ref <model>
+    tasks:
+        transfer: !new:speechbrain.lobes.models.madmixture.ModalityTransferTask
+            evaluators:
+                char: !name:speechbrain.lobes.models.madmixture.TokenSequenceEvaluator
+                    decoder: !ref <char_label_encoder>
+                    hyp: !ref <char_beam_search>
+                phn: !name:speechbrain.lobes.models.madmixture.TokenSequenceEvaluator
+                    decoder: !ref <phn_label_encoder>
+                    hyp: !ref <phn_beam_search>
 
 # Objects in "modules" dict will have their parameters moved to the correct
 # device, as well as having train()/eval() called on them by the Brain class
