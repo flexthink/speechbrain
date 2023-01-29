@@ -100,19 +100,19 @@ class MadMixtureBrain(sb.Brain):
         feats_audio = self.modules.normalize(feats_audio, wav_lens)
         
         # TODO: Embeddings are computed twice, avoid this
-        feats_char_emb = self.hparams.char_emb(batch.char_encoded.data)
-        feats_phn_emb = self.hparams.phn_emb(batch.phn_encoded.data)
+        feats_char_emb = self.hparams.char_emb(batch.char_encoded_bos.data)
+        feats_phn_emb = self.hparams.phn_emb(batch.phn_encoded_bos.data)
 
         feats = {
             "audio": feats_audio,
-            "char": batch.char_encoded.data,
-            "phn": batch.phn_encoded.data,
+            "char": batch.char_encoded_eos.data,
+            "phn": batch.phn_encoded_eos.data,
         }
 
         lengths = {
             "audio": wav_lens,
-            "char": batch.char_encoded.lengths,
-            "phn": batch.phn_encoded.lengths,
+            "char": batch.char_encoded_eos.lengths,
+            "phn": batch.phn_encoded_eos.lengths,
         }
 
         context = {
