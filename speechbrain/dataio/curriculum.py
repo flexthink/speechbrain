@@ -58,7 +58,8 @@ class CurriculumSpeechDataset(DynamicItemDataset):
         generator=None,
     ):
         super().__init__(data=from_dataset.data)
-        self.base_dataset = from_dataset
+        self.base_dataset = sample(from_dataset, num_samples)
+        self.data_ids = self.base_dataset.data_ids
         self.min_words = min_words
         self.max_words = max_words
         self.num_samples = num_samples
@@ -197,19 +198,40 @@ class CurriculumSpeechDataset(DynamicItemDataset):
 
         self.add_dynamic_item(cut_sample)
 
-    def sample(self):
-        """Retrieves a sample of the based dataset"""
-        sample_data_ids = torch.tensor(self.base_dataset.data_ids)
-        if self.num_samples:
-            sample_indexes = torch.multinomial(
-                num_samples=self.num_samples,
-                replacement=self.num_samples > len(self.base_dataset),
-            )
-            sample_data_ids = sample_data_ids[sample_indexes]
 
-        return FilteredSortedDynamicItemDataset(
-            from_dataset=self.base_dataset, data_ids=sample_data_ids
+def sample(base_dataset, num_samples):
+    """Retrieves a sample of the base dataset
+    
+    Arguments
+    ---------
+    base_dataset: DynamicItemDataset
+        a base dataset
+    num_samples: int
+        the number of samples to include
+        
+    Returns
+    -------
+    dataset: FilteredSortedDynamicItemDataset
+        a random sample of the dataset    
+    """
+    dataset = base_dataset
+    if num_samples is not None and num_samples != len(base_dataset):
+        sample_indexes = torch.multinomial(
+            torch.ones(len(dataset)) / len(dataset),
+            num_samples=num_samples,
+            replacement=num_samples > len(base_dataset),
         )
+        sample_data_ids = [
+            dataset.data_ids[idx]
+            for idx in sample_indexes
+        ]
+    
+        dataset = FilteredSortedDynamicItemDataset(
+            from_dataset=dataset,
+            data_ids=sample_data_ids
+        )
+
+    return dataset
 
 PIPELINE_WRAPPER_ATTRS = {"pipeline", "key_map"}
 

@@ -637,7 +637,7 @@ def remove_stress_marks(phn):
 
 
 INTERVAL_MAP = [("label", ""), ("begin", "_start"), ("end", "_end")]
-
+INTERVAL_EMPTY_LABELS = {"", "sil", "sp", "spn"}
 
 def intervals_to_dict(intervals, prefix):
     """
@@ -664,9 +664,14 @@ def intervals_to_dict(intervals, prefix):
             }
 
     """
+    # Remove meaningless labels
+    intervals_clean = [
+        interval for interval in intervals
+        if interval["label"] not in INTERVAL_EMPTY_LABELS]
     result = {
-        f"{prefix}{suffix}": [interval[key] for interval in intervals]
+        f"{prefix}{suffix}": [interval[key] for interval in intervals_clean]
         for key, suffix in INTERVAL_MAP
     }
-    result[f"{prefix}_count"] = len(intervals)
+    # This will map space labels to a single one
+    result[f"{prefix}_count"] = len(intervals_clean)
     return result
