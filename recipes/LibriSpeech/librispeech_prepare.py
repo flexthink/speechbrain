@@ -616,7 +616,9 @@ def parse_alignments(file_name):
     phn["phn"] = phn_nostress
     phn["phn_stress"] = phn_stress
     details.update(phn)
-
+    details["unk_count"] = sum(
+        wrd == "<UNK>" for wrd in details["wrd"]
+    )
 
     return details
 

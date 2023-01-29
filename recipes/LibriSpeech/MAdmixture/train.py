@@ -303,6 +303,7 @@ LIBRISPEECH_OUTPUT_KEYS = [
     "wrd",
     "char",
     "phn",
+    "unk_count"
 ]
 
 LIBRISPEECH_OUTPUT_KEYS_DYNAMIC = LIBRISPEECH_OUTPUT_KEYS + [
@@ -391,8 +392,12 @@ def dataio_prepare(hparams):
         dynamic_dataset = sb.dataio.dataset.DynamicItemDataset.from_json(
             data_info[dataset],
             replacements={"data_root": data_folder},
-            output_keys=LIBRISPEECH_OUTPUT_KEYS_DYNAMIC
+        ).filtered_sorted(
+            key_max_value={
+                "unk_count": 0
+            },
         )
+        dynamic_dataset.set_output_keys(LIBRISPEECH_OUTPUT_KEYS_DYNAMIC)
 
         # Use the curriculum sampler to reduce the dataset's complexity
         if hparams["curriculum_enabled"]:

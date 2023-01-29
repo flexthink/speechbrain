@@ -57,7 +57,8 @@ class CurriculumSpeechDataset(DynamicItemDataset):
         sample_rate=16000,
         generator=None,
     ):
-        super().__init__(data=from_dataset.data)
+        super().__init__(
+            data=from_dataset.data, use_existing_id=True)
         self.base_dataset = sample(from_dataset, num_samples)
         self.data_ids = self.base_dataset.data_ids
         self.min_words = min_words

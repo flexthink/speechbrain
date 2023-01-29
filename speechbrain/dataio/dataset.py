@@ -141,18 +141,24 @@ class DynamicItemDataset(Dataset):
         If a dict is given; it is used to map internal keys to output keys.
         From the output_keys dict key:value pairs the key appears outside,
         and value is the internal key.
+
+    use_existing_id: bool
+        if true, pre-existing item IDs in values will be used. This is
+        useful for pre-existing datasets
     """
 
     def __init__(
         self, data, dynamic_items=[], output_keys=[],
+        use_existing_id=False
     ):
         self.data = data
         self.data_ids = list(self.data.keys())
         static_keys = list(self.data[self.data_ids[0]].keys())
-        if "id" in static_keys:
+        if "id" in static_keys and not use_existing_id:
             raise ValueError("The key 'id' is reserved for the data point id.")
         else:
-            static_keys.append("id")
+            if "id" not in static_keys:
+                static_keys.append("id")
         self.pipeline = DataPipeline(static_keys, dynamic_items)
         self.set_output_keys(output_keys)
 
