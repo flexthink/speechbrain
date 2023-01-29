@@ -43,6 +43,8 @@ char_count: 31
 phn_list_file: ./hparams/phn_en_arpabet.txt
 phn_count: 43
 skip_prep: False
+# This can be overriden with "train" for overfitting tests
+eval_dataset: valid
 
 # Training curriculum parameters
 curriculum_enabled: True
@@ -369,6 +371,7 @@ lr_annealing: !new:speechbrain.nnet.schedulers.NewBobScheduler
 # are moved to the correct device. Then it will be added to the checkpointer.
 opt_class: !name:torch.optim.Adam
      lr: !ref <lr>
+     #capturable: True
 
 
 # This object is used for saving the state of training both so that it

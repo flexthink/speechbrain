@@ -94,7 +94,6 @@ class MadMixtureBrain(sb.Brain):
         wavs, wav_lens = batch.sig
 
         #TODO: This can be made more modular
-
         # Feature computation and normalization
         feats_audio = self.hparams.compute_features(wavs)
         feats_audio = self.modules.normalize(feats_audio, wav_lens)
@@ -345,23 +344,20 @@ def dataio_prepare(hparams):
         @sb.utils.data_pipeline.takes(f"_{prefix}")
         @sb.utils.data_pipeline.provides(
             f"{prefix}",
-            f"{prefix}_list",
+            f"{prefix}_encoded",
             f"{prefix}_encoded_bos",
             f"{prefix}_encoded_eos",
-            f"{prefix}_encoded"
         )
         def pipeline_fn(seq):
-            yield seq
             seq_list = list(seq)
             yield seq_list
             tokens_list = label_encoder.encode_sequence_torch(seq_list)
-            yield tokens_list
+            tokens = torch.LongTensor(tokens_list)
+            yield tokens
             tokens_bos = label_encoder.prepend_bos_index(tokens_list)
             yield tokens_bos
             tokens_eos = label_encoder.append_eos_index(tokens_list)
             yield tokens_eos
-            tokens = torch.LongTensor(tokens_list)
-            yield tokens
         return pipeline_fn
 
         
@@ -406,7 +402,7 @@ def dataio_prepare(hparams):
             key_min_value=key_min_value,
             key_max_value=key_max_value
         )
-        dynamic_dataset.set_output_keys(LIBRISPEECH_OUTPUT_KEYS_DYNAMIC)
+        dynamic_dataset.set_output_keys(LIBRISPEECH_OUTPUT_KEYS)
 
         # Use the curriculum sampler to reduce the dataset's complexity
         if hparams["curriculum_enabled"]:
@@ -429,9 +425,9 @@ def dataio_prepare(hparams):
             )
         else:
             logger.info("Curriculum sampling is disabled, using the complete dataset")
-        dynamic_dataset.set_output_keys(LIBRISPEECH_OUTPUT_KEYS_DYNAMIC)
         for dynamic_item in dynamic_items:
             dynamic_dataset.add_dynamic_item(dynamic_item)
+        dynamic_dataset.set_output_keys(LIBRISPEECH_OUTPUT_KEYS_DYNAMIC)
         datasets[dataset] = dynamic_dataset
         hparams[f"{dataset}_dataloader_opts"]["shuffle"] = False
 
@@ -582,10 +578,11 @@ if __name__ == "__main__":
     # necessary to update the parameters of the model. Since all objects
     # with changing state are managed by the Checkpointer, training can be
     # stopped at any point, and will be resumed on next call.
+    eval_dataset = hparams["eval_dataset"]
     madmixture_brain.fit(
         madmixture_brain.hparams.epoch_counter,
         datasets["train"],
-        datasets["valid"],
+        datasets[eval_dataset],
         train_loader_kwargs=hparams["train_dataloader_opts"],
         valid_loader_kwargs=hparams["valid_dataloader_opts"],
     )
