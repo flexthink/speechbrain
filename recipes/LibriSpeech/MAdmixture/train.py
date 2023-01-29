@@ -386,16 +386,25 @@ def dataio_prepare(hparams):
     phn_encoder = init_sequence_encoder(hparams, "phn")
     phn_pipeline = sequence_pipeline("phn", phn_encoder)
     dynamic_items = [audio_pipeline, char_pipeline, phn_pipeline]
+    curriculum = hparams.get("curriculum")
 
     for dataset in data_info:
         # Load the full LibriSpeech dataset
+        key_max_value = {
+            "unk_count": 0,
+        }
+        key_min_value=None
+        if hparams["curriculum_enabled"]:            
+            key_min_value = {
+                "wrd_count": curriculum["max_words"]            
+            }        
+
         dynamic_dataset = sb.dataio.dataset.DynamicItemDataset.from_json(
             data_info[dataset],
             replacements={"data_root": data_folder},
         ).filtered_sorted(
-            key_max_value={
-                "unk_count": 0
-            },
+            key_min_value=key_min_value,
+            key_max_value=key_max_value
         )
         dynamic_dataset.set_output_keys(LIBRISPEECH_OUTPUT_KEYS_DYNAMIC)
 
