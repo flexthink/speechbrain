@@ -411,7 +411,7 @@ def dataio_prepare(hparams):
                 "Using curriculum sampling with %d-%d words, %d samples",
                 curriculum["min_words"],
                 curriculum["max_words"],
-                curriculum["num_samples"]
+                curriculum["num_samples"][dataset]
             )
             curriculum_generator = torch.Generator()
             curriculum_generator.manual_seed(hparams["seed"])
@@ -419,7 +419,7 @@ def dataio_prepare(hparams):
                 from_dataset=dynamic_dataset,
                 min_words=curriculum["min_words"],
                 max_words=curriculum["max_words"],
-                num_samples=curriculum["num_samples"],
+                num_samples=curriculum["num_samples"][dataset],
                 sample_rate=hparams["sample_rate"],
                 generator=curriculum_generator,
             )
@@ -590,6 +590,6 @@ if __name__ == "__main__":
     # Load best checkpoint for evaluation
     test_stats = madmixture_brain.evaluate(
         test_set=datasets["test"],
-        min_key="WER",
+        min_key="loss",
         test_loader_kwargs=hparams["test_dataloader_opts"],
     )

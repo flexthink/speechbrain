@@ -50,7 +50,9 @@ eval_dataset: valid
 curriculum_enabled: True
 curriculum_min_words: 1
 curriculum_max_words: 3
-curriculum_num_samples: 10000
+curriculum_num_samples_train: 10000
+curriculum_num_samples_valid: 1000
+curriculum_num_samples_test: 1000
 
 # Character and phoneme parameters
 bos_index: 0
@@ -390,4 +392,7 @@ checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
 curriculum:
     min_words: !ref <curriculum_min_words>
     max_words: !ref <curriculum_max_words>
-    num_samples: !ref <curriculum_num_samples>
+    num_samples: 
+        train: !ref <curriculum_num_samples_train>
+        valid: !ref <curriculum_num_samples_valid>
+        test: !ref <curriculum_num_samples_test>                
