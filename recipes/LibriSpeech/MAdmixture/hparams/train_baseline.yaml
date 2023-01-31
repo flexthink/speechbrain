@@ -45,6 +45,11 @@ phn_count: 43
 skip_prep: False
 # This can be overriden with "train" for overfitting tests
 eval_dataset: valid
+overfit_test: False
+overfit_test_sample_count: !ref <batch_size>
+overfit_test_epoch_data_count: 1000
+overfit_test_shuffle: True
+
 
 # Training curriculum parameters
 curriculum_enabled: True

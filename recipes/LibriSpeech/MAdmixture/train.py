@@ -13,8 +13,8 @@ import speechbrain as sb
 import os
 from hyperpyyaml import load_hyperpyyaml
 from librispeech_prepare import prepare_librispeech, LibriSpeechMode
-from speechbrain.utils.distributed import run_on_main
 from collections import namedtuple
+from speechbrain.dataio.dataset import apply_overfit_test
 
 logger = logging.getLogger(__name__)
 
@@ -428,6 +428,8 @@ def dataio_prepare(hparams):
         for dynamic_item in dynamic_items:
             dynamic_dataset.add_dynamic_item(dynamic_item)
         dynamic_dataset.set_output_keys(LIBRISPEECH_OUTPUT_KEYS_DYNAMIC)
+        dynamic_dataset = apply_overfit_test(
+            hparams, dynamic_dataset, dataset=="train")
         datasets[dataset] = dynamic_dataset
         hparams[f"{dataset}_dataloader_opts"]["shuffle"] = False
 

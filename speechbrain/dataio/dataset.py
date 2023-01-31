@@ -7,6 +7,8 @@ Authors
 
 import copy
 import contextlib
+import math
+import torch
 from types import MethodType
 from torch.utils.data import Dataset
 from speechbrain.utils.data_pipeline import DataPipeline
@@ -385,6 +387,36 @@ class DynamicItemDataset(Dataset):
         dataset.keys = MethodType(keys, dataset)
         return cls(dataset, dynamic_items, output_keys)
 
+    def overfit_test(self, sample_count, total_count, shuffle=False):
+        """Creates a subset of this dataset for an overfitting
+        test - repeating sample_count samples to create a repeating
+        dataset with a total of epoch_data_count samples
+
+        Argument
+        --------
+        sample_count: int
+            the number of samples to select
+        total_count: int
+            the total data count
+        shuffle: bool
+            whether to shuffle the samples
+
+        Returns
+        -------
+        dataset: FilteredSortedDynamicItemDataset
+            a dataset with a repeated subset
+        """
+        num_repetitions = math.ceil(total_count / sample_count)
+        data_ids = self.data_ids[:sample_count]
+        if shuffle:
+            data_idx = torch.randperm(sample_count)
+            base_data_ids = [data_ids[idx] for idx in data_idx]
+        else:
+            base_data_ids = data_ids
+        overfit_samples = base_data_ids * num_repetitions
+        overfit_samples = overfit_samples[:total_count]
+        return FilteredSortedDynamicItemDataset(self, overfit_samples)
+    
 
 class FilteredSortedDynamicItemDataset(DynamicItemDataset):
     """Possibly filtered, possibly sorted DynamicItemDataset.
@@ -421,3 +453,39 @@ def set_output_keys(datasets, output_keys):
     """Helper for setting the same item to multiple datasets."""
     for dataset in datasets:
         dataset.set_output_keys(output_keys)
+
+def apply_overfit_test(hparams, dataset, train=False):
+    """Helper for applying an overfit test conditionally based
+    on hyperparameters:
+    
+    `overfit_test`: whether or not to apply an overfit test
+    `overfit_test_sample_count`: the number of samples to use from the
+        original dataset
+    `overfit_test_epoch_data_count`: the number of samples per epoch
+
+    Arguments
+    ---------
+    hparams: dict
+        parsed hyperparameters
+    dataset: DynamicItemDataset
+        a dataset
+    train: bool
+        if true, the selected `overfit_test_sample_count`
+        items will be repeated to get `overfit_test_epoch_data_count`
+        items (during training).
+
+        otherwise, only `overfit_test_sample_count` will
+        be selected
+        
+    """
+    if hparams["overfit_test"]:
+        sample_count = hparams["overfit_test_sample_count"]
+        epoch_data_count = (
+            hparams["overfit_test_epoch_data_count"]
+            if train
+            else sample_count
+        )
+        shuffle = hparams.get("overfit_test_shuffle", True)
+        dataset = dataset.overfit_test(
+            sample_count, epoch_data_count, shuffle)
+    return dataset
