@@ -111,7 +111,6 @@ class CurriculumSpeechDataset(DynamicItemDataset):
         max_offset = wrd_count - self.sample_word_counts
         self.wrd_offset_start = (sample_offsets_rel * max_offset).floor().int().clamp(0)
         self.wrd_offset_end = (self.wrd_offset_start + self.sample_word_counts)
-        self.wrd_offset_end = torch.minimum(self.wrd_offset_end, self.sample_word_counts - 1)
         self.wrd_offset_end = torch.maximum(self.wrd_offset_end, self.wrd_offset_start + 1)
         self.wrd_offset_end = torch.minimum(self.wrd_offset_end, wrd_count - 1)
         sample_start = torch.tensor(
