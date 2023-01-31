@@ -433,10 +433,17 @@ def dataio_prepare(hparams):
         datasets[dataset] = dynamic_dataset
         hparams[f"{dataset}_dataloader_opts"]["shuffle"] = False
 
-    # Sorting training data with ascending order makes the code  much
-    # faster  because we minimize zero-padding. In most of the cases, this
-    # does not harm the performance.
-    if hparams["sorting"] == "ascending":
+    # Apply the sort order. Sorting by duration can help reduce
+    # zero-padding. Such sorting is not applicable for overfit
+    # tests
+    if hparams["overfit_test"]:
+        logger.info(
+            "Performing an overfit test with %d samples used, %d per epoch "
+            "- sorting will be ignored",
+            hparams["overfit_test_sample_count"],
+            hparams["overfit_test_epoch_data_count"]
+        )
+    elif hparams["sorting"] == "ascending":
         datasets["train"] = datasets["train"].filtered_sorted(sort_key="duration")
         hparams["train_dataloader_opts"]["shuffle"] = False
 
