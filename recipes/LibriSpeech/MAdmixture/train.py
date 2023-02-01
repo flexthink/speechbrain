@@ -52,8 +52,9 @@ class MadMixtureBrain(sb.Brain):
         # We first move the batch to the appropriate device.
         batch = batch.to(self.device)
         feats, lengths, context = self.prepare_features(stage, batch)
-        latents, alignments, enc_out, rec = self.modules.model.train_step(feats, lengths, context)
-        return MadMixturePredictions(latents, alignments, enc_out, rec, feats, lengths)
+        latents, alignments, enc_out, rec, transfer_rec = self.modules.model.train_step(
+            feats, lengths, context, transfer=self.hparams.transfer_loss_enabled)
+        return MadMixturePredictions(latents, alignments, enc_out, rec, transfer_rec, feats, lengths)
     
     def fit_batch(self, batch):
         result = super().fit_batch(batch)
@@ -146,7 +147,8 @@ class MadMixtureBrain(sb.Brain):
             latents=predictions.latents,
             alignments=predictions.alignments,
             rec=predictions.rec,
-            length=predictions.lengths
+            length=predictions.lengths,
+            transfer_rec=predictions.transfer_rec
         )
 
         if self.hparams.enable_train_metrics:
@@ -157,6 +159,7 @@ class MadMixtureBrain(sb.Brain):
                 alignments=predictions.alignments,
                 rec=predictions.rec,
                 length=predictions.lengths,
+                transfer_rec=predictions.transfer_rec,
                 reduction="batch"
             )
         return loss
@@ -282,6 +285,7 @@ MadMixturePredictions = namedtuple(
         "alignments",
         "enc_out",
         "rec",
+        "transfer_rec",
         "feats",
         "lengths"
     ]

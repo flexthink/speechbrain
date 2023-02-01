@@ -82,6 +82,7 @@ lr: 0.001
 sorting: ascending
 ckpt_interval_minutes: 15 # save checkpoint every N min
 label_smoothing: 0.1
+transfer_loss_enabled: true
 
 # Dataloader options
 train_dataloader_opts:

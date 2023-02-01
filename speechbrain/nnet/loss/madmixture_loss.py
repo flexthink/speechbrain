@@ -78,11 +78,11 @@ class MadMixtureLoss(nn.Module):
         self.latent_distance_loss_weight = latent_distance_loss_weight
     
 
-    def forward(self, inputs, length, latents, alignments, rec, reduction="mean"):
-        details = self.details(inputs, length, latents, alignments, rec, reduction)
+    def forward(self, inputs, length, latents, alignments, rec, transfer_rec, reduction="mean"):
+        details = self.details(inputs, length, latents, alignments, rec, transfer_rec, reduction)
         return details["loss"]
 
-    def details(self, inputs, length, latents, alignments, rec, reduction="mean"):
+    def details(self, inputs, length, latents, alignments, rec, transfer_rec, reduction="mean"):
         """Computes the MadMixture loss with the detailed breakdown
         of all loss components
         
@@ -144,11 +144,29 @@ class MadMixtureLoss(nn.Module):
             modality_distance_loss
         )
         loss_details.update(modality_distance_loss_details)
+        if transfer_rec is not None:
+            transfer_loss, modality_transfer_loss, weighted_modality_transfer_loss = self.compute_transfer_loss(
+                inputs=inputs,
+                transfer_rec=transfer_rec, 
+                lengths=length,
+                reduction=reduction
+            )
+            modality_transfer_loss_details = self._modality_expand_transfer(
+                "transfer", modality_transfer_loss
+            )
+            weighted_modality_transfer_loss_details = self._modality_expand_transfer(
+                "transfer_weighted", weighted_modality_transfer_loss
+            )
+            loss_details.update(modality_transfer_loss_details)
+            loss_details.update(weighted_modality_transfer_loss_details)
+        else:
+            transfer_loss = torch.tensor(0.).to(rec_loss.device)
 
         loss = (
             self.rec_loss_weight * rec_loss 
             + self.align_attention_loss_weight * alignment_loss
             + self.latent_distance_loss_weight * latent_distance_loss
+            + transfer_loss
         )
         loss_details["loss"] = loss
         return loss_details
@@ -172,6 +190,28 @@ class MadMixtureLoss(nn.Module):
             f"{prefix}_{key}_loss": value
             for key, value in loss_dict.items()
         }
+    
+    def _modality_expand_transfer(self, prefix, loss_dict):
+        """A version of _modality_expand for the transfer
+        loss
+        
+        Arguments
+        ---------
+        prefix: str
+            the modality prefix
+        loss_dict
+            the raw loss values for the modality
+            
+        Arguments
+        ---------
+        result: dict
+            a new dictionary with keys rewritten as "{prefix}_{key}_loss
+        """
+        return {
+            f"{prefix}_{src}_to_{tgt}_loss": value
+            for (src, tgt), value in loss_dict.items()
+        }
+    
     
     def compute_rec_loss(self, inputs, rec, lengths, reduction="mean"):
         """Computes the recreation losses
@@ -214,6 +254,28 @@ class MadMixtureLoss(nn.Module):
         )
         return rec_loss, modality_rec_loss, weighted_modality_rec_loss
     
+
+    def compute_transfer_loss(self, inputs, transfer_rec, lengths, reduction="mean"):
+        modality_transfer_loss = {
+            (src, tgt): self.rec_loss_fn[tgt](
+                modality_transfer_rec,
+                inputs[tgt],
+                length=lengths[tgt],
+                reduction=reduction
+            )
+            for (src, tgt), modality_transfer_rec 
+            in transfer_rec.items()
+        }
+        weighted_modality_transfer_loss = {
+            (src, tgt): self.modality_weights[tgt] * loss
+            for (src, tgt), loss in modality_transfer_loss.items()
+        }
+        transfer_loss = torch.stack(
+            list(weighted_modality_transfer_loss.values())
+        ).sum(dim=0)
+        return transfer_loss, modality_transfer_loss, weighted_modality_transfer_loss
+        
+
     def _weighted_modality_loss(self, modality_loss):
         weighted_modality_loss = {
             key: self.modality_weights[key] * loss_value

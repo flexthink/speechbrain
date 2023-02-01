@@ -17,6 +17,10 @@ from speechbrain.lobes.models.transformer.Transformer import (
 from math import floor, ceil
 from enum import Enum
 
+# TODO: The current handling of decoder lengths does not
+# make a lot of sense - one would need to pass and predict
+# anchor lengths for each modality
+
 class MadMixture(nn.Module):
     """The MAdmixture (Modality Admixture) generic multimodal
     model framework
@@ -237,7 +241,6 @@ class MadMixture(nn.Module):
         else:
             targets = tgt
 
-
         return {
             key: self.modalities[key].decode(latent, lengths=lengths, context=context)
             for key in targets
@@ -274,7 +277,12 @@ class MadMixture(nn.Module):
         latents, alignments, enc_out = self.latent(src_inputs, src_lengths)
 
         # Reconstruct
-        rec = self.decode_single(latents[src], src_lengths[src], tgt=tgt)
+        decode_length = (
+            src_lengths[self.anchor_name]
+            if self.anchor_name in src_lengths
+            else torch.ones(len(inputs[src])).to(inputs[src].device)
+        )
+        rec = self.decode_single(latents[src], decode_length, tgt=tgt)
 
         return rec, latents, alignments, enc_out
 
@@ -298,12 +306,12 @@ class MadMixture(nn.Module):
         return {
             key: self.modalities[key].decode(
                 modality_latent,
-                lengths=lengths.get(key) if lengths is not None else None,
+                lengths=lengths.get(self.anchor_name) if lengths is not None else None,
                 context=context)
             for key, modality_latent in latent.items()
         }
     
-    def train_step(self, inputs, lengths=None, context=None):
+    def train_step(self, inputs, lengths=None, context=None, transfer=False):
         """A convenience function for model training, 
         encoding inputs and then decoding them from
         latent representations
@@ -321,11 +329,54 @@ class MadMixture(nn.Module):
             arbitrary model-specific context information, as a
             str -> tensor dictionary. This can be used to pass items like
             ground truths for teacher forcing, alignment data, etc
+
+        Returns
+        -------
+        latents: torch.Tensor
+            latent representations
+        alignments: torch.Tensor
+            alignment matrices
+        enc_out: torch.Tensor
+            raw encoder outputs
+        rec: torch.Tensor
+            direct reconstructions
+        transfer_rec: torch.Tensor
+            cross-reconstructions, if requested. If transfer=False,
+            transfers will not be attempted
         
         """
         latents, alignments, enc_out = self.latent(inputs, lengths, context)
         rec = self.decode_multiple(latents, lengths, context)
-        return latents, alignments, enc_out, rec
+        if transfer:
+            transfer_rec = self.cross_decode(latents, lengths, context)
+        else:
+            transfer_rec = None
+
+        return latents, alignments, enc_out, rec, transfer_rec
+    
+    def cross_decode(self, latents, length, context=None):
+        """Decodes multipe latents into multiple modalities, useful during
+        training
+        
+        Arguments
+        ---------
+                inputs: dict
+            A string -> tensor dictionary representing the model inputs
+
+        lengths: dict
+            A string -> tensor dictionary representing relative lengths
+            for variable-length inputs, where applicable
+
+        context: dict
+            arbitrary model-specific context information, as a
+            str -> tensor dictionary. This can be used to pass items like
+            ground truths for teacher forcing, alignment data, etc
+        """
+        return {
+            (src, tgt): self.modalities[tgt].decode(
+                latents[src], length[self.anchor_name], context=context)
+            for src, tgt in self.cross_transfers
+        }
     
 
 class ModalityType(Enum):
