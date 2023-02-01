@@ -278,9 +278,13 @@ class TokenSequenceEvaluator(OutputEvaluator):
 
     tgt_lengths: torch.Tensor:
         target sequence lengths
+
+    ignore_tokens: enumerable
+        a collection of tokens (in decoded form) that
+        will be removed from sequences
         
     """
-    def __init__(self, decoder=None, hyp=None):
+    def __init__(self, decoder=None, hyp=None, ignore_tokens=None):
         self.decoder = decoder
         if isinstance(self.decoder, TextEncoder):
             decoder_fn = self.decoder.decode_ndim
@@ -298,19 +302,28 @@ class TokenSequenceEvaluator(OutputEvaluator):
             hyp = partial(hyp_s2s_search, searcher=hyp)
 
         self.hyp = hyp
+        self.ignore_tokens = set(ignore_tokens) if self.ignore_tokens else None
 
     def append(self, ids, predict, target, latent, src_lengths, tgt_lengths):
         """Appends a batch of predictions to the
         evaluator
         """
         hyps = self.hyp(predict, src_lengths, latent)
+        hyps_clean = self._clean(hyps)
         self.error_stats.append(
             ids=ids,
-            predict=hyps,
+            predict=hyps_clean,
             target=target,
             target_len=tgt_lengths,
             ind2lab=self.decoder_fn
         )
+
+    def _clean(self, hyps):
+        """Removes any ignored tokens from the hypothesis list"""
+        return [
+            item for batch in hyps for item in batch
+            if item not in self.ignored_tokens
+        ] if self.ignore_tokens else hyps
 
     def report(self, path):
         """Outputs the relevant reports
@@ -349,6 +362,18 @@ class TokenSequenceEvaluator(OutputEvaluator):
         file_name = os.path.join(path, TOKEN_SEQUENCE_ALIGNMENT_REPORT)
         with open(file_name, "w") as report_file:
             self.error_stats.write_stats(report_file)
+
+
+class AudioEvaluator(EvaluationTask):
+    def __init__(self, model):
+        super.__init__(model)
+
+    def append(self, ids, predict, target, latent, src_lengths, tgt_lengths):
+        pass
+
+    def save_spectrograms(ids, predict, targets):
+        for item_id, predict_item, target_item in zip(ids, predict, targets):
+            pass
 
 
 def hyp_argmax(probs, lengths=None, latent=None, eos_index=None):

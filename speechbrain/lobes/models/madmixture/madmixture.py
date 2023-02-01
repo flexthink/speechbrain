@@ -206,7 +206,9 @@ class MadMixture(nn.Module):
             the raw alignment matrix
         """
         if key in self.aligned_modalities:
-            result = self.modalities[key].aligner(key, enc_out, lengths)
+            anchor_name = self.anchor_name if self.anchor_name in lengths else None
+            result = self.modalities[key].aligner(
+                key, enc_out, lengths, anchor_name)
         else:
             result = None, None
         return result
@@ -526,7 +528,31 @@ class Modality(nn.Module):
 class Aligner(nn.Module):
     """A base class for auxiliary modules that align encoded outputs in
     a given modality to the latent space"""
-    def forward(self, key, enc_out, length):
+    
+    def forward(self, key, enc_out, lengths, anchor=None):
+        """Computes alignments
+
+        Arguments
+        ---------
+        key: str
+            the modality key
+        enc_out: torch.Tensor
+            raw encoded states
+        length: torch.Tensor
+            relative lengths
+        anchor: str
+            the modality to which outputs will be "anchored".
+            If prvided, masking of outputs will be done
+            based on anchor lengths
+
+        Returns
+        -------
+        output: torch.Tensor
+            aligned outputs
+        alignment: torch.Tensor
+            the alignment matrix from the attention module
+        
+        """
         raise NotImplementedError()
 
 
@@ -615,7 +641,7 @@ class AttentionalAligner(nn.Module):
         new_length = floor(enc_out.size(1) * self.scale)
         return enc_out_scaled[:, :new_length, :]
 
-    def forward(self, key, enc_out, lengths):
+    def forward(self, key, enc_out, lengths, anchor=None):
         """Computes alignments using an attention module
 
         Arguments
@@ -626,13 +652,27 @@ class AttentionalAligner(nn.Module):
             raw encoded states
         length: torch.Tensor
             relative lengths
+        anchor: str
+            the modality to which outputs will be "anchored".
+            If prvided, masking of outputs will be done
+            based on anchor lengths
+
+        Returns
+        -------
+        output: torch.Tensor
+            aligned outputs
+        alignment: torch.Tensor
+            the alignment matrix from the attention module
         
         """
+        if anchor is None:
+            anchor = key
         mod_enc_out = enc_out[key]
         mod_length = lengths[key]
+        anchor_length = lengths[anchor]
         queries = self.get_queries(mod_enc_out)
         queries_max_len = queries.size(1)
-        queries_mask = length_to_mask(mod_length * queries_max_len, queries_max_len).unsqueeze(-1)
+        queries_mask = length_to_mask(anchor_length * queries_max_len, queries_max_len).unsqueeze(-1)
         masked_queries = queries * queries_mask
         
         mod_enc_out_scaled = self.feature_scale(mod_enc_out)
