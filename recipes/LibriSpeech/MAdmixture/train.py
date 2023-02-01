@@ -187,7 +187,7 @@ class MadMixtureBrain(sb.Brain):
 
         out = self.compute_forward(batch, stage=stage)
         loss = self.compute_objectives(out, batch, stage=stage)
-        self.hparams.evaluator.append(
+        self.evaluator.append(
             ids=batch.snt_id,
             inputs=out.feats,
             lengths=out.lengths,
@@ -210,6 +210,7 @@ class MadMixtureBrain(sb.Brain):
             metric=self.hparams.compute_cost.details,
             batch_eval=True
         )
+        self.evaluator = self.hparams.evaluator()
 
     def on_stage_end(self, stage, stage_loss, epoch):
         """Gets called at the end of an epoch.
@@ -257,13 +258,7 @@ class MadMixtureBrain(sb.Brain):
                 )
 
             # Write evaluation reports for the epoch
-            epoch_report_path = os.path.join(
-                self.hparams.reports_folder,
-                str(epoch)
-            )
-            self.hparams.evaluator.report(
-                epoch_report_path
-            )
+            self.evaluation_report()
 
         # We also write statistics about test data to stdout and to the logfile.
         elif stage == sb.Stage.TEST:
@@ -273,11 +268,12 @@ class MadMixtureBrain(sb.Brain):
             )
 
     def evaluation_report(self):
+        """Outputs the evaluation report"""
         report_path = os.path.join(
-            self.hparams.reports_path,
+            self.hparams.reports_folder,
             str(self.hparams.epoch_counter.current)
         )
-        self.hparams.evaluator.report(report_path)
+        self.evaluator.report(report_path)
 
 MadMixturePredictions = namedtuple(
     "MadMixturePredictions",

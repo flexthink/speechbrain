@@ -46,6 +46,33 @@ def undo_padding(batch, lengths):
     return as_list
 
 
+def undo_padding_tensor(batch, lengths):
+    """A version of undo_padding that returns a list of tensors
+    of varying lengths (instead of a list of lists)
+
+    Arguments
+    ---------
+    batch : tensor
+        Batch of sentences gathered in a batch.
+    lengths : tensor
+        Relative length of each sentence in the batch.
+
+    Example
+    -------
+    >>> batch=torch.rand([4,100])
+    >>> lengths=torch.tensor([0.5,0.6,0.7,1.0])
+    >>> snt_list=undo_padding(batch, lengths)
+    >>> len(snt_list)
+    4
+    """
+    batch_max_len = batch.shape[1]
+    lengths_abs = (lengths * batch_max_len).round().int().tolist()
+    return [
+        seq.narrow(0, 0, length)
+        for seq, length in zip(batch, lengths_abs)
+    ]
+
+
 def get_all_files(
     dirName, match_and=None, match_or=None, exclude_and=None, exclude_or=None
 ):

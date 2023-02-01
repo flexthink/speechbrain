@@ -143,6 +143,10 @@ phn_dec_neurons: 512
 phn_dec_att_neurons: 256
 phn_dec_num_layers: 4
 
+ignore_tokens:
+    - <bos>
+    - <eos>
+
 
 #MAdmixture model parameters
 madmixture_latent_dim: 32
@@ -160,6 +164,8 @@ phn_label_encoder: !new:speechbrain.dataio.encoder.TextEncoder
 
 
 # Feature extraction
+# TODO: Match spectrogram characteristics to those of 
+# typical vocoders
 compute_features: !new:speechbrain.lobes.features.Fbank
     sample_rate: !ref <sample_rate>
     n_fft: !ref <n_fft>
@@ -347,11 +353,12 @@ phn_beam_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
     beam_size: !ref <phn_beam_size>
 
 
-evaluator: !new:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
+evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
     model: !ref <model>
     tasks:
         transfer: !new:speechbrain.lobes.models.madmixture.ModalityTransferTask
             evaluators:
+                audio: !name:speechbrain.lobes.models.madmixture.SpectrogramEvaluator
                 char: !name:speechbrain.lobes.models.madmixture.TokenSequenceEvaluator
                     decoder: !ref <char_label_encoder>
                     hyp: !ref <char_beam_search>

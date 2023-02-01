@@ -8,11 +8,14 @@ Authors
 import os
 import json
 import torch
+import logging
 from speechbrain.utils.metric_stats import ErrorRateStats
 from speechbrain.dataio.encoder import TextEncoder
 from speechbrain.decoders.seq2seq import S2SBaseSearcher
-from speechbrain.utils.data_utils import undo_padding
+from speechbrain.utils.data_utils import undo_padding, undo_padding_tensor
 from functools import partial
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_OUTPUT = "./output"
 
@@ -207,6 +210,8 @@ class ModalityTransferTask(EvaluationTask):
         """
         for src, tgt in self.supported_transfers:
             tgt_path = os.path.join(path, f"{src}_to_{tgt}")
+            if not os.path.exists(tgt_path):
+                os.makedirs(tgt_path)
             self.evaluators[src, tgt].report(tgt_path)
 
 
@@ -273,12 +278,6 @@ class TokenSequenceEvaluator(OutputEvaluator):
         If not provided, a simple argmax over the last
         dimension will be used 
 
-    src_lengths: torch.Tensor
-        source sequence lengths
-
-    tgt_lengths: torch.Tensor:
-        target sequence lengths
-
     ignore_tokens: enumerable
         a collection of tokens (in decoded form) that
         will be removed from sequences
@@ -302,11 +301,31 @@ class TokenSequenceEvaluator(OutputEvaluator):
             hyp = partial(hyp_s2s_search, searcher=hyp)
 
         self.hyp = hyp
-        self.ignore_tokens = set(ignore_tokens) if self.ignore_tokens else None
+        self.ignore_tokens = set(ignore_tokens) if ignore_tokens else None
 
     def append(self, ids, predict, target, latent, src_lengths, tgt_lengths):
-        """Appends a batch of predictions to the
-        evaluator
+        """Updates sequence metrics with the data samples provided
+        
+        Arguments
+        ---------
+        ids: list
+            the IDs of samples, for reporting purposes, in
+            the same order as samples in the batch
+        predict: torch.Tensor
+            predictions corresponding to samples in the batch
+        target: torch.Tensor
+            ground truths
+        target: torch.Tensor
+            latent representations - useful when using non-trivial
+            decoding methods, such as a beam search over autoregressive
+            models
+        src_lengths: torch.Tensor
+            source sequence lengths
+        tgt_lengths: torch.Tensor:
+            target sequence lengths
+
+        lengths: torch.Tensor
+            the relative lengths of the ground truths
         """
         hyps = self.hyp(predict, src_lengths, latent)
         hyps_clean = self._clean(hyps)
@@ -333,8 +352,6 @@ class TokenSequenceEvaluator(OutputEvaluator):
         path: str
             the path to output reports, samples, etc
         """
-        if not os.path.exists(path):
-            os.makedirs(path)
         self.report_summary(path)
         self.report_detail(path)
 
@@ -364,16 +381,179 @@ class TokenSequenceEvaluator(OutputEvaluator):
             self.error_stats.write_stats(report_file)
 
 
-class AudioEvaluator(EvaluationTask):
-    def __init__(self, model):
-        super.__init__(model)
+SPECTROGRAM_DEFAULT_FIGURE_SIZE = (16, 10)
+class SpectrogramEvaluator(OutputEvaluator):
+    """An evaluator that outputs audio spectrogram samples
+
+    Arguments
+    ---------
+    figsize: tuple
+        the Matplotlib figure size to be used for spectrograms
+        (defaults to (16, 10))
+    """
+    def __init__(self, figsize=None):
+        self.predict = []
+        self.target = []
+        self.ids = []
+        if figsize is None:
+            figsize = SPECTROGRAM_DEFAULT_FIGURE_SIZE
+        self.figsize = figsize
+        self.plt = _get_matplotlib()        
+    
+    @property
+    def can_plot(self):
+        """Determines if plotting is available
+        
+        Returns
+        -------
+        result: bool
+            whether or not plotting is available
+        """
+        return self.plt is not None
 
     def append(self, ids, predict, target, latent, src_lengths, tgt_lengths):
-        pass
+        """Remembers raw outputs for spectrogram plotting
+        
+        Arguments
+        ---------
+        ids: list
+            the IDs of samples, for reporting purposes, in
+            the same order as samples in the batch
+        predict: torch.Tensor
+            predictions corresponding to samples in the batch
+        target: torch.Tensor
+            ground truths
+        target: torch.Tensor
+            latent representations - useful when using non-trivial
+            decoding methods, such as a beam search over autoregressive
+            models
+        src_lengths: torch.Tensor
+            source sequence lengths
+        tgt_lengths: torch.Tensor:
+            target sequence lengths
 
-    def save_spectrograms(ids, predict, targets):
-        for item_id, predict_item, target_item in zip(ids, predict, targets):
-            pass
+        lengths: torch.Tensor
+            the relative lengths of the ground truths
+        """
+        self.ids.extend(ids)
+        self.predict.extend(
+            undo_padding_tensor(predict.detach().cpu(), tgt_lengths)
+        )
+        self.target.extend(
+            undo_padding_tensor(target.detach().cpu(), tgt_lengths)
+        )
+
+    def report(self, path):
+        """Outputs all accumulated spectrograms
+        
+        Arguments
+        ---------
+        path: str
+            the target path
+        """
+        self.save_spectrograms_raw(path)
+        if self.can_plot:
+            self.save_spectrograms_image(path)
+    
+
+    def save_spectrograms_image(self, path):
+        """Saves all spectrograms as images, using Matplotlib
+
+        Arguments
+        ---------
+        path: str
+            the target path            
+        
+        """
+        for sample_id, predict_sample, target_sample in zip(self.ids, self.predict, self.target):
+            self.save_spectrogram_image(path, sample_id, predict_sample, target_sample)
+    
+    def save_spectrograms_raw(self, path):
+        """Saves all spectrograms as a raw PyTorch file
+        
+        Arguments
+        ---------
+        path: str
+            the target path            
+        """
+        file_name = os.path.join(path, "raw.pt")
+        data = {
+            "ids": self.ids,
+            "predict": self.predict,
+            "target": self.target,        
+        }
+        torch.save(data, file_name)
+
+    def save_spectrogram_image(self, path, sample_id, predict_sample, target_sample):
+        """Saves a single spectrogram image
+        
+        Arguments
+        ---------
+        path: str
+            the target path
+        predict: torch.Tensor
+            the prediction (a single spectrogram)
+        target: torch.Tensor
+            the target (a single spectrogram)        
+        """
+        fig = self.plot_comparison(sample_id, predict_sample, target_sample)
+        try:
+            file_name = os.path.join(path, f"{sample_id}.png")
+            fig.savefig(file_name)
+        finally:
+            self.plt.close(fig)
+
+    def plot_comparison(self, sample_id, predict, target):
+        """Plots a single prediction/target spectrogram comparison
+        
+        Arguments
+        ---------
+        sample_id: str
+            the ID of the sample
+        predict: torch.Tensor
+            the prediction (a single spectrogram)
+        target: torch.Tensor
+            the target (a single spectrogram)
+        
+        Returns
+        -------
+        fig: matplotlib.figure.Figure
+            a Matplotlib figure
+        """
+        fig = self.plt.figure()
+        predict_plot = predict[:target.size(0), :].t()
+        target_plot = target.t()
+        try:
+            ax = fig.add_subplot(1, 2, 1)
+            fig.suptitle(f"Spectrogram: {sample_id}")
+            ax.set_title("Prediction")
+            ax.set_ylabel("Features")
+            ax.set_xlabel("Time")
+            im = ax.imshow(predict_plot, aspect="auto", origin="lower")
+            fig.colorbar(im, orientation="vertical")
+            ax = fig.add_subplot(1, 2, 2)
+            ax.set_title("Target")
+            ax.set_xlabel("Time")
+            im = ax.imshow(target_plot, aspect="auto", origin="lower")
+            fig.colorbar(im, orientation="vertical")
+            fig.tight_layout()
+            return fig
+        except:
+            self.plt.close(fig)
+            raise
+
+
+def _get_matplotlib():
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        return plt
+    except ImportError:
+        logger.warn("matplotlib is not available - cannot log figures")
+        return None
+
+
 
 
 def hyp_argmax(probs, lengths=None, latent=None, eos_index=None):
