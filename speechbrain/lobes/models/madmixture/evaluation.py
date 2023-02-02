@@ -340,8 +340,9 @@ class TokenSequenceEvaluator(OutputEvaluator):
     def _clean(self, hyps):
         """Removes any ignored tokens from the hypothesis list"""
         return [
-            item for batch in hyps for item in batch
-            if item not in self.ignored_tokens
+            [item  for item in batch
+             if item not in self.ignore_tokens]
+            for batch in hyps
         ] if self.ignore_tokens else hyps
 
     def report(self, path):
