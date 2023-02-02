@@ -44,7 +44,6 @@ phn_list_file: ./hparams/phn_en_arpabet.txt
 phn_count: 43
 skip_prep: False
 # This can be overriden with "train" for overfitting tests
-eval_dataset: valid
 overfit_test: False
 overfit_test_sample_count: !ref <batch_size>
 overfit_test_epoch_data_count: 1000
@@ -145,8 +144,8 @@ phn_dec_att_neurons: 256
 phn_dec_num_layers: 4
 
 ignore_tokens:
-    - <bos>
-    - <eos>
+    - !ref <bos_index>
+    - !ref <eos_index>
 
 
 #MAdmixture model parameters
@@ -363,9 +362,11 @@ evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
                 char: !name:speechbrain.lobes.models.madmixture.TokenSequenceEvaluator
                     decoder: !ref <char_label_encoder>
                     hyp: !ref <char_beam_search>
+                    ignore_tokens: !ref <ignore_tokens>
                 phn: !name:speechbrain.lobes.models.madmixture.TokenSequenceEvaluator
                     decoder: !ref <phn_label_encoder>
                     hyp: !ref <phn_beam_search>
+                    ignore_tokens: !ref <ignore_tokens>
 
 # Objects in "modules" dict will have their parameters moved to the correct
 # device, as well as having train()/eval() called on them by the Brain class
@@ -388,7 +389,7 @@ lr_annealing: !new:speechbrain.nnet.schedulers.NewBobScheduler
 # are moved to the correct device. Then it will be added to the checkpointer.
 opt_class: !name:torch.optim.Adam
      lr: !ref <lr>
-     #capturable: True
+     capturable: True
 
 
 # This object is used for saving the state of training both so that it

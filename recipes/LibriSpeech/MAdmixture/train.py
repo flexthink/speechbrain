@@ -373,9 +373,12 @@ def dataio_prepare(hparams):
     data_folder = hparams["data_folder"]
     data_info = {
         "train": hparams["train_annotation"],
-        "valid": hparams["valid_annotation"],
-        "test": hparams["test_annotation"],
     }
+    if not hparams["overfit_test"]:
+        data_info.update({
+            "valid": hparams["valid_annotation"],
+            "test": hparams["test_annotation"],
+        })
 
     char_encoder = init_sequence_encoder(hparams, "char")
     char_pipeline = sequence_pipeline("char", char_encoder)
@@ -428,10 +431,10 @@ def dataio_prepare(hparams):
         for dynamic_item in dynamic_items:
             dynamic_dataset.add_dynamic_item(dynamic_item)
         dynamic_dataset.set_output_keys(LIBRISPEECH_OUTPUT_KEYS_DYNAMIC)
-        dynamic_dataset = apply_overfit_test(
-            hparams, dynamic_dataset, dataset=="train")
         datasets[dataset] = dynamic_dataset
         hparams[f"{dataset}_dataloader_opts"]["shuffle"] = False
+    datasets = apply_overfit_test(
+        hparams, datasets)
 
     # Apply the sort order. Sorting by duration can help reduce
     # zero-padding. Such sorting is not applicable for overfit
@@ -587,18 +590,18 @@ if __name__ == "__main__":
     # necessary to update the parameters of the model. Since all objects
     # with changing state are managed by the Checkpointer, training can be
     # stopped at any point, and will be resumed on next call.
-    eval_dataset = hparams["eval_dataset"]
     madmixture_brain.fit(
         madmixture_brain.hparams.epoch_counter,
         datasets["train"],
-        datasets[eval_dataset],
+        datasets["valid"],
         train_loader_kwargs=hparams["train_dataloader_opts"],
         valid_loader_kwargs=hparams["valid_dataloader_opts"],
     )
-
-    # Load best checkpoint for evaluation
-    test_stats = madmixture_brain.evaluate(
-        test_set=datasets["test"],
-        min_key="loss",
-        test_loader_kwargs=hparams["test_dataloader_opts"],
-    )
+    
+    if not hparams["overfit_test"]:
+        # Load best checkpoint for evaluation
+        test_stats = madmixture_brain.evaluate(
+            test_set=datasets["test"],
+            min_key="loss",
+            test_loader_kwargs=hparams["test_dataloader_opts"],
+        )

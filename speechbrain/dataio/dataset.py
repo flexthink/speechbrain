@@ -454,7 +454,7 @@ def set_output_keys(datasets, output_keys):
     for dataset in datasets:
         dataset.set_output_keys(output_keys)
 
-def apply_overfit_test(hparams, dataset, train=False):
+def apply_overfit_test(hparams, dataset):
     """Helper for applying an overfit test conditionally based
     on hyperparameters:
     
@@ -463,29 +463,55 @@ def apply_overfit_test(hparams, dataset, train=False):
         original dataset
     `overfit_test_epoch_data_count`: the number of samples per epoch
 
+    The function will accept datasets, (train, valid, test) tuples
+    or dictionaries of the form:
+    {"train": dataset1, "valid": dataset2, "test": dataset3}
+
+    If a tuple or dictionary is used, the training dataset will be of length
+    overfit_test_epoch_data_count wheres the evaluation dataset will be of
+    length overfit_test_sample_count.
+
     Arguments
     ---------
     hparams: dict
         parsed hyperparameters
-    dataset: DynamicItemDataset
+    dataset: DynamicItemDataset|tuple|dict
+        One of the following
         a dataset
-    train: bool
-        if true, the selected `overfit_test_sample_count`
-        items will be repeated to get `overfit_test_epoch_data_count`
-        items (during training).
+        a dictionary ({"train": dataset1, "valid": dataset2, "test": dataset3})
+        a (train, valid, test)  tuple of datasets   
 
-        otherwise, only `overfit_test_sample_count` will
-        be selected
-        
+    Returns
+    -------
+    result: DynamicItemDataset|tuple|dict
+        a dataset or collection of datasets suitable for
+        an overfitting test - in the same format as the
+        dataset argument (single dataset, dictionary and tuple)
     """
     if hparams["overfit_test"]:
-        sample_count = hparams["overfit_test_sample_count"]
-        epoch_data_count = (
-            hparams["overfit_test_epoch_data_count"]
-            if train
-            else sample_count
-        )
-        shuffle = hparams.get("overfit_test_shuffle", True)
-        dataset = dataset.overfit_test(
-            sample_count, epoch_data_count, shuffle)
-    return dataset
+        if isinstance(dataset, tuple):
+            dataset_train, _, _ = dataset
+            dataset_train = apply_overfit_test(
+                hparams, dataset_train)
+            dataset_eval = dataset_train.filtered_sorted(
+                select_n=hparams["overfit_test_sample_count"])
+            result = dataset_train, dataset_eval, dataset_eval
+        elif isinstance(dataset, dict):
+            dataset_train = apply_overfit_test(
+                hparams, dataset["train"])
+            dataset_eval = dataset_train.filtered_sorted(
+                select_n=hparams["overfit_test_sample_count"])
+            result = {
+                "train": dataset_train,
+                "valid": dataset_eval,
+                "test": dataset_eval
+            }
+        else:
+            shuffle = hparams.get("overfit_test_shuffle", True)
+            result = dataset.overfit_test(
+                 hparams["overfit_test_sample_count"],
+                 hparams["overfit_test_epoch_data_count"],
+                 hparams.get("overfit_test_shuffle", True))
+    else:
+        result = dataset
+    return result
