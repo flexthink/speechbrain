@@ -31,7 +31,7 @@ class MadMixtureEvaluator:
         for task in self.tasks.values():
             task.bind(model)
 
-    def append(self, ids, inputs, lengths, targets):
+    def append(self, ids, inputs, latents, alignments, lengths, targets):
         """Adds a data sample to the evaluation, for
         all available evaluation tasks
         
@@ -43,6 +43,12 @@ class MadMixtureEvaluator:
 
         inputs: dict
             all available input features, for each modality
+
+        latents: dict
+            latent representations, for each modality
+
+        alignments: dict
+            alignment matrices, for each modality
         
         lengths: dict
             all available output features, for each modality
@@ -52,7 +58,7 @@ class MadMixtureEvaluator:
 
         """
         for task in self.tasks.values():
-            task.append(ids, inputs, lengths, targets)
+            task.append(ids, inputs, latents, alignments, lengths, targets)
 
     def report(self, path):
         for key, task in self.tasks.items():
@@ -81,7 +87,7 @@ class EvaluationTask:
         """
         self.model = model
 
-    def append(self, ids, inputs, lengths, targets):
+    def append(self, ids, inputs, latent, alignments, lengths, targets):
         """Adds a data sample to the evaluation
         
         Arguments
@@ -93,6 +99,12 @@ class EvaluationTask:
         inputs: dict
             all available input features, for each modality
         
+        latents: dict
+            latent representations, for each modality
+
+        alignments: dict
+            alignment matrices, for each modality            
+        
         lengths: dict
             all available output features, for each modality
 
@@ -102,6 +114,13 @@ class EvaluationTask:
         raise NotImplementedError()
 
     def report(self, path):
+        """Outputs reports for the modality transfer task
+        
+        Arguments
+        ---------
+        path: str
+            the report path
+        """        
         raise NotImplementedError()
 
 
@@ -135,7 +154,7 @@ class ModalityTransferTask(EvaluationTask):
         }
 
 
-    def append(self, ids, inputs, lengths, targets):
+    def append(self, ids, inputs, latents, alignments, lengths, targets):
         """Adds a data sample to the evaluation
         
         Arguments
@@ -146,6 +165,12 @@ class ModalityTransferTask(EvaluationTask):
 
         inputs: dict
             all available input features, for each modality
+        
+        latents: dict
+            latent representations, for each modality
+
+        alignments: dict
+            alignments, for each modalities
         
         lengths: dict
             all available output features, for each modality
@@ -178,7 +203,8 @@ class ModalityTransferTask(EvaluationTask):
         
         src: str
             the source modality key
-        """        
+        """
+
         # A single transfer can produce latents from one modality
         # (running an encoder once with its aligner) and then
         # decode to all available targets
@@ -210,10 +236,108 @@ class ModalityTransferTask(EvaluationTask):
         """
         for src, tgt in self.supported_transfers:
             tgt_path = os.path.join(path, f"{src}_to_{tgt}")
-            if not os.path.exists(tgt_path):
-                os.makedirs(tgt_path)
+            os.makedirs(tgt_path, exist_ok=True)
             self.evaluators[src, tgt].report(tgt_path)
 
+class LatentSpaceAnalysisTask(EvaluationTask):
+    def __init__(self, model=None):
+        super().__init__(model)
+        self.ids = []
+        self.latents = {}
+        self.lengths = []
+        self.plt = _get_matplotlib()
+
+    """Computes and outputs latent representations for analysis"""
+    def append(self, ids, inputs, latents, alignments, lengths, targets):
+        """Adds a data sample to the evaluation
+        
+        Arguments
+        ---------
+        ids: list
+            the IDs of samples, for reporting purposes, in
+            the same order as samples in the batch
+
+        inputs: dict
+            all available input features, for each modality
+
+        inputs: dict
+            all available input features, for each modality            
+
+        latents: dict
+            latent representations, for each modality
+
+        alignments: dict
+            alignments, for each modalities
+                    
+        lengths: dict
+            all available output features, for each modality
+
+        targets: dict
+            ground truths for each modality
+        """
+        self.ids.extend(ids)
+        for key, modality_latents in latents.items():
+            if key not in self.latents.items():
+                self.latents[key] = []
+            self.latents[key].extend(
+                modality_latents.detach().cpu()
+            )
+        self.lengths.extend(lengths)
+
+    def report(self, path):
+        """Outputs reports for the modality transfer task
+        
+        Arguments
+        ---------
+        path: str
+            the report path
+        """
+        os.makedirs(path, exist_ok=True)
+        self.save_raw(path)
+        if self.plt is not None:
+            self.save_images(path)
+
+    def save_raw(self, path):
+        """Saves raw tensors"""
+        data = {
+            "ids": self.ids,
+            "latents": self.latents,
+            "lengths": self.lengths,
+        }
+        file_name = os.path.join(path, "raw.pt")
+        torch.save(data, file_name)
+    
+    def save_images(self, path):
+
+        for idx, sample_id in enumerate(self.ids):
+            sample_latents = {
+                key: modality_latents[idx]
+                for key, modality_latents in self.latents.items()
+            }
+            file_name = os.path.join(path, f"{sample_id}.png")
+            fig = self.plot_image(sample_id, sample_latents)
+            try:
+                fig.savefig(file_name)
+            finally:
+                self.plt.close(fig)
+
+    def plot_image(self, sample_id, sample_latents):
+        fig = self.plt.figure()
+        try:
+            modality_count = len(sample_latents)
+            fig.suptitle(f"Latent: {sample_id}")
+            for idx, (key, sample_latent) in enumerate(sample_latents.items()):
+                ax = fig.add_subplot(1, modality_count, idx + 1)
+                ax.set_title(key)
+                ax.set_ylabel("Features")
+                ax.set_xlabel("Time")
+                im = ax.imshow(sample_latent.t(), aspect="auto", origin="lower")
+                fig.colorbar(im, orientation="vertical")
+            fig.tight_layout()
+            return fig
+        except:
+            self.plt.close(fig)
+            raise
 
     
 TOKEN_SEQUENCE_SUMMARY_REPORT = "summary.json"
@@ -261,8 +385,7 @@ class OutputEvaluator:
         path: str
             the path to output reports, samples, etc
         """
-        raise NotImplementedError()
-    
+        raise NotImplementedError()    
 
 class TokenSequenceEvaluator(OutputEvaluator):
     """An evaluator for targets that can be interpreted
@@ -329,6 +452,8 @@ class TokenSequenceEvaluator(OutputEvaluator):
         """
         hyps = self.hyp(predict, src_lengths, latent)
         hyps_clean = self._clean(hyps)
+        targets_list = undo_padding(target, tgt_lengths)
+        targets_clean = self._clean(targets_list)
         self.error_stats.append(
             ids=ids,
             predict=hyps_clean,
@@ -401,17 +526,6 @@ class SpectrogramEvaluator(OutputEvaluator):
         self.figsize = figsize
         self.plt = _get_matplotlib()        
     
-    @property
-    def can_plot(self):
-        """Determines if plotting is available
-        
-        Returns
-        -------
-        result: bool
-            whether or not plotting is available
-        """
-        return self.plt is not None
-
     def append(self, ids, predict, target, latent, src_lengths, tgt_lengths):
         """Remembers raw outputs for spectrogram plotting
         
@@ -422,14 +536,14 @@ class SpectrogramEvaluator(OutputEvaluator):
             the same order as samples in the batch
         predict: torch.Tensor
             predictions corresponding to samples in the batch
-        target: torch.Tensor
+        latent: torch.Tensor
             ground truths
         target: torch.Tensor
             latent representations - useful when using non-trivial
             decoding methods, such as a beam search over autoregressive
             models
         src_lengths: torch.Tensor
-            source sequence lengths
+            source sequence lengthsaten
         tgt_lengths: torch.Tensor:
             target sequence lengths
 
@@ -453,7 +567,7 @@ class SpectrogramEvaluator(OutputEvaluator):
             the target path
         """
         self.save_spectrograms_raw(path)
-        if self.can_plot:
+        if self.plt is not None:
             self.save_spectrograms_image(path)
     
 

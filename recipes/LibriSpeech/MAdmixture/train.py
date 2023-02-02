@@ -193,6 +193,8 @@ class MadMixtureBrain(sb.Brain):
         self.evaluator.append(
             ids=batch.snt_id,
             inputs=out.feats,
+            latents=out.latents,
+            alignments=out.alignments,
             lengths=out.lengths,
             targets=out.feats
         )        
