@@ -27,7 +27,7 @@ class MadMixtureEvaluator:
     produce a series of outputs and reports"""
     def __init__(self, model, tasks):
         self.model = model
-        self.tasks = tasks
+        self.tasks = {key: task() for key, task in tasks.items()}
         for task in self.tasks.values():
             task.bind(model)
 

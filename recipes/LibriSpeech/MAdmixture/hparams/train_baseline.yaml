@@ -356,7 +356,7 @@ phn_beam_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
 evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
     model: !ref <model>
     tasks:
-        transfer: !new:speechbrain.lobes.models.madmixture.ModalityTransferTask
+        transfer: !name:speechbrain.lobes.models.madmixture.ModalityTransferTask
             evaluators:
                 audio: !name:speechbrain.lobes.models.madmixture.SpectrogramEvaluator
                 char: !name:speechbrain.lobes.models.madmixture.TokenSequenceEvaluator
@@ -367,7 +367,7 @@ evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
                     decoder: !ref <phn_label_encoder>
                     hyp: !ref <phn_beam_search>
                     ignore_tokens: !ref <ignore_tokens>
-        latent: !new:speechbrain.lobes.models.madmixture.LatentSpaceAnalysisTask        
+        latent: !name:speechbrain.lobes.models.madmixture.LatentSpaceAnalysisTask        
 
 # Objects in "modules" dict will have their parameters moved to the correct
 # device, as well as having train()/eval() called on them by the Brain class
