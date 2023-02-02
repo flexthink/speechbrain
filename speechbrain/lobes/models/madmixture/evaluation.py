@@ -240,10 +240,13 @@ class ModalityTransferTask(EvaluationTask):
             self.evaluators[src, tgt].report(tgt_path)
 
 class LatentSpaceAnalysisTask(EvaluationTask):
+    """A task that performs latent space analysis. Currently it will
+    output latent spaces and alignments for each modality"""
     def __init__(self, model=None):
         super().__init__(model)
         self.ids = []
         self.latents = {}
+        self.alignments = {}
         self.lengths = []
         self.plt = _get_matplotlib()
 
@@ -276,13 +279,18 @@ class LatentSpaceAnalysisTask(EvaluationTask):
             ground truths for each modality
         """
         self.ids.extend(ids)
-        for key, modality_latents in latents.items():
-            if key not in self.latents.items():
-                self.latents[key] = []
-            self.latents[key].extend(
-                modality_latents.detach().cpu()
-            )
         self.lengths.extend(lengths)
+        self._extend_modality_dict(self.latents, latents)
+        self._extend_modality_dict(self.alignments, alignments)
+
+    def _extend_modality_dict(self, target, values):
+        for key, modality_values in values.items():
+            if key not in target.items():
+                target[key] = []
+            target[key].extend(
+                modality_values.detach().cpu()
+            )
+
 
     def report(self, path):
         """Outputs reports for the modality transfer task
@@ -302,37 +310,48 @@ class LatentSpaceAnalysisTask(EvaluationTask):
         data = {
             "ids": self.ids,
             "latents": self.latents,
+            "alignments": self.alignments,
             "lengths": self.lengths,
         }
         file_name = os.path.join(path, "raw.pt")
         torch.save(data, file_name)
     
     def save_images(self, path):
-
         for idx, sample_id in enumerate(self.ids):
             sample_latents = {
                 key: modality_latents[idx]
                 for key, modality_latents in self.latents.items()
             }
+            sample_alignments = {
+                key: modality_alignments[idx]
+                for key, modality_alignments in self.alignments.items()
+            }
             file_name = os.path.join(path, f"{sample_id}.png")
-            fig = self.plot_image(sample_id, sample_latents)
+            fig = self.plot_image(sample_id, sample_latents, sample_alignments)
             try:
                 fig.savefig(file_name)
             finally:
                 self.plt.close(fig)
 
-    def plot_image(self, sample_id, sample_latents):
+    def plot_image(self, sample_id, sample_latents, sample_alignments):
         fig = self.plt.figure()
         try:
             modality_count = len(sample_latents)
             fig.suptitle(f"Latent: {sample_id}")
             for idx, (key, sample_latent) in enumerate(sample_latents.items()):
-                ax = fig.add_subplot(1, modality_count, idx + 1)
+                ax = fig.add_subplot(2, modality_count, idx + 1)
                 ax.set_title(key)
                 ax.set_ylabel("Features")
                 ax.set_xlabel("Time")
                 im = ax.imshow(sample_latent.t(), aspect="auto", origin="lower")
                 fig.colorbar(im, orientation="vertical")
+            for idx, (key, sample_alignment) in enumerate(sample_alignments.items()):
+                ax = fig.add_subplot(2, modality_count, modality_count + idx + 1)
+                ax.set_title(f"align: {key}")
+                ax.set_ylabel("Outputs")
+                ax.set_xlabel("Inputs")
+                im = ax.imshow(sample_alignment)
+                fig.colorbar(im, orientation="vertical")                   
             fig.tight_layout()
             return fig
         except:
