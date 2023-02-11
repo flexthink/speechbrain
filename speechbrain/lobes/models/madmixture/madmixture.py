@@ -879,6 +879,7 @@ class AttentionalAligner(nn.Module):
         output, alignment = self.attn(
             query=masked_queries,
             key=mod_enc_out_scaled,
-            value=mod_enc_out_scaled
+            value=mod_enc_out_scaled,
+            key_padding_mask=~(out_mask.bool().squeeze(-1)),
         )
         return output * queries_mask, alignment
