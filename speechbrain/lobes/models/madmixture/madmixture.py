@@ -6,7 +6,7 @@ Authors
 """
 import torch
 from torch import nn, Tensor
-from typing import Dict
+from typing import Dict, Tuple
 from speechbrain.nnet.attention import MultiheadAttention
 from speechbrain.nnet.CNN import Conv1d, ConvTranspose1d
 from speechbrain.nnet.normalization import LayerNorm
@@ -232,7 +232,16 @@ class MadMixture(nn.Module):
             the target modalities    
         
         length: torch.Tensor
-            the lengths of individual items"""
+            the lengths of individual items
+
+        Returns
+        -------
+        rec: dict
+            the reconstruction from the latent space,
+            from each modality
+        context: dict
+            the context collected from each encoder    
+        """
         
         if tgt is None:
             targets = self.modalities.keys()
@@ -241,10 +250,65 @@ class MadMixture(nn.Module):
         else:
             targets = tgt
 
-        return {
+        rec_with_context = {
             key: self.modalities[key].decode(latent, lengths=lengths, context=context)
             for key in targets
         }
+        return self._extract_context(rec_with_context)
+
+    def _extract_context(self, rec_with_context):
+        """Extracts context information from a single
+        dictionary with both reconstructions and context
+        for each modality into two distinct dictionaries
+        
+        Arguments
+        ---------
+        rec_with_context: dict
+            a str -> (rec, context) dictionary for all modalities
+            
+        Returns
+        -------
+        rec: dict
+            a dictionary of reconstructions for each modality
+        context: dict
+            context entries from all modalities
+        """
+        rec, context = {}, {}
+        for key, (mod_rec, mod_context) in rec_with_context.items():
+            rec[key] = mod_rec
+            prefixed_mod_context = {
+                f"{key}_{context_key}": value
+                for context_key, value in mod_context.items()
+            }
+            context.update(prefixed_mod_context)
+        return rec, context
+    
+    def _extract_context_cross(self, rec_with_context):
+        """Extracts context information from a single
+        dictionary with both reconstructions and context
+        for each modality into two distinct dictionaries
+        
+        Arguments
+        ---------
+        rec_with_context: dict
+            a str -> (rec, context) dictionary for all modalities
+            
+        Returns
+        -------
+        rec: dict
+            a dictionary of reconstructions for each modality
+        context: dict
+            context entries from all modalities
+        """
+        rec, context = {}, {}
+        for (src, tgt), (mod_rec, mod_context) in rec_with_context.items():
+            rec[src, tgt] = mod_rec
+            prefixed_mod_context = {
+                f"{src}_to_{tgt}_{context_key}": value
+                for context_key, value in mod_context.items()
+            }
+            context.update(prefixed_mod_context)
+        return rec, context
     
     def transfer(self, inputs, lengths, src, tgt=None):
         """Transfers representations from one modality to another (e.g. speech to text,
@@ -266,7 +330,13 @@ class MadMixture(nn.Module):
         rec: dict
             a str -> tensor dictinaries with reconstructions in all applicable modalities
         latents: dict
-
+            latent representations
+        alignments: dict
+            attention alignments, for each modality
+        enc_out: dict
+            raw encoder outputs
+        out_context: dict
+            the output context
         """
         # NOTE: Support for auxiliary modalities will need to be added later
 
@@ -282,9 +352,9 @@ class MadMixture(nn.Module):
             if self.anchor_name in src_lengths
             else torch.ones(len(inputs[src])).to(inputs[src].device)
         )
-        rec = self.decode_single(latents[src], decode_length, tgt=tgt)
+        rec, out_context = self.decode_single(latents[src], decode_length, tgt=tgt)
 
-        return rec, latents, alignments, enc_out
+        return rec, latents, alignments, enc_out, out_context
 
 
     def decode_multiple(self, latent, lengths, context=None):
@@ -303,13 +373,14 @@ class MadMixture(nn.Module):
             A str -> tensor dictionary representing reconstruction
         
         """
-        return {
+        rec_with_context = {
             key: self.modalities[key].decode(
                 modality_latent,
                 lengths=lengths.get(self.anchor_name) if lengths is not None else None,
                 context=context)
             for key, modality_latent in latent.items()
         }
+        return self._extract_context(rec_with_context)
     
     def train_step(self, inputs, lengths=None, context=None, transfer=False):
         """A convenience function for model training, 
@@ -343,16 +414,19 @@ class MadMixture(nn.Module):
         transfer_rec: torch.Tensor
             cross-reconstructions, if requested. If transfer=False,
             transfers will not be attempted
+        out_context: dict
+            the output context, from all decoders
         
         """
         latents, alignments, enc_out = self.latent(inputs, lengths, context)
-        rec = self.decode_multiple(latents, lengths, context)
+        rec, out_context = self.decode_multiple(latents, lengths, context)
         if transfer:
-            transfer_rec = self.cross_decode(latents, lengths, context)
+            transfer_rec, transfer_context = self.cross_decode(latents, lengths, context)
+            out_context.update(transfer_context)
         else:
             transfer_rec = None
 
-        return latents, alignments, enc_out, rec, transfer_rec
+        return latents, alignments, enc_out, rec, transfer_rec, out_context
     
     def cross_decode(self, latents, length, context=None):
         """Decodes multipe latents into multiple modalities, useful during
@@ -371,12 +445,21 @@ class MadMixture(nn.Module):
             arbitrary model-specific context information, as a
             str -> tensor dictionary. This can be used to pass items like
             ground truths for teacher forcing, alignment data, etc
+        
+        Returns
+        -------
+        rec: dict
+            reconstructions, for each modality
+        context: dict
+            the output context
+        
         """
-        return {
+        rec_with_context = {
             (src, tgt): self.modalities[tgt].decode(
                 latents[src], length[self.anchor_name], context=context)
             for src, tgt in self.cross_transfers
         }
+        return self._extract_context_cross(rec_with_context)
     
 
 class ModalityType(Enum):
@@ -490,9 +573,38 @@ class ContextCallWrapper(CallWrapper):
             the encoder or decoder output
         """
         return self.module(x, lengths, context)
-    
 
-def wrap_module(module):
+class OuputContextCallWrapper(nn.Module):
+    """A wrapper that adds a empty context to the output. This is needed
+    to ensure that scriptability is not compromised"""
+    def __init__(self, module):
+        self.module = module
+    
+    def forward(self, x, lengths, context):
+        """Invokes the module, discarding the lengths and context
+
+        Arguments
+        ---------
+        x: torch.Tensor
+            the data tensor (inputs or latents)
+
+        length: torch.Tensor
+            a length tensor
+
+        context: Dict[str, torch.Tensor]
+            arbitrary model-specific context information
+
+        Returns
+        -------
+        result: torch.Tensor
+            the encoder or decoder output
+        context: dict
+            an empty context
+        """        
+        out = self.module(x, lengths, context)
+        return out, {}
+
+def wrap_module(module, needs_context=False):
     """Wraps the module with a call wrapper with the appropriate signature
     
     Arguments
@@ -510,7 +622,12 @@ def wrap_module(module):
     else:
         wrapper = CallWrapper
 
-    return wrapper(module)
+    outputs_context = getattr(module, "outputs_context", False)
+    module = wrapper(module)
+    if needs_context and not outputs_context:
+        module = OuputContextCallWrapper(module)
+    return module
+    
 
 
 class Modality(nn.Module):
@@ -549,7 +666,7 @@ class Modality(nn.Module):
         self.decoder = decoder
         self.aligner = aligner
         self.encoder = wrap_module(encoder)
-        self.decoder = wrap_module(decoder)
+        self.decoder = wrap_module(decoder, needs_context=True)
         if isinstance(mod_type, str):
             mod_type = ModalityType(mod_type)
         self.mod_type = mod_type
@@ -572,7 +689,7 @@ class Modality(nn.Module):
         return self.encoder(input, lengths, context)
     
     def decode(self, latent, lengths=None, context=None):
-        # type: (Tensor, Tensor, Dict[str, Tensor]) -> Tensor
+        # type: (Tensor, Tensor, Dict[str, Tensor]) -> Tuple[Tensor, Dict[str, Tensor]]
         return self.decoder(latent, lengths, context)
 
 
@@ -619,13 +736,25 @@ class AttentionalAligner(nn.Module):
         the number of attention heads
     dropout: float
         the dropout probability
-    kernel_size: int
-        the kernel size 
     scale: float
         the scaling factor
+    kernel_size: int
+        the kernel size for the compressor
+    smoothener_kernel_size: int
+        the kernel size for the aditional non-strieded "smoothening"
+        layer applied after compression
     """
 
-    def __init__(self, dim, in_dim=None, nhead=1, dropout=0., scale=None, kernel_size=None):
+    def __init__(
+            self,
+            dim,
+            in_dim=None,
+            nhead=1,
+            dropout=0.,
+            scale=None,
+            kernel_size=None,
+            smoothener_kernel_size=5
+        ):
         super().__init__()
         if in_dim is None:
             in_dim = dim
@@ -661,6 +790,7 @@ class AttentionalAligner(nn.Module):
                 kernel_size=kernel_size,
                 padding=padding
             )
+
         else:
             stride = floor(1 / scale)
             if kernel_size is None:
@@ -672,6 +802,15 @@ class AttentionalAligner(nn.Module):
                 kernel_size=kernel_size,
                 padding="same"
             )
+        if self.scale != 1:
+            self.smoothener = Conv1d(
+                in_channels=dim,
+                out_channels=dim,
+                kernel_size=smoothener_kernel_size,
+                padding="same"
+            )
+        else:
+            self.smoothener = nn.Identity()
         
         # Rescale the feature dimension only using a convolutional layer, if necessary
         if in_dim != dim:
@@ -688,7 +827,9 @@ class AttentionalAligner(nn.Module):
         before applying attention   
         
         """
-        enc_out_scaled = self.out_norm(self.compressor(enc_out))
+        enc_out_scaled = self.compressor(enc_out)
+        enc_out_scaled = self.smoothener(enc_out_scaled)
+        enc_out_scaled = self.out_norm(enc_out_scaled)
         new_length = floor(enc_out.size(1) * self.scale)
         return enc_out_scaled[:, :new_length, :]
 

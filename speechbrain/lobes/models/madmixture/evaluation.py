@@ -24,14 +24,25 @@ DEFAULT_OUTPUT = "./output"
 class MadMixtureEvaluator:
     """The high-level evaluation wrapper for the MadMixture model.
     Evaluation may consist of multiple tasks, each of which may 
-    produce a series of outputs and reports"""
-    def __init__(self, model, tasks):
+    produce a series of outputs and reports
+    
+    Arguments
+    ---------
+    model: speechbrain.lobes.models.madmixture.MadMixture
+        a MadMixture model instance
+    tasks: dict
+        a str -> callable dictionary
+    vis_sample: set
+        s selection of IDs to be used for visualization samples
+    """
+    def __init__(self, model, tasks, vis_sample=None):
         self.model = model
         self.tasks = {key: task() for key, task in tasks.items()}
         for task in self.tasks.values():
             task.bind(model)
+        self.use_vis_sample(vis_sample)
 
-    def append(self, ids, inputs, latents, alignments, lengths, targets):
+    def append(self, ids, inputs, latents, alignments, lengths, targets, out_context):
         """Adds a data sample to the evaluation, for
         all available evaluation tasks
         
@@ -55,15 +66,39 @@ class MadMixtureEvaluator:
 
         targets: dict
             ground truths for each modality
+        
+        out_context: dict
+            the output context (decoder-specific tensors, may contain
+            alignments, gates, etc)
 
         """
         for task in self.tasks.values():
-            task.append(ids, inputs, latents, alignments, lengths, targets)
+            task.append(ids, inputs, latents, alignments, lengths, targets, out_context)
 
     def report(self, path):
+        """Outputs evaluation reports
+        
+        Arguments
+        ---------
+        path: str
+            the report path
+        """
         for key, task in self.tasks.items():
             task.report(os.path.join(path, key))
 
+    def use_vis_sample(self, data_ids):
+        """Uses the specified selection of IDs as a visualization sample
+        
+        Arguments
+        ---------
+        data_ids: enumerable
+            A collection of data IDs
+        """
+        if not data_ids:
+            data_ids = []
+        self.vis_sample = set(data_ids)
+        for task in self.tasks.values():
+            task.use_vis_sample(data_ids)
 
 class EvaluationTask:
     """A superclass for evaluation tasks
@@ -87,7 +122,7 @@ class EvaluationTask:
         """
         self.model = model
 
-    def append(self, ids, inputs, latent, alignments, lengths, targets):
+    def append(self, ids, inputs, latent, alignments, lengths, targets, out_context):
         """Adds a data sample to the evaluation
         
         Arguments
@@ -110,6 +145,11 @@ class EvaluationTask:
 
         targets: dict
             ground truths for each modality
+
+        out_context: dict
+            the output context (decoder-specific tensors, may contain
+            alignments, gates, etc)
+
         """
         raise NotImplementedError()
 
@@ -122,7 +162,18 @@ class EvaluationTask:
             the report path
         """        
         raise NotImplementedError()
-
+    
+    def use_vis_sample(self, data_ids):
+        """Uses the specified selection of IDs as a visualization sample
+        
+        Arguments
+        ---------
+        data_ids: enumerable
+            A collection of data IDs
+        """
+        if not data_ids:
+            data_ids = []
+        self.vis_sample = set(data_ids)
 
 
 class ModalityTransferTask(EvaluationTask):
@@ -154,7 +205,7 @@ class ModalityTransferTask(EvaluationTask):
         }
 
 
-    def append(self, ids, inputs, latents, alignments, lengths, targets):
+    def append(self, ids, inputs, latents, alignments, lengths, targets, out_context):
         """Adds a data sample to the evaluation
         
         Arguments
@@ -177,7 +228,7 @@ class ModalityTransferTask(EvaluationTask):
 
         targets: dict
             ground truths for each modality
-        """        
+        """
         # Run evaluation for all primary modalities
         for src in self.model.primary_modalities:
             self.append_modality(ids, inputs, lengths, targets, src)
@@ -208,7 +259,7 @@ class ModalityTransferTask(EvaluationTask):
         # A single transfer can produce latents from one modality
         # (running an encoder once with its aligner) and then
         # decode to all available targets
-        rec, latents, alignments, enc_out = self.model.transfer(
+        rec, latents, alignments, enc_out, out_context = self.model.transfer(
             inputs=inputs,
             lengths=lengths,
             src=src,
@@ -217,13 +268,47 @@ class ModalityTransferTask(EvaluationTask):
         # Run evaluators for all items decoded, comparing to ground
         # truths and producing metrics
         for tgt, tgt_rec in rec.items():
-            self.evaluators[src, tgt].append(
-                ids=ids,
-                predict=tgt_rec,
-                target=targets[tgt],
-                latent=latents[src],
-                src_lengths=lengths[src],
-                tgt_lengths=lengths[tgt]
+            evaluator = self.evaluators[src, tgt]
+            src_latents = latents[src]
+            src_targets, tgt_targets = targets[src], targets[tgt]
+            src_lengths, tgt_lengths = lengths[src], lengths[tgt]
+            if evaluator.vis_samples_only:
+                (
+                    eval_ids,
+                    eval_tgt_rec,
+                    eval_tgt_targets,
+                    eval_src_lengths,
+                    eval_src_latents
+                ) = filter_sample_ids(
+                    ids,
+                    self.vis_sample,
+                    tgt_rec,
+                    tgt_targets,
+                    src_lengths,
+                    src_latents
+                )
+            else:
+
+                (
+                    eval_ids,
+                    eval_tgt_rec,
+                    eval_tgt_targets,
+                    eval_src_lengths,
+                    eval_src_latents
+                ) = (
+                    ids,
+                    tgt_rec,
+                    tgt_targets,
+                    src_lengths,
+                    src_latents
+                )
+            evaluator.append(
+                ids=eval_ids,
+                predict=eval_tgt_rec,
+                target=eval_tgt_targets,
+                latent=eval_src_latents,
+                src_lengths=eval_src_lengths,
+                tgt_lengths=tgt_lengths,
             )
 
     def report(self, path):
@@ -239,19 +324,36 @@ class ModalityTransferTask(EvaluationTask):
             os.makedirs(tgt_path, exist_ok=True)
             self.evaluators[src, tgt].report(tgt_path)
 
+
+LATENT_DEFAULT_FIGSIZE = (16, 16)
+ALGNMENT_DEFAULT_FIGSIZE = (16, 8)
+
 class LatentSpaceAnalysisTask(EvaluationTask):
     """A task that performs latent space analysis. Currently it will
     output latent spaces and alignments for each modality"""
-    def __init__(self, model=None):
+    def __init__(
+            self,
+            model=None,
+            context_alignment_keys=None,
+            figsize_latent=LATENT_DEFAULT_FIGSIZE,
+            figsize_aligment=ALGNMENT_DEFAULT_FIGSIZE
+        ):
         super().__init__(model)
         self.ids = []
         self.latents = {}
         self.alignments = {}
         self.lengths = []
+        self.context_alignments = {}
+        if context_alignment_keys is None:
+            context_alignment_keys = []
+        self.context_alignment_keys = set(context_alignment_keys)
+        self.figsize_latent = figsize_latent
+        self.figsize_alignment = figsize_aligment
+
         self.plt = _get_matplotlib()
 
     """Computes and outputs latent representations for analysis"""
-    def append(self, ids, inputs, latents, alignments, lengths, targets):
+    def append(self, ids, inputs, latents, alignments, lengths, targets, out_context):
         """Adds a data sample to the evaluation
         
         Arguments
@@ -277,20 +379,41 @@ class LatentSpaceAnalysisTask(EvaluationTask):
 
         targets: dict
             ground truths for each modality
-        """
-        self.ids.extend(ids)
-        self.lengths.extend(lengths)
-        self._extend_modality_dict(self.latents, latents)
-        self._extend_modality_dict(self.alignments, alignments)
 
-    def _extend_modality_dict(self, target, values):
+        out_context: dict
+            the output context
+        """
+        ids, lengths, latents, alignments, out_context = filter_sample_ids(
+            ids, self.vis_sample, lengths, latents, alignments, out_context
+        )
+        if ids:
+            self.ids.extend(ids)
+            self.lengths.extend(lengths)
+            self._extend_dict(self.latents, latents)
+            self._extend_dict(self.alignments, alignments)
+            context_alignments = {
+                key: value for key, value in out_context.items()
+                if key in self.context_alignment_keys
+            }
+            self._extend_dict(
+                self.context_alignments, context_alignments)
+
+    def _extend_dict(self, target, values):
+        """Adds per-modality values to a tracking dictionary
+        
+        Arguments
+        ---------
+        target: dict
+            a dictionary
+        values: dict
+            a key -> tensor dictionary (e.g. per-modality values)
+        """
         for key, modality_values in values.items():
-            if key not in target.items():
+            if key not in target:
                 target[key] = []
             target[key].extend(
                 modality_values.detach().cpu()
             )
-
 
     def report(self, path):
         """Outputs reports for the modality transfer task
@@ -312,6 +435,7 @@ class LatentSpaceAnalysisTask(EvaluationTask):
             "latents": self.latents,
             "alignments": self.alignments,
             "lengths": self.lengths,
+            "context_alignments": self.context_alignments
         }
         file_name = os.path.join(path, "raw.pt")
         torch.save(data, file_name)
@@ -327,14 +451,37 @@ class LatentSpaceAnalysisTask(EvaluationTask):
                 for key, modality_alignments in self.alignments.items()
             }
             file_name = os.path.join(path, f"{sample_id}.png")
-            fig = self.plot_image(sample_id, sample_latents, sample_alignments)
+            fig = self.plot_latent(sample_id, sample_latents, sample_alignments)
+            try:
+                fig.savefig(file_name)
+            finally:
+                self.plt.close(fig)
+            
+            sample_context_alignments = {
+                key: context_alignments[idx]
+                for key, context_alignments in self.context_alignments.items()
+            }
+            file_name = os.path.join(path, f"context-{sample_id}.png")
+            fig = self.plot_alignment(sample_id, sample_context_alignments)
             try:
                 fig.savefig(file_name)
             finally:
                 self.plt.close(fig)
 
-    def plot_image(self, sample_id, sample_latents, sample_alignments):
-        fig = self.plt.figure()
+
+    def plot_latent(self, sample_id, sample_latents, sample_alignments):
+        """Plots a latent space with the corresponding alignments
+        
+        Arguments
+        ---------
+        sample_id: str
+            the sample identifier
+        sample_latents: torch.Tensor
+            the latent space context
+        sample_alignments: torch.Tensor
+            the corresponding alignments
+        """
+        fig = self.plt.figure(figsize=self.figsize_latent)
         try:
             modality_count = len(sample_latents)
             fig.suptitle(f"Latent: {sample_id}")
@@ -350,13 +497,38 @@ class LatentSpaceAnalysisTask(EvaluationTask):
                 ax.set_title(f"align: {key}")
                 ax.set_ylabel("Outputs")
                 ax.set_xlabel("Inputs")
-                im = ax.imshow(sample_alignment)
+                im = ax.imshow(sample_alignment, aspect="auto", origin="lower")
                 fig.colorbar(im, orientation="vertical")                   
             fig.tight_layout()
             return fig
         except:
             self.plt.close(fig)
             raise
+
+    def plot_alignment(self, sample_id, alignments):
+        """Plots simple alignments
+        
+        Arguments
+        ---------
+        sample_id: str
+            the sample ID
+        alignments: dict
+            a key -> alignment dictionary
+        """
+        fig = self.plt.figure(figsize=self.figsize_alignment)
+        try:
+            count = len(alignments)
+            fig.suptitle(f"Context: {sample_id}")
+            for idx, (key, alignment) in enumerate(alignments.items()):
+                ax = fig.add_subplot(1, count, idx + 1)
+                ax.set_title(f"{key}", fontsize=10)
+                im = ax.imshow(alignment, aspect="auto", origin="lower")
+                fig.colorbar(im, orientation="vertical")
+            return fig
+        except:
+            self.plt.close()
+            raise
+
 
     
 TOKEN_SEQUENCE_SUMMARY_REPORT = "summary.json"
@@ -369,6 +541,8 @@ class OutputEvaluator:
     In the case of modalities that are difficult to evaluate
     automatically, it may be sufficient to record
     samples."""
+    vis_samples_only = False
+
     def append(self, ids, predict, target, latent, src_lengths, tgt_lengths):
         """Remembers predictions, targets and any associated
         metrics for future reporting
@@ -476,8 +650,7 @@ class TokenSequenceEvaluator(OutputEvaluator):
         self.error_stats.append(
             ids=ids,
             predict=hyps_clean,
-            target=target,
-            target_len=tgt_lengths,
+            target=targets_clean,
             ind2lab=self.decoder_fn
         )
 
@@ -536,6 +709,7 @@ class SpectrogramEvaluator(OutputEvaluator):
         the Matplotlib figure size to be used for spectrograms
         (defaults to (16, 10))
     """
+    vis_samples_only = True
     def __init__(self, figsize=None):
         self.predict = []
         self.target = []
@@ -543,7 +717,7 @@ class SpectrogramEvaluator(OutputEvaluator):
         if figsize is None:
             figsize = SPECTROGRAM_DEFAULT_FIGURE_SIZE
         self.figsize = figsize
-        self.plt = _get_matplotlib()        
+        self.plt = _get_matplotlib()   
     
     def append(self, ids, predict, target, latent, src_lengths, tgt_lengths):
         """Remembers raw outputs for spectrogram plotting
@@ -743,3 +917,50 @@ def hyp_s2s_search(probs, lengths, latent, searcher):
     """
     hyps, _ = searcher(latent, lengths)
     return hyps
+
+
+def filter_sample_ids(ids, sample_ids, *args):
+    """Filters the arguments to include only items
+    included in the sample
+    
+    Arguments
+    ---------
+    ids: list
+        a list of item IDs
+    sample_ids: set
+        the IDs to be included
+    args: list
+        tensors ordered by id"""
+    if sample_ids is None:
+        return ids, *args
+    filtered = [
+        (item_id, idx) for idx, item_id in enumerate(ids)
+        if item_id in sample_ids
+    ]
+    filtered_ids = [item_id for item_id, _ in filtered]
+    indexes = [idx for _, idx in filtered]
+    return filtered_ids, *(
+        _filter_by_index(item, indexes) for item in args)
+
+
+def _filter_by_index(items, indexes):
+    """Filteres a sequence by index. If a tensor is provided,
+    slicing is used. Otherwise, it will use a simple (but slow)
+    list comprehension
+    
+    Arguments
+    ---------
+    items: torch.Tensor|list
+        a sequence of items
+    indexes: list
+        the indexes to select"""
+    if torch.is_tensor(items):
+        filtered_items = items[indexes]
+    elif isinstance(items, dict):
+        filtered_items = {
+            key: _filter_by_index(value, indexes)
+            for key, value in items.items()
+        }
+    else:
+        filtered_items = [items[idx] for idx in indexes]
+    return filtered_items

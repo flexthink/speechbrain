@@ -52,9 +52,9 @@ class MadMixtureBrain(sb.Brain):
         # We first move the batch to the appropriate device.
         batch = batch.to(self.device)
         feats, lengths, context = self.prepare_features(stage, batch)
-        latents, alignments, enc_out, rec, transfer_rec = self.modules.model.train_step(
+        latents, alignments, enc_out, rec, transfer_rec, out_context = self.modules.model.train_step(
             feats, lengths, context, transfer=self.hparams.transfer_loss_enabled)
-        return MadMixturePredictions(latents, alignments, enc_out, rec, transfer_rec, feats, lengths)
+        return MadMixturePredictions(latents, alignments, enc_out, rec, transfer_rec, out_context, feats, lengths)
     
     def fit_batch(self, batch):
         result = super().fit_batch(batch)
@@ -148,7 +148,8 @@ class MadMixtureBrain(sb.Brain):
             alignments=predictions.alignments,
             rec=predictions.rec,
             length=predictions.lengths,
-            transfer_rec=predictions.transfer_rec
+            transfer_rec=predictions.transfer_rec,
+            out_context=predictions.out_context
         )
 
         if self.hparams.enable_train_metrics:
@@ -160,6 +161,7 @@ class MadMixtureBrain(sb.Brain):
                 rec=predictions.rec,
                 length=predictions.lengths,
                 transfer_rec=predictions.transfer_rec,
+                out_context=predictions.out_context,
                 reduction="batch"
             )
         return loss
@@ -196,7 +198,8 @@ class MadMixtureBrain(sb.Brain):
             latents=out.latents,
             alignments=out.alignments,
             lengths=out.lengths,
-            targets=out.feats
+            targets=out.feats,
+            out_context=out.out_context
         )        
         return loss.detach().cpu()
     
@@ -215,7 +218,13 @@ class MadMixtureBrain(sb.Brain):
             metric=self.hparams.compute_cost.details,
             batch_eval=True
         )
+        self.stage_vis_sample = (
+            self.vis_sample[stage]
+            if hasattr(self, "vis_sample")
+            else None
+        )
         self.evaluator = self.hparams.evaluator()
+        self.evaluator.use_vis_sample(self.stage_vis_sample)
 
     def on_stage_end(self, stage, stage_loss, epoch):
         """Gets called at the end of an epoch.
@@ -280,6 +289,18 @@ class MadMixtureBrain(sb.Brain):
         )
         self.evaluator.report(report_path)
 
+    def use_vis_sample(self, data_ids):
+        """
+        Arguments
+        ---------
+        data_ids: dict
+            a key -> enumerable dictionary
+        """
+        self.vis_sample = {
+            sb.Stage[key.upper()]: stage_data_ids
+            for key, stage_data_ids in data_ids.items()
+        }
+
 MadMixturePredictions = namedtuple(
     "MadMixturePredictions",
     [
@@ -288,6 +309,7 @@ MadMixturePredictions = namedtuple(
         "enc_out",
         "rec",
         "transfer_rec",
+        "out_context",
         "feats",
         "lengths"
     ]
@@ -372,6 +394,7 @@ def dataio_prepare(hparams):
     # Define datasets from json data manifest file
     # Define datasets sorted by ascending lengths for efficiency
     datasets = {}
+    # Define samples for visualizations
     data_folder = hparams["data_folder"]
     data_info = {
         "train": hparams["train_annotation"],
@@ -438,6 +461,12 @@ def dataio_prepare(hparams):
     datasets = apply_overfit_test(
         hparams, datasets)
 
+    vis_samples = {
+        key: select_vis_sample(dynamic_dataset, hparams)
+        for key, dynamic_dataset in datasets.items()    
+    }
+    
+
     # Apply the sort order. Sorting by duration can help reduce
     # zero-padding. Such sorting is not applicable for overfit
     # tests
@@ -466,7 +495,24 @@ def dataio_prepare(hparams):
         raise NotImplementedError(
             "sorting must be random, ascending or descending"
         )
-    return datasets
+    return datasets, vis_samples
+
+
+def select_vis_sample(dataset, hparams):
+    """Selects a sample of the specified size
+    
+    Arguments
+    ---------
+    dataset: DynamicItemDataset
+        the dataset from which to select the sample
+    hparams: dict 
+        hyperparameters
+    """
+    sample_size = hparams["eval_vis_sample_size"]
+    generator = torch.Generator()
+    generator.manual_seed(hparams["seed"])
+    indexes = torch.randperm(len(dataset.data_ids), generator=generator)[:sample_size]
+    return [dataset.data_ids[idx] for idx in indexes]
 
 
 def read_token_list(file_name):
@@ -577,7 +623,7 @@ if __name__ == "__main__":
     )
 
     # We can now directly create the datasets for training, valid, and test
-    datasets = dataio_prepare(hparams)
+    datasets, vis_samples = dataio_prepare(hparams)
 
     # Trainer initialization
     madmixture_brain = MadMixtureBrain(
@@ -587,6 +633,7 @@ if __name__ == "__main__":
         run_opts=run_opts,
         checkpointer=hparams["checkpointer"],
     )
+    madmixture_brain.use_vis_sample(vis_samples)
 
     # The `fit()` method iterates the training loop, calling the methods
     # necessary to update the parameters of the model. Since all objects

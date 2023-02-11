@@ -48,6 +48,7 @@ overfit_test: False
 overfit_test_sample_count: !ref <batch_size>
 overfit_test_epoch_data_count: 1000
 overfit_test_shuffle: True
+eval_vis_sample_size: 16
 
 
 # Training curriculum parameters
@@ -315,7 +316,13 @@ compute_cost_rec_char: !name:speechbrain.nnet.losses.nll_loss
 compute_cost_rec_phn: !name:speechbrain.nnet.losses.nll_loss
 compute_cost_alignment: !new:speechbrain.nnet.loss.guidedattn_loss.GuidedAttentionLoss
 compute_cost_distance: !name:speechbrain.nnet.losses.mse_loss
-
+compute_cost_context_alignment: !new:speechbrain.nnet.loss.madmixture_loss.ContextAlignmentLoss
+    keys:
+    - audio_decoder_alignments
+    - phn_to_audio_decoder_alignments
+    - char_to_audio_decoder_alignments
+    loss_fn: !new:speechbrain.nnet.loss.guidedattn_loss.GuidedAttentionLoss
+    anchor: audio
 
 compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
     modalities:
@@ -330,6 +337,7 @@ compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
     align_attention_loss_fn: !ref <compute_cost_alignment>
     latent_distance_loss_weight: !ref <madmixture_latent_distance_loss_weight>
     latent_distance_loss_fn: !ref <compute_cost_distance>
+    context_loss_fn: !ref <compute_cost_context_alignment>
     anchor: audio
 
 char_beam_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
@@ -367,7 +375,11 @@ evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
                     decoder: !ref <phn_label_encoder>
                     hyp: !ref <phn_beam_search>
                     ignore_tokens: !ref <ignore_tokens>
-        latent: !name:speechbrain.lobes.models.madmixture.LatentSpaceAnalysisTask        
+        latent: !name:speechbrain.lobes.models.madmixture.LatentSpaceAnalysisTask
+            context_alignment_keys:
+            - audio_decoder_alignments
+            - char_to_audio_decoder_alignments
+            - phn_to_audio_decoder_alignments
 
 # Objects in "modules" dict will have their parameters moved to the correct
 # device, as well as having train()/eval() called on them by the Brain class
@@ -390,7 +402,7 @@ lr_annealing: !new:speechbrain.nnet.schedulers.NewBobScheduler
 # are moved to the correct device. Then it will be added to the checkpointer.
 opt_class: !name:torch.optim.Adam
      lr: !ref <lr>
-     capturable: True
+     #capturable: True
 
 
 # This object is used for saving the state of training both so that it

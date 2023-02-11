@@ -19,6 +19,8 @@ class TacotronDecoder(nn.Module):
     decoder_input_key
         the key within the context to find decoder inputs for teacher forcing
     """
+    outputs_context = True
+    
     def __init__(self, decoder_input_key="spec", **kwargs):
         super().__init__()
         self.decoder_input_key = decoder_input_key
@@ -42,6 +44,7 @@ class TacotronDecoder(nn.Module):
 
         """
         raw_lengths = lengths * latent.size(1)
+        mel_lengths = None
         if context is not None and self.decoder_input_key in context:
             mel_outputs, gate_outputs, alignments = self.decoder(
                 memory=latent,
@@ -53,8 +56,13 @@ class TacotronDecoder(nn.Module):
                 memory=latent,
                 memory_lengths=raw_lengths
             )
-        #TODO: Develop an "output context"
-        return mel_outputs.transpose(-1, -2)    
+        out_context = {
+            "gate_outputs": gate_outputs,
+            "decoder_alignments": alignments,
+        }
+        if mel_lengths is not None:
+            out_context["mel_lengths"] = mel_lengths
+        return mel_outputs.transpose(-1, -2), out_context
 
 class RNNEncoder(nn.Module):
     """An encoder adapter for RNN modules (LSTM, GRU, etc)
@@ -113,6 +121,9 @@ class RNNDecoder(nn.Module):
     bos_index: int
         the index of the BOS token (needed during inference)
     """
+    
+    outputs_context = True
+
     def __init__(self, rnn, input_key, emb, act=None, out_dim=None, bos_index=0):
         super().__init__()
         self.rnn = rnn
@@ -156,10 +167,11 @@ class RNNDecoder(nn.Module):
                 latent.device
             )
         #TODO: Add support for the default dummy value
-        output, _ = self.rnn(input_value, latent, wav_len=lengths)
+        output, alignments = self.rnn(input_value, latent, wav_len=lengths)
         output = self.lin_out(output)
         output = self.act(output)
-        return output
+        out_context = {"alignments": alignments}
+        return output, out_context
     
     def _get_dummy_sequence(self, batch_size, device):
         seq = torch.tensor([[self.bos_index]], device=device)

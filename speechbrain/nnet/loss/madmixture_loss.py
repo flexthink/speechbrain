@@ -50,6 +50,8 @@ class MadMixtureLoss(nn.Module):
         in latent space
     latent_distance_loss_weight: float
         the relative weight of the latent distance loss
+    context_loss_fn: callable
+        the loss function to apply to the context
         
     """
     def __init__(
@@ -59,10 +61,13 @@ class MadMixtureLoss(nn.Module):
             align_attention_loss_fn=None,
             rec_loss_weight=1.,
             align_attention_loss_weight=0.25,
+            transfer_loss_weight=1.,
             modality_weights=None,
             anchor=None,
             latent_distance_loss_fn=None,
-            latent_distance_loss_weight=1.
+            latent_distance_loss_weight=1.,
+            context_loss_weight=1.,
+            context_loss_fn=None
         ):
         super().__init__()
         self.modalities = modalities
@@ -76,13 +81,26 @@ class MadMixtureLoss(nn.Module):
         self.anchor = anchor
         self.latent_distance_loss_fn = latent_distance_loss_fn
         self.latent_distance_loss_weight = latent_distance_loss_weight
+        self.transfer_loss_weight = transfer_loss_weight
+        self.context_loss_weight = context_loss_weight
+        self.context_loss_fn = context_loss_fn
     
 
-    def forward(self, inputs, length, latents, alignments, rec, transfer_rec, reduction="mean"):
-        details = self.details(inputs, length, latents, alignments, rec, transfer_rec, reduction)
+    def forward(self, inputs, length, latents, alignments, rec, transfer_rec, out_context, reduction="mean"):
+        details = self.details(inputs, length, latents, alignments, rec, transfer_rec, out_context, reduction)
         return details["loss"]
 
-    def details(self, inputs, length, latents, alignments, rec, transfer_rec, reduction="mean"):
+    def details(
+            self,
+            inputs,
+            length,
+            latents,
+            alignments,
+            rec,
+            transfer_rec,
+            out_context=None,
+            reduction="mean"
+        ):
         """Computes the MadMixture loss with the detailed breakdown
         of all loss components
         
@@ -116,10 +134,10 @@ class MadMixtureLoss(nn.Module):
         loss_details = {
             "rec_loss": rec_loss
         }
-        modality_rec_details = self._modality_expand(
+        modality_rec_details = with_prefix(
             "rec", modality_rec_loss
         )
-        modality_rec_weighted_details = self._modality_expand(
+        modality_rec_weighted_details = with_prefix(
             "rec_weighted",
             weighted_modality_rec_loss
         )
@@ -128,7 +146,7 @@ class MadMixtureLoss(nn.Module):
         alignment_loss, modality_alignment_loss = self.compute_alignment_loss(
             alignments, length, reduction
         )
-        modality_alignment_loss_details = self._modality_expand(
+        modality_alignment_loss_details = with_prefix(
             "align",
             modality_alignment_loss
         )
@@ -139,7 +157,7 @@ class MadMixtureLoss(nn.Module):
             lengths=length,
             reduction=reduction
         )
-        modality_distance_loss_details = self._modality_expand(
+        modality_distance_loss_details = with_prefix(
             "distance",
             modality_distance_loss
         )
@@ -151,10 +169,10 @@ class MadMixtureLoss(nn.Module):
                 lengths=length,
                 reduction=reduction
             )
-            modality_transfer_loss_details = self._modality_expand_transfer(
+            modality_transfer_loss_details = with_prefix_transfer(
                 "transfer", modality_transfer_loss
             )
-            weighted_modality_transfer_loss_details = self._modality_expand_transfer(
+            weighted_modality_transfer_loss_details = with_prefix_transfer(
                 "transfer_weighted", weighted_modality_transfer_loss
             )
             loss_details.update(modality_transfer_loss_details)
@@ -162,11 +180,30 @@ class MadMixtureLoss(nn.Module):
         else:
             transfer_loss = torch.tensor(0.).to(rec_loss.device)
 
+        if self.context_loss_fn is not None:
+            context_loss, component_context_loss, weighted_context_loss = self.context_loss_fn(                
+                out_context=out_context,
+                lengths=length,
+                reduction=reduction
+            )
+            context_loss_details = with_prefix(
+                "context", component_context_loss
+            )
+            weighted_context_loss_details = with_prefix(
+                "weighted_context", weighted_context_loss
+            )
+
+            loss_details.update(context_loss_details)
+            loss_details.update(weighted_context_loss_details)
+        else:
+            context_loss = torch.tensor(0.).to(rec_loss.device)
+
         loss = (
             self.rec_loss_weight * rec_loss 
             + self.align_attention_loss_weight * alignment_loss
             + self.latent_distance_loss_weight * latent_distance_loss
-            + transfer_loss
+            + self.transfer_loss_weight * transfer_loss
+            + self.context_loss_weight * context_loss
         )
         loss_details["loss"] = loss
         return loss_details
@@ -189,29 +226,7 @@ class MadMixtureLoss(nn.Module):
         return {
             f"{prefix}_{key}_loss": value
             for key, value in loss_dict.items()
-        }
-    
-    def _modality_expand_transfer(self, prefix, loss_dict):
-        """A version of _modality_expand for the transfer
-        loss
-        
-        Arguments
-        ---------
-        prefix: str
-            the modality prefix
-        loss_dict
-            the raw loss values for the modality
-            
-        Arguments
-        ---------
-        result: dict
-            a new dictionary with keys rewritten as "{prefix}_{key}_loss
-        """
-        return {
-            f"{prefix}_{src}_to_{tgt}_loss": value
-            for (src, tgt), value in loss_dict.items()
-        }
-    
+        }    
     
     def compute_rec_loss(self, inputs, rec, lengths, reduction="mean"):
         """Computes the recreation losses
@@ -277,14 +292,7 @@ class MadMixtureLoss(nn.Module):
         
 
     def _weighted_modality_loss(self, modality_loss):
-        weighted_modality_loss = {
-            key: self.modality_weights[key] * loss_value
-            for key, loss_value in modality_loss.items()
-        }
-        total_loss = torch.stack(
-            list(weighted_modality_loss.values())
-        ).sum(dim=0)
-        return total_loss, weighted_modality_loss
+        return weighted_loss(modality_loss, self.modality_weights)
 
 
     def compute_alignment_loss(self, alignments, lengths, reduction):
@@ -405,3 +413,154 @@ class MadMixtureLoss(nn.Module):
             length=length,
             reduction=reduction
         )
+
+
+class ContextAlignmentLoss(nn.Module):
+    """A module that applies an alignment loss (e.g. guided
+    attention) to the alignment matrices found in a context
+    """
+
+    def __init__(self, loss_fn, keys, anchor, weights=None):
+        super().__init__()
+        self.loss_fn = loss_fn
+        self.keys = keys
+        if weights is None:
+            weights = {key: 1.0 for key in keys}
+        self.weights = weights
+        self.anchor = anchor
+
+    def forward(self, out_context, lengths, reduction="mean"):
+        """Computes the alignment loss
+        
+        Arguments
+        ---------
+        out_context: dict
+            output context keys containing alignments
+        lengths: dict
+            sequence lengths
+        reduction: str
+            reduction type
+
+        Returns
+        -------
+        context_loss: torch.Tensor
+            the fully aggregated context loss
+        component_content_loss: torch.Tensor
+            the context loss, broken down by component
+        weighted_conetxt_loss: torch.Tensor
+            the context loss, weighted according to the 
+            weights supplied in the constructor
+        """
+        component_context_loss = {
+            key: self.get_component(key, out_context, lengths, reduction)
+            for key in self.keys
+        }
+        context_loss, weighted_context_loss = weighted_loss(
+            component_context_loss, self.weights
+        )
+        return context_loss, component_context_loss, weighted_context_loss
+    
+    def get_component(self, key, out_context, lengths, reduction="mean"):
+        """Computes a single component of the loss
+
+        Arguments
+        ---------
+        key: str
+            the conetxt key
+        out_context: dict
+            the output context
+        lengths: dict
+            sequence lengths
+        reduction: str
+            reduction type
+
+        Returns
+        -------
+        result: torch.Tensor
+            the loss value
+        """
+        rel_lengths = lengths[self.anchor]
+        alignments = out_context[key]
+        _, max_output_length, max_input_length = alignments.shape
+        input_lengths = rel_lengths * max_input_length
+        output_lengths = rel_lengths * max_output_length
+        return self.loss_fn(
+            attention=alignments, 
+            input_lengths=input_lengths,
+            target_lengths=output_lengths,
+            reduction=reduction
+        )
+
+
+
+def weighted_loss(components, weights):
+    """Multiplies loss components by their respected weights
+    
+    Arguments
+    ---------
+    components: dict
+        a str -> tensor dictionary of loss components
+        
+    weights: dict
+        a dictionary of weights. The keys need to match
+        the keys in components
+        
+    Returns
+    -------
+    total_loss: torch.Tensor
+        the total of all weighted losses
+    weighted_loss: dict
+        an str -> tensor dictionary of weighted loss
+        components"""
+
+    weighted_loss = {
+        key: weights[key] * component
+        for key, component in components.items()
+    }
+    total_loss = torch.stack(
+        list(weighted_loss.values())
+    ).sum(dim=0)
+    return total_loss, weighted_loss
+
+
+def with_prefix(prefix, loss_dict):
+    """Adds a modality prefix to the specified loss dictionary
+    
+    Arguments
+    ---------
+    prefix: str
+        the modality prefix
+    loss_dict
+        the raw loss values for the modality
+        
+    Arguments
+    ---------
+    result: dict
+        a new dictionary with keys rewritten as "{prefix}_{key}_loss
+    """
+    return {
+        f"{prefix}_{key}_loss": value
+        for key, value in loss_dict.items()
+    }
+
+
+def with_prefix_transfer(prefix, loss_dict):
+    """A version of with_prefix for the transfer
+    loss
+    
+    Arguments
+    ---------
+    prefix: str
+        the modality prefix
+    loss_dict
+        the raw loss values for the modality
+        
+    Arguments
+    ---------
+    result: dict
+        a new dictionary with keys rewritten as "{prefix}_{key}_loss
+    """
+    return {
+        f"{prefix}_{src}_to_{tgt}_loss": value
+        for (src, tgt), value in loss_dict.items()
+    }
