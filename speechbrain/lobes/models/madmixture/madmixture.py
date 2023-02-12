@@ -892,8 +892,8 @@ class AttentionalAligner(nn.Module):
             in_mask.device)
         out_mask_attn = ~out_mask.squeeze().bool()
         in_mask_attn = ~in_mask.squeeze().bool()
-        attn_mask[out_mask_attn.unsqueeze(1).repeat(1, in_max_len, 1)] = 1
-        attn_mask[in_mask_attn.unsqueeze(-1).repeat(1, 1, out_max_len)] = 1
+        attn_mask[out_mask_attn.unsqueeze(-1).repeat(1, 1, in_max_len)] = 1
+        attn_mask[in_mask_attn.unsqueeze(1).repeat(1, out_max_len, 1)] = 1
         return attn_mask
 
 
