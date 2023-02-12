@@ -831,6 +831,7 @@ class AttentionalAligner(nn.Module):
         enc_out_scaled = self.smoothener(enc_out_scaled)
         enc_out_scaled = self.out_norm(enc_out_scaled)
         new_length = floor(enc_out.size(1) * self.scale)
+        #breakpoint()
         return enc_out_scaled[:, :new_length, :]
 
     def forward(self, key, enc_out, lengths, anchor=None):

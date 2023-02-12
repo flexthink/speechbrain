@@ -97,7 +97,10 @@ class MadMixtureBrain(sb.Brain):
         #TODO: This can be made more modular
         # Feature computation and normalization
         feats_audio = self.hparams.compute_features(wavs)
-        feats_audio = self.modules.normalize(feats_audio, wav_lens)
+        if self.hparams.compute_features_transpose:
+            feats_audio = feats_audio.transpose(-1, -2)
+        for norm in self.modules.normalize:
+            feats_audio = norm(feats_audio, wav_lens)
         
         # TODO: Embeddings are computed twice, avoid this
         feats_char_emb = self.hparams.char_emb(batch.char_encoded_bos.data)
@@ -361,7 +364,7 @@ def dataio_prepare(hparams):
     @sb.utils.data_pipeline.provides("sig")
     def audio_pipeline(wav):
         """Load the audio signal. This is done on the CPU in the `collate_fn`."""
-        sig = sb.dataio.dataio.read_audio(wav)
+        sig = sb.dataio.dataio.read_audio(wav) * hparams["amp_multiplier"]
         return sig
 
     def sequence_pipeline(prefix, label_encoder):

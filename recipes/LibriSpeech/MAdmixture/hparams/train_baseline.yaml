@@ -79,6 +79,7 @@ train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
 number_of_epochs: 15
 batch_size: 8
 lr: 0.001
+max_grad_norm: 0.05
 sorting: ascending
 ckpt_interval_minutes: 15 # save checkpoint every N min
 label_smoothing: 0.1
@@ -97,8 +98,24 @@ test_dataloader_opts:
 
 # Feature parameters
 sample_rate: 16000
-n_fft: 400
-n_mels: 80
+spec_n_fft: 1024
+spec_f_min: 0
+spec_f_max: 8000
+spec_n_mels: 80
+spec_power: 1
+spec_ref: 10.0
+spec_hop_length: 256
+spec_win_length: 1024
+spec_norm: "slaney"
+spec_mel_scale: "slaney"
+spec_norm_mean: 0.
+spec_norm_std: 1.
+min_level_db: -80.0
+amp_multiplier: 0.25 # This scales the amplitude to prevent vocoder noise
+
+# Vocoder Settings
+vocoder_model: speechbrain/tts-hifigan-libritts-16kHz
+
 
 # Audio Encoder/Decoder Parameters
 audio_enc_activation: !name:torch.nn.LeakyReLU
@@ -123,6 +140,7 @@ audio_dec_gate_threshold: 0.5
 audio_dec_p_attention_dropout: 0.1
 audio_dec_p_decoder_dropout: 0.1
 audio_dec_decoder_no_early_stopping: False
+audio_aligner_scale: 1.25
 
 # Character Encoder/Decoder Parameters
 char_embedding_dim: 512
@@ -133,6 +151,7 @@ char_dec_dropout: 0.5
 char_dec_neurons: 512
 char_dec_att_neurons: 256
 char_dec_num_layers: 4
+char_aligner_scale: 1
 
 # Phoneme Encoder/Decoder Parameters
 phn_embedding_dim: 512
@@ -143,6 +162,7 @@ phn_dec_dropout: 0.5
 phn_dec_neurons: 512
 phn_dec_att_neurons: 256
 phn_dec_num_layers: 4
+phn_aligner_scale: 1.25
 
 ignore_tokens:
     - !ref <bos_index>
@@ -165,22 +185,38 @@ phn_label_encoder: !new:speechbrain.dataio.encoder.TextEncoder
 
 
 # Feature extraction
-# TODO: Match spectrogram characteristics to those of 
-# typical vocoders
-compute_features: !new:speechbrain.lobes.features.Fbank
-    sample_rate: !ref <sample_rate>
-    n_fft: !ref <n_fft>
-    n_mels: !ref <n_mels>
+compute_features: !new:speechbrain.nnet.containers.Sequential
+    spec: !new:torchaudio.transforms.MelSpectrogram
+        n_fft: !ref <spec_n_fft>
+        f_min: !ref <spec_f_min>
+        f_max: !ref <spec_f_max>
+        n_mels: !ref <spec_n_mels>
+        power: !ref <spec_power>
+        hop_length: !ref <spec_hop_length>
+        win_length: !ref <spec_win_length>
+        norm: !ref <spec_norm>
+        mel_scale: !ref <spec_mel_scale>
+    amp2db: !new:torchaudio.transforms.AmplitudeToDB
+
+compute_features_transpose: True
+
     
-
 # Feature normalization (mean and std)
-normalize: !new:speechbrain.processing.features.InputNormalization
-    norm_type: global
+global_norm: !new:speechbrain.processing.features.GlobalNorm
+    norm_mean: !ref <spec_norm_mean>
+    norm_std: !ref <spec_norm_std>
 
+min_level_norm: !new:speechbrain.processing.features.MinLevelNorm
+    min_level_db: !ref <min_level_db>
+
+dynamic_range_compression: !new:speechbrain.processing.features.DynamicRangeCompression
+
+normalize: !new:torch.nn.ModuleList
+    - [!ref <min_level_norm>, !ref <global_norm>]
 
 # The CRDNN model is an encoder that combines CNNs, RNNs, and DNNs.
 audio_enc: !new:speechbrain.lobes.models.CRDNN.CRDNN
-    input_shape: [null, null, !ref <n_mels>]
+    input_shape: [null, null, !ref <spec_n_mels>]
     activation: !ref <audio_enc_activation>
     dropout: !ref <audio_enc_dropout>
     cnn_blocks: !ref <audio_enc_cnn_blocks>
@@ -201,7 +237,7 @@ audio_enc: !new:speechbrain.lobes.models.CRDNN.CRDNN
 
 audio_dec: !new:speechbrain.lobes.models.madmixture.adapters.TacotronDecoder
     decoder_input_key: audio
-    n_mel_channels: !ref <n_mels>
+    n_mel_channels: !ref <spec_n_mels>
     encoder_embedding_dim: !ref <madmixture_latent_dim>
     n_frames_per_step: !ref <audio_dec_n_frames_per_step>
     max_decoder_steps: !ref <audio_dec_max_decoder_steps>
@@ -279,19 +315,25 @@ phn_dec: !new:speechbrain.lobes.models.madmixture.adapters.RNNDecoder
 audio_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <audio_enc_dnn_neurons>
+    scale: !ref <audio_aligner_scale>
 
 char_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <char_enc_neurons>
-    scale: 2.5
+    scale: !ref <char_aligner_scale>
 
 phn_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <char_enc_neurons>
-    scale: 2.5
+    scale: !ref <phn_aligner_scale>
 
+vocoder_mod: !apply:speechbrain.pretrained.interfaces.HIFIGAN.from_hparams
+    source: !ref <vocoder_model>
 
-# TODO: This is a placeholder
+vocoder: !new:speechbrain.nnet.containers.Sequential
+    compression: !ref <dynamic_range_compression>
+    mod: !ref <vocoder_mod>
+
 model: !new:speechbrain.lobes.models.madmixture.MadMixture
     modalities:
         audio:
@@ -367,6 +409,11 @@ evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
         transfer: !name:speechbrain.lobes.models.madmixture.ModalityTransferTask
             evaluators:
                 audio: !name:speechbrain.lobes.models.madmixture.SpectrogramEvaluator
+                    vocoder: !ref <vocoder>
+                    vocoder_batch_size: !ref <batch_size>
+                    sample_rate: !ref <sample_rate>
+                    normalization: !ref <normalize>
+
                 char: !name:speechbrain.lobes.models.madmixture.TokenSequenceEvaluator
                     decoder: !ref <char_label_encoder>
                     hyp: !ref <char_beam_search>
@@ -386,6 +433,8 @@ evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
 modules:
     model: !ref <model>
     normalize: !ref <normalize>
+    dynamic_range_compression: !ref <dynamic_range_compression>
+    vocoder: !ref <vocoder>
 
 
 # This function manages learning rate annealing over the epochs.

@@ -11,8 +11,11 @@ import torch
 import logging
 from speechbrain.utils.metric_stats import ErrorRateStats
 from speechbrain.dataio.encoder import TextEncoder
+from speechbrain.dataio.batch import PaddedBatch
+from speechbrain.dataio.dataio import write_audio
 from speechbrain.decoders.seq2seq import S2SBaseSearcher
 from speechbrain.utils.data_utils import undo_padding, undo_padding_tensor
+from torchaudio import functional as AF
 from functools import partial
 
 logger = logging.getLogger(__name__)
@@ -327,6 +330,7 @@ class ModalityTransferTask(EvaluationTask):
 
 LATENT_DEFAULT_FIGSIZE = (16, 16)
 ALGNMENT_DEFAULT_FIGSIZE = (16, 8)
+
 
 class LatentSpaceAnalysisTask(EvaluationTask):
     """A task that performs latent space analysis. Currently it will
@@ -708,15 +712,42 @@ class SpectrogramEvaluator(OutputEvaluator):
     figsize: tuple
         the Matplotlib figure size to be used for spectrograms
         (defaults to (16, 10))
+
+    vocoder: callable
+        a vocoder that can convert spectrograms to raw
+        waveform audio
+
+    normalization: torch.nn.ModuleList
+        A list of modules implementing the denormalize method
+        (reversible normalizations). If provided, they will be applied
+        in reverse order
+
     """
     vis_samples_only = True
-    def __init__(self, figsize=None):
+    def __init__(
+            self,
+            figsize=None,
+            vocoder=None,
+            vocoder_batch_size=16,
+            sample_rate=16000,
+            normalization=None,
+            spec_db=True,
+            spec_ref=10.,
+            spec_power=1.
+        ):
         self.predict = []
         self.target = []
         self.ids = []
         if figsize is None:
             figsize = SPECTROGRAM_DEFAULT_FIGURE_SIZE
         self.figsize = figsize
+        self.normalization = normalization
+        self.vocoder = vocoder
+        self.vocoder_batch_size = vocoder_batch_size
+        self.sample_rate = sample_rate
+        self.spec_db = spec_db
+        self.spec_ref = spec_ref
+        self.spec_power = spec_power
         self.plt = _get_matplotlib()   
     
     def append(self, ids, predict, target, latent, src_lengths, tgt_lengths):
@@ -762,6 +793,8 @@ class SpectrogramEvaluator(OutputEvaluator):
         self.save_spectrograms_raw(path)
         if self.plt is not None:
             self.save_spectrograms_image(path)
+        if self.vocoder is not None:
+            self.save_audio(path)
     
 
     def save_spectrograms_image(self, path):
@@ -806,7 +839,7 @@ class SpectrogramEvaluator(OutputEvaluator):
         """
         fig = self.plot_comparison(sample_id, predict_sample, target_sample)
         try:
-            file_name = os.path.join(path, f"{sample_id}.png")
+            file_name = os.path.join(path, f"spec_{sample_id}.png")
             fig.savefig(file_name)
         finally:
             self.plt.close(fig)
@@ -850,6 +883,58 @@ class SpectrogramEvaluator(OutputEvaluator):
             self.plt.close(fig)
             raise
 
+    def save_audio(self, path):
+        """Generates and saves raw audio samples from spectrograms
+        using the provided vocoder"""
+        batches = batchify(
+            sample_ids=self.ids,
+            predict=self.predict, target=self.target,
+            batch_size=self.vocoder_batch_size
+        )
+        for batch in batches:
+            spec_target = batch.target.data.transpose(-1, -2)
+            spec_predict = batch.predict.data.transpose(-1, -2)
+            spec_predict = spec_predict[:, :, :spec_target.size(-1)]
+            wav_target = self.generate_audio(spec_target)
+            wav_predict = self.generate_audio(spec_predict)
+            self.save_audio_batch(
+                sample_ids=batch.sample_ids,
+                wav=wav_predict,
+                lengths=batch.predict.lengths,
+                prefix="predict",
+                path=path
+            )
+            self.save_audio_batch(
+                sample_ids=batch.sample_ids,
+                wav=wav_target,
+                lengths=batch.target.lengths,
+                prefix="target",
+                path=path
+            )
+
+    def generate_audio(self, spec):
+        if self.normalization is not None:
+            for norm in reversed(self.normalization):
+                spec = norm.denormalize(spec)
+        if self.spec_db:
+            spec = AF.DB_to_amplitude(
+                spec,
+                ref=self.spec_ref,
+                power=self.spec_power
+            )
+        return self.vocoder(spec)
+    
+    def save_audio_batch(self, path, sample_ids, wav, lengths, prefix):
+        lengths_abs = (wav.size(-1) * lengths).int()
+        wav = wav.squeeze(1)
+        for sample_id, wav_item, wav_length in zip(sample_ids, wav, lengths_abs):
+            file_name = os.path.join(path, f"{prefix}_{sample_id}.wav")
+            write_audio(
+                file_name,
+                wav_item[:wav_length],
+                samplerate=self.sample_rate
+            )
+
 
 def _get_matplotlib():
     try:
@@ -860,8 +945,6 @@ def _get_matplotlib():
     except ImportError:
         logger.warn("matplotlib is not available - cannot log figures")
         return None
-
-
 
 
 def hyp_argmax(probs, lengths=None, latent=None, eos_index=None):
@@ -964,3 +1047,17 @@ def _filter_by_index(items, indexes):
     else:
         filtered_items = [items[idx] for idx in indexes]
     return filtered_items
+
+
+def batchify(batch_size, **kwargs):
+    """Converts lists of tensors or tensor-like objects to
+    a generator of PaddedBatch objects"""
+    first_key = next(iter(kwargs.keys()))
+    for idx in range(0, len(kwargs[first_key]), batch_size):
+        batch_data_items = [
+            {key: value[idx + batch_idx]
+             for key, value in kwargs.items()}
+            for batch_idx in range(batch_size)
+        ]
+        batch = PaddedBatch(batch_data_items)
+        yield batch

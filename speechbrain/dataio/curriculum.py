@@ -59,7 +59,8 @@ class CurriculumSpeechDataset(DynamicItemDataset):
     ):
         super().__init__(
             data=from_dataset.data, use_existing_id=True)
-        self.base_dataset = sample(from_dataset, num_samples)
+        self.generator = generator
+        self.base_dataset = sample(from_dataset, num_samples, generator)
         self.data_ids = self.base_dataset.data_ids
         self.min_words = min_words
         self.max_words = max_words
@@ -68,7 +69,6 @@ class CurriculumSpeechDataset(DynamicItemDataset):
         self.data_id_indices = {
             data_id: idx for idx, data_id in enumerate(self.data_ids)
         }
-        self.generator = generator
         self.sample_segments(self.base_dataset)
         self.setup_pipeline()
         self.pipeline = PipelineWrapper(self.pipeline, SAMPLE_OUTPUTS)
@@ -202,7 +202,7 @@ class CurriculumSpeechDataset(DynamicItemDataset):
         self.add_dynamic_item(cut_sample)
 
 
-def sample(base_dataset, num_samples):
+def sample(base_dataset, num_samples, generator=None):
     """Retrieves a sample of the base dataset
     
     Arguments
@@ -211,6 +211,8 @@ def sample(base_dataset, num_samples):
         a base dataset
     num_samples: int
         the number of samples to include
+    generator: torch.Generator
+        a random number generator (optional)
         
     Returns
     -------
@@ -223,6 +225,7 @@ def sample(base_dataset, num_samples):
             torch.ones(len(dataset)) / len(dataset),
             num_samples=num_samples,
             replacement=num_samples > len(base_dataset),
+            generator=generator
         )
         sample_data_ids = [
             dataset.data_ids[idx]
