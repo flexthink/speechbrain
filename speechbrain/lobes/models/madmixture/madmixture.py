@@ -875,11 +875,26 @@ class AttentionalAligner(nn.Module):
         pos_embs = self.pos_emb(mod_enc_out_scaled)
         mod_enc_out_scaled += pos_embs
         mod_enc_out_scaled *= out_mask
-        
+
         output, alignment = self.attn(
             query=masked_queries,
             key=mod_enc_out_scaled,
             value=mod_enc_out_scaled,
             key_padding_mask=~(out_mask.bool().squeeze(-1)),
+            attn_mask=self._get_attention_mask(out_mask, queries_mask),
         )
         return output * queries_mask, alignment
+    
+    def _get_attention_mask(self, in_mask, out_mask):
+        batch_size, in_max_len, _ = in_mask.shape
+        _, out_max_len, _ = out_mask.shape
+        attn_mask = torch.zeros(batch_size, out_max_len, in_max_len).to(
+            in_mask.device)
+        out_mask_attn = ~out_mask.squeeze().bool()
+        in_mask_attn = ~in_mask.squeeze().bool()
+        attn_mask[out_mask_attn.unsqueeze(1).repeat(1, in_max_len, 1)] = 1
+        attn_mask[in_mask_attn.unsqueeze(-1).repeat(1, 1, out_max_len)] = 1
+        return attn_mask
+
+
+
