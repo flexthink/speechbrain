@@ -205,6 +205,7 @@ compute_features_transpose: True
 global_norm: !new:speechbrain.processing.features.GlobalNorm
     norm_mean: !ref <spec_norm_mean>
     norm_std: !ref <spec_norm_std>
+    length_dim: 1
 
 min_level_norm: !new:speechbrain.processing.features.MinLevelNorm
     min_level_db: !ref <min_level_db>
@@ -327,12 +328,8 @@ phn_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
     in_dim: !ref <char_enc_neurons>
     scale: !ref <phn_aligner_scale>
 
-vocoder_mod: !apply:speechbrain.pretrained.interfaces.HIFIGAN.from_hparams
+vocoder: !name:speechbrain.pretrained.interfaces.HIFIGAN.from_hparams
     source: !ref <vocoder_model>
-
-vocoder: !new:speechbrain.nnet.containers.Sequential
-    compression: !ref <dynamic_range_compression>
-    mod: !ref <vocoder_mod>
 
 model: !new:speechbrain.lobes.models.madmixture.MadMixture
     modalities:
@@ -411,6 +408,7 @@ evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
                 audio: !name:speechbrain.lobes.models.madmixture.SpectrogramEvaluator
                     vocoder: !ref <vocoder>
                     vocoder_batch_size: !ref <batch_size>
+                    vocoder_pre: !ref <dynamic_range_compression>
                     sample_rate: !ref <sample_rate>
                     normalization: !ref <normalize>
 
@@ -434,8 +432,6 @@ modules:
     model: !ref <model>
     normalize: !ref <normalize>
     dynamic_range_compression: !ref <dynamic_range_compression>
-    vocoder: !ref <vocoder>
-
 
 # This function manages learning rate annealing over the epochs.
 # We here use the NewBoB algorithm, that anneals the learning rate if
@@ -451,7 +447,7 @@ lr_annealing: !new:speechbrain.nnet.schedulers.NewBobScheduler
 # are moved to the correct device. Then it will be added to the checkpointer.
 opt_class: !name:torch.optim.Adam
      lr: !ref <lr>
-     capturable: True
+     #capturable: True
 
 
 # This object is used for saving the state of training both so that it

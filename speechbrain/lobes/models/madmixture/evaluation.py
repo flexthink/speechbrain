@@ -15,6 +15,7 @@ from speechbrain.dataio.batch import PaddedBatch
 from speechbrain.dataio.dataio import write_audio
 from speechbrain.decoders.seq2seq import S2SBaseSearcher
 from speechbrain.utils.data_utils import undo_padding, undo_padding_tensor
+from torch import nn
 from torchaudio import functional as AF
 from functools import partial
 
@@ -728,6 +729,7 @@ class SpectrogramEvaluator(OutputEvaluator):
             self,
             figsize=None,
             vocoder=None,
+            vocoder_pre=None,
             vocoder_batch_size=16,
             sample_rate=16000,
             normalization=None,
@@ -735,6 +737,7 @@ class SpectrogramEvaluator(OutputEvaluator):
             spec_ref=10.,
             spec_power=1.
         ):
+        self.device = None
         self.predict = []
         self.target = []
         self.ids = []
@@ -742,7 +745,11 @@ class SpectrogramEvaluator(OutputEvaluator):
             figsize = SPECTROGRAM_DEFAULT_FIGURE_SIZE
         self.figsize = figsize
         self.normalization = normalization
-        self.vocoder = vocoder
+        self.vocoder_fn = vocoder
+        self._vocoder = None
+        if vocoder_pre is None:
+            vocoder_pre = nn.Identity()
+        self.vocoder_pre = vocoder_pre
         self.vocoder_batch_size = vocoder_batch_size
         self.sample_rate = sample_rate
         self.spec_db = spec_db
@@ -775,6 +782,8 @@ class SpectrogramEvaluator(OutputEvaluator):
             the relative lengths of the ground truths
         """
         self.ids.extend(ids)
+        if self.device is None:
+            self.device = predict.device
         self.predict.extend(
             undo_padding_tensor(predict.detach().cpu(), tgt_lengths)
         )
@@ -793,7 +802,7 @@ class SpectrogramEvaluator(OutputEvaluator):
         self.save_spectrograms_raw(path)
         if self.plt is not None:
             self.save_spectrograms_image(path)
-        if self.vocoder is not None:
+        if self.vocoder_fn is not None:
             self.save_audio(path)
     
 
@@ -882,6 +891,11 @@ class SpectrogramEvaluator(OutputEvaluator):
         except:
             self.plt.close(fig)
             raise
+    @property
+    def vocoder(self):
+        if self._vocoder is None:
+            self._vocoder = self.vocoder_fn(run_opts={"device": self.device})
+        return self._vocoder
 
     def save_audio(self, path):
         """Generates and saves raw audio samples from spectrograms
@@ -892,6 +906,7 @@ class SpectrogramEvaluator(OutputEvaluator):
             batch_size=self.vocoder_batch_size
         )
         for batch in batches:
+            batch = batch.to(self.device)
             spec_target = batch.target.data.transpose(-1, -2)
             spec_predict = batch.predict.data.transpose(-1, -2)
             spec_predict = spec_predict[:, :, :spec_target.size(-1)]
@@ -922,6 +937,7 @@ class SpectrogramEvaluator(OutputEvaluator):
                 ref=self.spec_ref,
                 power=self.spec_power
             )
+        spec = self.vocoder_pre(spec)
         return self.vocoder(spec)
     
     def save_audio_batch(self, path, sample_ids, wav, lengths, prefix):
