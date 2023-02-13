@@ -928,17 +928,18 @@ class SpectrogramEvaluator(OutputEvaluator):
             )
 
     def generate_audio(self, spec):
-        if self.normalization is not None:
-            for norm in reversed(self.normalization):
-                spec = norm.denormalize(spec)
-        if self.spec_db:
-            spec = AF.DB_to_amplitude(
-                spec,
-                ref=self.spec_ref,
-                power=self.spec_power
-            )
-        spec = self.vocoder_pre(spec)
-        return self.vocoder(spec)
+        with torch.no_grad():
+            if self.normalization is not None:
+                for norm in reversed(self.normalization):
+                    spec = norm.denormalize(spec)
+            if self.spec_db:
+                spec = AF.DB_to_amplitude(
+                    spec,
+                    ref=self.spec_ref,
+                    power=self.spec_power
+                )
+            spec = self.vocoder_pre(spec)
+            return self.vocoder(spec)
     
     def save_audio_batch(self, path, sample_ids, wav, lengths, prefix):
         lengths_abs = (wav.size(-1) * lengths).int()
@@ -947,7 +948,7 @@ class SpectrogramEvaluator(OutputEvaluator):
             file_name = os.path.join(path, f"{prefix}_{sample_id}.wav")
             write_audio(
                 file_name,
-                wav_item[:wav_length],
+                wav_item[:wav_length].cpu(),
                 samplerate=self.sample_rate
             )
 
