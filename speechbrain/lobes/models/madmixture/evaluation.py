@@ -1070,11 +1070,13 @@ def batchify(batch_size, **kwargs):
     """Converts lists of tensors or tensor-like objects to
     a generator of PaddedBatch objects"""
     first_key = next(iter(kwargs.keys()))
-    for idx in range(0, len(kwargs[first_key]), batch_size):
+    total_length = len(kwargs[first_key])
+    for idx in range(0, total_length, batch_size):
         batch_data_items = [
             {key: value[idx + batch_idx]
              for key, value in kwargs.items()}
-            for batch_idx in range(batch_size)
+             for batch_idx in range(batch_size)
+            if idx + batch_idx < total_length
         ]
         batch = PaddedBatch(batch_data_items)
         yield batch
