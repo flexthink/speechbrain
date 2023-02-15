@@ -52,9 +52,10 @@ class MadMixtureBrain(sb.Brain):
         # We first move the batch to the appropriate device.
         batch = batch.to(self.device)
         feats, lengths, context = self.prepare_features(stage, batch)
-        latents, alignments, enc_out, rec, transfer_rec, out_context = self.modules.model.train_step(
+        latents, alignments, enc_out, rec, transfer_rec, out_context, length_preds = self.modules.model.train_step(
             feats, lengths, context, transfer=self.hparams.transfer_loss_enabled)
-        return MadMixturePredictions(latents, alignments, enc_out, rec, transfer_rec, out_context, feats, lengths)
+        return MadMixturePredictions(
+            latents, alignments, enc_out, rec, transfer_rec, out_context, length_preds, feats, lengths)
     
     def fit_batch(self, batch):
         result = super().fit_batch(batch)
@@ -152,7 +153,8 @@ class MadMixtureBrain(sb.Brain):
             rec=predictions.rec,
             length=predictions.lengths,
             transfer_rec=predictions.transfer_rec,
-            out_context=predictions.out_context
+            out_context=predictions.out_context,
+            length_preds=predictions.length_preds
         )
 
         if self.hparams.enable_train_metrics:
@@ -313,6 +315,7 @@ MadMixturePredictions = namedtuple(
         "rec",
         "transfer_rec",
         "out_context",
+        "length_preds",
         "feats",
         "lengths"
     ]
@@ -424,14 +427,18 @@ def dataio_prepare(hparams):
         if hparams["curriculum_enabled"]:            
             key_min_value = {
                 "wrd_count": curriculum["max_words"]            
-            }        
+            }
+        key_test = {}
+        if hparams["filter_spk_id"]:
+            key_test["spk_id"] = hparams["filter_spk_id"]
 
         dynamic_dataset = sb.dataio.dataset.DynamicItemDataset.from_json(
             data_info[dataset],
             replacements={"data_root": data_folder},
         ).filtered_sorted(
             key_min_value=key_min_value,
-            key_max_value=key_max_value
+            key_max_value=key_max_value,
+            key_test=key_test
         )
         dynamic_dataset.set_output_keys(LIBRISPEECH_OUTPUT_KEYS)
 

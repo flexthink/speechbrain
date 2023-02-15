@@ -360,6 +360,37 @@ def mse_loss(
     )
 
 
+def cosine_similarity_loss(
+    predictions, targets, length=None, allowed_len_diff=3, reduction="mean"
+):
+    """Compute the cosine similarity loss
+
+    Arguments
+    ---------
+    predictions : torch.Tensor
+        Predicted tensor, of shape ``[batch, time, *]``.
+    targets : torch.Tensor
+        Target tensor with the same size as predicted tensor.
+    length : torch.Tensor
+        Length of each utterance for computing true error with a mask.
+    allowed_len_diff : int
+        Length difference that will be tolerated before raising an exception.
+    reduction : str
+        Options are 'mean', 'batch', 'batchmean', 'sum'.
+        See pytorch for 'mean', 'sum'. The 'batch' option returns
+        one loss per item in the batch, 'batchmean' returns sum / batch size."""
+
+    predictions, targets = truncate(predictions, targets, allowed_len_diff)
+    return compute_masked_loss(
+        _cosine_similairty, predictions, targets, length, reduction=reduction,
+        mask_shape="loss"
+    )
+
+def _cosine_similairty(predictions, targets):
+    return torch.nn.functional.cosine_similarity(predictions, targets, dim=-1).unsqueeze(-1)
+
+
+
 def classification_error(
     probabilities, targets, length=None, allowed_len_diff=3, reduction="mean"
 ):
@@ -626,6 +657,7 @@ def compute_masked_loss(
     targets,
     length=None,
     label_smoothing=0.0,
+    mask_shape="targets",
     reduction="mean",
 ):
     """Compute the true average loss of a set of waveforms of unequal length.
@@ -651,10 +683,39 @@ def compute_masked_loss(
         single value and 'batch' returns one per item in the batch and
         'batchmean' is sum / batch_size and 'none' returns all.
     """
-    mask = torch.ones_like(targets)
+
+    # Compute, then reduce loss
+    loss = loss_fn(predictions, targets)
+
+    if mask_shape == "targets":
+        mask_data = targets
+    elif mask_shape == "predictions":
+        mask_data = predictions
+    elif mask_shape == "loss":
+        mask_data = loss
+    else:
+        raise ValueError(f"Invalid mask_shape value {mask_shape}")
+
+    mask = compute_length_mask(mask_data, length)
+
+    loss *= mask
+    return reduce_loss(
+        loss, mask, reduction, label_smoothing, predictions, targets
+    )
+
+
+def compute_length_mask(data, length=None, len_dim=1):
+    """Computes a length mask for the specified data shape
+    Arguments
+    ---------
+    data: torch.tensor
+        the data shape
+    len_dim: int
+        the length dimension (defaults to 1)"""
+    mask = torch.ones_like(data)
     if length is not None:
         length_mask = length_to_mask(
-            length * targets.shape[1], max_len=targets.shape[1],
+            length * data.shape[len_dim], max_len=data.shape[len_dim],
         )
 
         # Handle any dimensionality of input
@@ -662,9 +723,45 @@ def compute_masked_loss(
             length_mask = length_mask.unsqueeze(-1)
         length_mask = length_mask.type(mask.dtype)
         mask *= length_mask
+    return mask
 
-    # Compute, then reduce loss
-    loss = loss_fn(predictions, targets) * mask
+
+def reduce_loss(
+    loss,
+    mask,
+    reduction="mean",
+    label_smoothing=0.0,
+    predictions=None,
+    targets=None,
+):
+    """Performs the specified reduction of the raw loss value
+
+    Arguments
+    ---------
+    loss_fn : function
+        A function for computing the loss taking just predictions and targets.
+        Should return all the losses, not a reduction (e.g. reduction="none").
+    predictions : torch.Tensor
+        First argument to loss function.
+    targets : torch.Tensor
+        Second argument to loss function.
+    length : torch.Tensor
+        Length of each utterance to compute mask. If None, global average is
+        computed and returned.
+    label_smoothing: float
+        The proportion of label smoothing. Should only be used for NLL loss.
+        Ref: Regularizing Neural Networks by Penalizing Confident Output
+        Distributions. https://arxiv.org/abs/1701.06548
+    reduction : str
+        One of 'mean', 'batch', 'batchmean', 'none' where 'mean' returns a
+        single value and 'batch' returns one per item in the batch and
+        'batchmean' is sum / batch_size and 'none' returns all.
+    predictions : torch.Tensor
+        First argument to loss function. Required only if label smoothing is used.
+    targets : torch.Tensor
+        Second argument to loss function. Required only if label smoothing is used.
+
+    """
     N = loss.size(0)
     if reduction == "mean":
         loss = loss.sum() / torch.sum(mask)
@@ -1249,3 +1346,89 @@ class ContrastiveLoss(nn.Module):
             logits.numel() / logits.size(-1)
         )
         return loss, accuracy
+
+
+def distance_diff_loss(
+    predictions,
+    targets,
+    length=None,
+    beta=0.25,
+    max_weight=100.0,
+    reduction="mean",
+):
+    """A loss function that can be used in cases where a model outputs
+    an arbitrary probability distribution for a discrete variable on 
+    an interval scale, such as the length of a sequence, and the ground
+    truth is the precise values of the variable from a data sample.
+
+    The loss is defined as 
+    loss_i = p_i * (exp(beta * |i - y|) - 1.)
+
+    The loss can also be used where outputs aren't probabilities, so long
+    as high values close to the ground truth position and low values away
+    from it are desired
+    
+    Arguments
+    ---------
+    predictions: torch.Tensor
+        a (batch x max_len) tensor in which each element is a probability,
+        weight or some other value at that position
+        
+    targets: torch.Tensor
+        a 1-D tensor in which each elemnent is the ground truth
+    
+    length: torch.Tensor
+        lengths (for masking in padded batches)
+        
+    beta: torch.Tensor
+        a hyperparameter controlling the penalties. With a higher beta,
+        penalties will increase faster
+    
+    max_weight: torch.Tensor
+        the maximum distance weight (for numerical stability in long sequences)
+
+    reduction : str
+        Options are 'mean', 'batch', 'batchmean', 'sum'.
+        See pytorch for 'mean', 'sum'. The 'batch' option returns
+        one loss per item in the batch, 'batchmean' returns sum / batch size.
+    """
+    return compute_masked_loss(
+        functools.partial(
+            _distance_diff_loss, beta=beta, max_weight=max_weight
+        ),
+        predictions=predictions,
+        targets=targets,
+        length=length,
+        reduction=reduction,
+        mask_shape="loss",
+    )
+
+
+def _distance_diff_loss(predictions, targets, beta, max_weight):
+    """Computes the raw (unreduced) distance difference loss
+    
+    Arguments
+    ---------
+    predictions: torch.Tensor
+        a (batch x max_len) tensor in which each element is a probability,
+        weight or some other value at that position
+        
+    targets: torch.Tensor
+        a 1-D tensor in which each elemnent is thr ground truth
+
+    max_weight: torch.Tensor
+        the maximum distance weight (for numerical stability in long sequences)
+
+    beta: torch.Tensor
+        a hyperparameter controlling the penalties. With a higher beta,
+        penalties will increase faster
+
+
+    """
+    batch_size, max_len = predictions.shape
+    pos_range = (torch.arange(max_len).unsqueeze(0).repeat(batch_size, 1)).to(
+        predictions.device
+    )
+    diff_range = (pos_range - targets.unsqueeze(-1)).abs()
+    loss_weights = ((beta * diff_range).exp() - 1.0).clamp(max=max_weight)
+    return (loss_weights * predictions).unsqueeze(-1)

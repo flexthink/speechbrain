@@ -49,6 +49,7 @@ overfit_test_sample_count: !ref <batch_size>
 overfit_test_epoch_data_count: 1000
 overfit_test_shuffle: True
 eval_vis_sample_size: 16
+filter_spk_id: null
 
 
 # Training curriculum parameters
@@ -172,7 +173,9 @@ ignore_tokens:
 #MAdmixture model parameters
 madmixture_latent_dim: 32
 madmixture_latent_distance_loss_weight: 0.1
-madmixture_align_attention_loss_weight: 0.25
+madmixture_align_attention_loss_weight: 10.
+madmixture_length_loss_beta: 0.25
+madmixture_length_loss_max_weight: 100.0
 
 # The first object passed to the Brain class is this "Epoch Counter"
 # which is saved by the Checkpointer so that training can be resumed
@@ -331,6 +334,9 @@ phn_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
 vocoder: !name:speechbrain.pretrained.interfaces.HIFIGAN.from_hparams
     source: !ref <vocoder_model>
 
+length_predictor: !new:speechbrain.lobes.models.madmixture.LinearLengthPredictor
+    latent_size: !ref <madmixture_latent_dim>
+
 model: !new:speechbrain.lobes.models.madmixture.MadMixture
     modalities:
         audio:
@@ -345,6 +351,7 @@ model: !new:speechbrain.lobes.models.madmixture.MadMixture
             encoder: !ref <phn_enc>
             decoder: !ref <phn_dec>
             aligner: !ref <phn_aligner>
+    length_predictor: !ref <length_predictor>
 
 
     anchor_name: audio
@@ -354,7 +361,7 @@ compute_cost_rec_audio: !name:speechbrain.nnet.losses.mse_loss
 compute_cost_rec_char: !name:speechbrain.nnet.losses.nll_loss
 compute_cost_rec_phn: !name:speechbrain.nnet.losses.nll_loss
 compute_cost_alignment: !new:speechbrain.nnet.loss.guidedattn_loss.GuidedAttentionLoss
-compute_cost_distance: !name:speechbrain.nnet.losses.mse_loss
+compute_cost_distance: !name:speechbrain.nnet.losses.cosine_similarity_loss
 compute_cost_context_alignment: !new:speechbrain.nnet.loss.madmixture_loss.ContextAlignmentLoss
     keys:
     - audio_decoder_alignments
@@ -362,6 +369,10 @@ compute_cost_context_alignment: !new:speechbrain.nnet.loss.madmixture_loss.Conte
     - char_to_audio_decoder_alignments
     loss_fn: !new:speechbrain.nnet.loss.guidedattn_loss.GuidedAttentionLoss
     anchor: audio
+
+compute_cost_length: !new:speechbrain.nnet.loss.madmixture_loss.DistanceDiffLengthLoss
+    beta: !ref <madmixture_length_loss_beta>
+    max_weight: !ref <madmixture_length_loss_max_weight>
 
 compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
     modalities:
@@ -377,6 +388,7 @@ compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
     latent_distance_loss_weight: !ref <madmixture_latent_distance_loss_weight>
     latent_distance_loss_fn: !ref <compute_cost_distance>
     context_loss_fn: !ref <compute_cost_context_alignment>
+    length_loss_fn: !ref <compute_cost_length>
     anchor: audio
 
 char_beam_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
@@ -448,7 +460,7 @@ lr_annealing: !new:speechbrain.nnet.schedulers.NewBobScheduler
 # are moved to the correct device. Then it will be added to the checkpointer.
 opt_class: !name:torch.optim.Adam
      lr: !ref <lr>
-     capturable: True
+     #capturable: True
 
 
 # This object is used for saving the state of training both so that it

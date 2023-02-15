@@ -606,3 +606,29 @@ def scalarize(value):
     else:
         value_dict = value
     return {key: item_value.item() for key, item_value in value_dict.items()}
+
+
+def adjust_dim(x, dim, size):
+    """Pads or trims a single dimension to the specified size
+    
+    Arguments
+    ---------
+    x: torch.Tensor
+        a tensor
+    dim: int
+        the dimension index
+    size: int
+        the desired size along the specified dimension
+        
+    Returns
+    -------
+    result: torch.Tensor
+        the adjusted tensor"""
+    current_size = x.size(dim)
+    if size < current_size:
+        x = x.narrow(dim, 0, size)
+    else:
+        shape = list(x.shape)
+        shape[dim] = size
+        x, _ = pad_right_to(x, shape)
+    return x

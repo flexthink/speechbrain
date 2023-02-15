@@ -20,7 +20,7 @@ Authors
 
 import torch
 from torch import nn
-from speechbrain.nnet.losses import truncate
+from speechbrain.nnet.losses import truncate, distance_diff_loss
 
 class MadMixtureLoss(nn.Module):
     """The MAdmixture model loss
@@ -52,6 +52,10 @@ class MadMixtureLoss(nn.Module):
         the relative weight of the latent distance loss
     context_loss_fn: callable
         the loss function to apply to the context
+    length_loss_wight: float
+        the relative weight of the length loss
+    length_loss_fn: callable
+        the length loss function or module
         
     """
     def __init__(
@@ -67,7 +71,9 @@ class MadMixtureLoss(nn.Module):
             latent_distance_loss_fn=None,
             latent_distance_loss_weight=1.,
             context_loss_weight=1.,
-            context_loss_fn=None
+            context_loss_fn=None,
+            length_loss_weight=1.,
+            length_loss_fn=None
         ):
         super().__init__()
         self.modalities = modalities
@@ -84,10 +90,33 @@ class MadMixtureLoss(nn.Module):
         self.transfer_loss_weight = transfer_loss_weight
         self.context_loss_weight = context_loss_weight
         self.context_loss_fn = context_loss_fn
-    
+        self.length_loss_weight = length_loss_weight
+        self.length_loss_fn = length_loss_fn
 
-    def forward(self, inputs, length, latents, alignments, rec, transfer_rec, out_context, reduction="mean"):
-        details = self.details(inputs, length, latents, alignments, rec, transfer_rec, out_context, reduction)
+    def forward(
+            self,
+            inputs,
+            length,
+            latents,
+            alignments,
+            rec,
+            transfer_rec,
+            out_context=None,
+            length_preds=None,
+            reduction="mean"
+        ):
+        
+        details = self.details(
+            inputs,
+            length,
+            latents,
+            alignments,
+            rec,
+            transfer_rec,
+            out_context,
+            length_preds,
+            reduction
+        )
         return details["loss"]
 
     def details(
@@ -99,6 +128,7 @@ class MadMixtureLoss(nn.Module):
             rec,
             transfer_rec,
             out_context=None,
+            length_preds=None,
             reduction="mean"
         ):
         """Computes the MadMixture loss with the detailed breakdown
@@ -190,7 +220,7 @@ class MadMixtureLoss(nn.Module):
                 "context", component_context_loss
             )
             weighted_context_loss_details = with_prefix(
-                "weighted_context", weighted_context_loss
+                "context_weighted", weighted_context_loss
             )
 
             loss_details.update(context_loss_details)
@@ -198,12 +228,32 @@ class MadMixtureLoss(nn.Module):
         else:
             context_loss = torch.tensor(0.).to(rec_loss.device)
 
+        if self.length_loss_fn is not None and length_preds is not None:
+            length_loss, modality_length_loss, weighted_modality_length_loss = self.compute_length_loss(
+                length_preds, latents, length
+            )
+            length_loss_details = with_prefix(
+                "length", modality_length_loss
+            )
+            weighted_length_loss_details = with_prefix(
+                "length_weighted",
+                weighted_modality_length_loss
+            )
+            loss_details.update(length_loss_details)
+            loss_details.update(weighted_length_loss_details)
+        else:
+            length_loss = torch.tensor(0.).to(rec_loss.device)
+            context_loss_details = with_prefix(
+                "length", component_context_loss
+            )
+
         loss = (
             self.rec_loss_weight * rec_loss 
             + self.align_attention_loss_weight * alignment_loss
             + self.latent_distance_loss_weight * latent_distance_loss
             + self.transfer_loss_weight * transfer_loss
             + self.context_loss_weight * context_loss
+            + self.length_loss_weight * length_loss
         )
         loss_details["loss"] = loss
         return loss_details
@@ -413,6 +463,36 @@ class MadMixtureLoss(nn.Module):
             length=length,
             reduction=reduction
         )
+    
+    def compute_length_loss(self, length_preds, latents, length):
+        """Computes the length loss
+        
+        Arguments
+        ---------
+        length_preds: dict
+            length predictions for each modality
+        latents: dict
+            latent representations for each modality
+        length: dict
+            relative length for each modality
+
+        Returns
+        -------
+        length_loss: torch.Tensor
+            the total length loss
+        modality_length_loss: dict
+            the length loss, broken down by modality
+        weighted_modality_length_loss: dict
+            the weighted length loss, broken down by modality
+        """
+        modality_length_loss = {
+            key: self.length_loss_fn(length_preds[key], latents[key], length[key])
+            for key in length_preds
+        }
+        length_loss, weighted_modality_length_loss = self._weighted_modality_loss(
+            modality_length_loss
+        )
+        return length_loss, modality_length_loss, weighted_modality_length_loss
 
 
 class ContextAlignmentLoss(nn.Module):
@@ -491,6 +571,38 @@ class ContextAlignmentLoss(nn.Module):
             reduction=reduction
         )
 
+
+class DistanceDiffLengthLoss(nn.Module):
+    """A length loss that uses `distance_diff_loss`, a loss that presumes
+    that predictions are a probability distribution over timesteps, with 
+    the penalty increasing exponentially up to a limit the further away
+    from the ground truth a probability is output
+    
+    Arguments
+    ---------
+    beta: float
+        a hyperparameter controlling the rate of penalty increase
+    max_weight: float
+        the maximum penalty weight
+    """
+    def __init__(
+            self,
+            beta=0.25,
+            max_weight=100.0
+        ):
+        super().__init__()
+        self.beta = beta
+        self.max_weight = max_weight
+
+    def forward(self, length_pred, latent, length, reduction="mean"):
+        length_abs = (latent.size(1) * length).int()
+        return distance_diff_loss(
+            length_pred,
+            length_abs,
+            beta=self.beta,
+            max_weight=self.max_weight,
+            reduction=reduction
+        )
 
 
 def weighted_loss(components, weights):

@@ -9,11 +9,13 @@ from torch import nn, Tensor
 from typing import Dict, Tuple
 from speechbrain.nnet.attention import MultiheadAttention
 from speechbrain.nnet.CNN import Conv1d, ConvTranspose1d
+from speechbrain.nnet.linear import Linear
 from speechbrain.nnet.normalization import LayerNorm
 from speechbrain.dataio.dataio import length_to_mask
 from speechbrain.utils.callchains import arg_exists
+from speechbrain.utils.data_utils import adjust_dim
 from speechbrain.lobes.models.transformer.Transformer import (
-    PositionalEncoding, get_key_padding_mask)
+    PositionalEncoding)
 from math import floor, ceil
 from enum import Enum
 
@@ -36,8 +38,9 @@ class MadMixture(nn.Module):
 
     latent_size: int
         the size of the feature dimension of the latent space
+    
     """
-    def __init__(self, modalities, anchor_name, latent_size=32):
+    def __init__(self, modalities, length_predictor=None, anchor_name=None, latent_size=32):
         super().__init__()
         if isinstance(modalities, dict):
             modalities_dict = {
@@ -50,6 +53,8 @@ class MadMixture(nn.Module):
                 for modality in modalities            
             }
         self.modalities = nn.ModuleDict(modalities_dict)
+        if not anchor_name:
+            anchor_name = next(iter(modalities_dict.keys()))
         self.anchor_name = anchor_name
         self.anchor = self.modalities[anchor_name]
         self.latent_size = latent_size
@@ -75,6 +80,7 @@ class MadMixture(nn.Module):
         ]
         modalities = set(self.modalities.keys())
         self.unaligned_modalities = modalities - self.aligned_modalities
+        self.length_predictor = length_predictor
 
 
     def forward(self, inputs, lengths=None, context=None):
@@ -210,9 +216,13 @@ class MadMixture(nn.Module):
             the raw alignment matrix
         """
         if key in self.aligned_modalities:
-            anchor_name = self.anchor_name if self.anchor_name in lengths else None
+            if self.anchor_name in lengths:
+                anchor_name = self.anchor_name
+                anchor_scale = self.modalities[anchor_name].aligner.scale
+            else:
+                anchor_name, anchor_scale = None, None
             result = self.modalities[key].aligner(
-                key, enc_out, lengths, anchor_name)
+                key, enc_out, lengths, anchor_name, anchor_scale)
         else:
             result = None, None
         return result
@@ -416,6 +426,8 @@ class MadMixture(nn.Module):
             transfers will not be attempted
         out_context: dict
             the output context, from all decoders
+        length_preds: dict
+            length predictions
         
         """
         latents, alignments, enc_out = self.latent(inputs, lengths, context)
@@ -425,8 +437,13 @@ class MadMixture(nn.Module):
             out_context.update(transfer_context)
         else:
             transfer_rec = None
+        
+        if self.length_predictor is not None:
+            length_preds = self.train_lengths(latents)
+        else:
+            length_preds = None
 
-        return latents, alignments, enc_out, rec, transfer_rec, out_context
+        return latents, alignments, enc_out, rec, transfer_rec, out_context, length_preds
     
     def cross_decode(self, latents, length, context=None):
         """Decodes multipe latents into multiple modalities, useful during
@@ -460,6 +477,45 @@ class MadMixture(nn.Module):
             for src, tgt in self.cross_transfers
         }
         return self._extract_context_cross(rec_with_context)
+    
+    def predict_lengths(self, latents):
+        """Predicts relative lengths of latent representations
+        
+        Arguments
+        ---------
+        latents: dict
+            a str -> tensor dictionary of latent representations
+        
+        Results
+        -------
+        lengths: dict
+            a str -> tensor dictionary where each element is a 1D
+            tensor of predicted lengths
+        """
+        return {
+            key: self.length_predictor.lengths(latent)
+            for key, latent in latents.items()
+        }
+    
+    def train_lengths(self, latents):
+        """Runs the training pass for length prediction
+
+        Arguments
+        ---------
+        latents: dict
+            a str -> tensor dictionary of latent representations
+        
+        Results
+        -------
+        lengths: dict
+            a str -> tensor dictionary where each element is a 1D
+            tensor of predicted lengths
+
+        """
+        return {
+            key: self.length_predictor(latent)
+            for key, latent in latents.items()
+        }
     
 
 class ModalityType(Enum):
@@ -697,7 +753,7 @@ class Aligner(nn.Module):
     """A base class for auxiliary modules that align encoded outputs in
     a given modality to the latent space"""
     
-    def forward(self, key, enc_out, lengths, anchor=None):
+    def forward(self, key, enc_out, lengths, anchor=None, anchor_scale=None):
         """Computes alignments
 
         Arguments
@@ -712,6 +768,9 @@ class Aligner(nn.Module):
             the modality to which outputs will be "anchored".
             If prvided, masking of outputs will be done
             based on anchor lengths
+        anchor_scale: float
+            the scaling factor for the anchor modality
+
 
         Returns
         -------
@@ -822,7 +881,7 @@ class AttentionalAligner(nn.Module):
             input_size=dim
         )
 
-    def get_queries(self, enc_out):
+    def get_queries(self, enc_out, length):
         """Upsamples or downsamples raw encoder outputs
         before applying attention   
         
@@ -830,11 +889,9 @@ class AttentionalAligner(nn.Module):
         enc_out_scaled = self.compressor(enc_out)
         enc_out_scaled = self.smoothener(enc_out_scaled)
         enc_out_scaled = self.out_norm(enc_out_scaled)
-        new_length = floor(enc_out.size(1) * self.scale)
-        #breakpoint()
-        return enc_out_scaled[:, :new_length, :]
+        return adjust_dim(enc_out_scaled, 1, length)
 
-    def forward(self, key, enc_out, lengths, anchor=None):
+    def forward(self, key, enc_out, lengths, anchor=None, anchor_scale=None):
         """Computes alignments using an attention module
 
         Arguments
@@ -849,6 +906,8 @@ class AttentionalAligner(nn.Module):
             the modality to which outputs will be "anchored".
             If prvided, masking of outputs will be done
             based on anchor lengths
+        anchor_scale: float
+            the scaling factor for the anchor modality
 
         Returns
         -------
@@ -860,10 +919,14 @@ class AttentionalAligner(nn.Module):
         """
         if anchor is None:
             anchor = key
+        if anchor_scale is None:
+            anchor_scale = self.scale
         mod_enc_out = enc_out[key]
         mod_length = lengths[key]
         anchor_length = lengths[anchor]
-        queries = self.get_queries(mod_enc_out)
+        anchor_max_len = int(round(enc_out[anchor].size(1) * anchor_scale))
+        
+        queries = self.get_queries(mod_enc_out, anchor_max_len)
         queries_max_len = queries.size(1)
         queries_mask = length_to_mask(anchor_length * queries_max_len, queries_max_len).unsqueeze(-1)
         masked_queries = queries * queries_mask
@@ -875,7 +938,6 @@ class AttentionalAligner(nn.Module):
             mod_length * mod_enc_out_scaled_max_len, mod_enc_out_scaled_max_len).unsqueeze(-1)
         pos_embs = self.pos_emb(mod_enc_out_scaled)
         mod_enc_out_scaled += pos_embs
-        mod_enc_out_scaled *= out_mask
 
         output, alignment = self.attn(
             query=masked_queries,
@@ -884,9 +946,23 @@ class AttentionalAligner(nn.Module):
             key_padding_mask=~(out_mask.bool().squeeze(-1)),
             attn_mask=self._get_attention_mask(out_mask, queries_mask),
         )
-        return output * queries_mask, alignment
+        return output, alignment
     
     def _get_attention_mask(self, in_mask, out_mask):
+        """Computes the attention mask
+        
+        Arguments
+        ---------
+        in_mask: torch.Tensor
+            the input mask
+        out_mask: torch.Tensor
+            the output mask
+
+        Returns
+        -------
+        attn_mask: torch.Tensor
+            the attention mask
+        """
         batch_size, in_max_len, _ = in_mask.shape
         _, out_max_len, _ = out_mask.shape
         attn_mask = torch.zeros(batch_size, out_max_len, in_max_len).to(
@@ -898,4 +974,87 @@ class AttentionalAligner(nn.Module):
         return attn_mask
 
 
+class LengthPredictor(nn.Module):
+    """A superclass for sequence end detection
+    modules that predict the length of a sequence
+    given a raw latent space
+    """
+    def forward(self, latent):
+        """Computes the forward pass
+        Arguments
+        ---------
+        latent: torch.Tensor
+            the latent space
 
+        Returns
+        -------
+        result: torch.Tensor
+            a raw representation of sequence ends,
+            for training, loss-dependent        
+        """
+        raise NotImplementedError()
+    
+    def lengths(self, latent):
+        """Computes the forward pass
+        Arguments
+        ---------
+        latent: torch.Tensor
+            the latent space
+
+        Returns
+        -------
+        result: torch.Tensor
+            a 1-D tensor of predicted lengths
+        """
+        raise NotImplementedError()
+
+
+class LinearLengthPredictor(nn.Module):
+    """A sequence end detector implemented using
+    a simple linear layer
+    
+    Arguments
+    ---------
+    latent_size: int
+        the latent space dimension"""
+    def __init__(self, latent_size):
+        super().__init__()
+        self.latent_size = latent_size
+        self.lin = Linear(
+            input_size=latent_size,
+            n_neurons=1
+        )
+        self.act = nn.Softmax(dim=1)
+
+    def forward(self, latent):
+        """Computes the forward pass
+        Arguments
+        ---------
+        latent: torch.Tensor
+            the latent space
+
+        Returns
+        -------
+        result: torch.Tensor
+            a raw representation of sequence ends,
+            for training, loss-dependent        
+        """        
+        x = latent
+        x = self.lin(x)
+        x = x.squeeze(-1)
+        x = self.act(x)
+        return x
+    
+    def lengths(self, latent):
+        """Computes the forward pass
+        Arguments
+        ---------
+        latent: torch.Tensor
+            the latent space
+
+        Returns
+        -------
+        result: torch.Tensor
+            a 1-D tensor of predicted lengths
+        """
+        return latent.size(1) / self(latent).argmax(dim=-1)
