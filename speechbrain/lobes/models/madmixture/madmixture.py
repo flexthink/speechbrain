@@ -433,7 +433,7 @@ class MadMixture(nn.Module):
         """
         latents, alignments, enc_out = self.latent(inputs, lengths, context)
         
-        length_preds = self.train_lengths(latents)
+        length_preds = self.train_lengths(latents, lengths)
         
         if self.training:            
             lengths_dec = lengths
@@ -505,7 +505,7 @@ class MadMixture(nn.Module):
             for key, latent in latents.items()
         }
     
-    def train_lengths(self, latents):
+    def train_lengths(self, latents, lengths):
         """Runs the training pass for length prediction
 
         Arguments
@@ -513,6 +513,9 @@ class MadMixture(nn.Module):
         latents: dict
             a str -> tensor dictionary of latent representations
         
+        latents: dict
+            a str -> tensor dictionary of relative lengths
+
         Results
         -------
         lengths: dict
@@ -520,8 +523,9 @@ class MadMixture(nn.Module):
             tensor of predicted lengths
 
         """
+        anchor_length = lengths[self.anchor_name]
         return {
-            key: self.length_predictor(latent)
+            key: self.length_predictor(latent, anchor_length)
             for key, latent in latents.items()
         }
     
