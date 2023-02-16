@@ -40,7 +40,7 @@ class MadMixture(nn.Module):
         the size of the feature dimension of the latent space
     
     """
-    def __init__(self, modalities, length_predictor=None, anchor_name=None, latent_size=32):
+    def __init__(self, modalities, length_predictor, anchor_name=None, latent_size=32):
         super().__init__()
         if isinstance(modalities, dict):
             modalities_dict = {
@@ -193,7 +193,7 @@ class MadMixture(nn.Module):
             for key, (_, alignment) in aligner_out.items()
         }
         return latents, alignments, enc_out
-
+    
     def alignment(self, key, enc_out, lengths):
         """Computes the alignment for the specified modality
 
@@ -355,6 +355,7 @@ class MadMixture(nn.Module):
         src_lengths = {src: lengths[src]}
         # Find latents
         latents, alignments, enc_out = self.latent(src_inputs, src_lengths)
+        latents = self.mask_latents(latents, lengths)
 
         # Reconstruct
         decode_length = (
@@ -431,18 +432,25 @@ class MadMixture(nn.Module):
         
         """
         latents, alignments, enc_out = self.latent(inputs, lengths, context)
-        rec, out_context = self.decode_multiple(latents, lengths, context)
+        
+        length_preds = self.train_lengths(latents)
+        
+        if self.training:            
+            lengths_dec = lengths
+        else:
+            lengths_dec = {
+                key: self.length_predictor.to_lengths(pred)
+                for key, pred in length_preds.items()}
+
+        latents = self.mask_latents(latents, lengths_dec)
+        
+        rec, out_context = self.decode_multiple(latents, lengths_dec, context)
         if transfer:
-            transfer_rec, transfer_context = self.cross_decode(latents, lengths, context)
+            transfer_rec, transfer_context = self.cross_decode(latents, lengths_dec, context)
             out_context.update(transfer_context)
         else:
             transfer_rec = None
         
-        if self.length_predictor is not None:
-            length_preds = self.train_lengths(latents)
-        else:
-            length_preds = None
-
         return latents, alignments, enc_out, rec, transfer_rec, out_context, length_preds
     
     def cross_decode(self, latents, length, context=None):
@@ -517,6 +525,70 @@ class MadMixture(nn.Module):
             for key, latent in latents.items()
         }
     
+    def mask_latents(self, latents, lengths=None):
+        if lengths is None:
+            latents_masked = self._mask_latents_anchor(latents, lengths)
+        else:
+            latents_masked = self._mask_latents_predicted(latents)
+        return latents_masked            
+    
+    def _mask_latents_predicted(self, latents):
+        """Masks out latent position using predictions
+        
+        Arguments
+        ---------
+        latents: dict
+            a str -> tensor dictionary of latent representations
+
+        Returns
+        -------
+        result: dict
+            masked-out latents
+        """
+        lengths = self.predict_lengths(latents)
+        return {
+            key: mask_out(latent, lengths[key])
+            for key, latent in latents.items()
+        }
+    
+    def _mask_latents_anchor(self, latents, lengths):
+        """Masks out latent position using predictions
+        
+        Arguments
+        ---------
+        latents: dict
+            a str -> tensor dictionary of latent representations
+        lengths: dict
+            relative lengths, per modality
+
+        Returns
+        -------
+        result: dict
+            masked-out latents
+        """
+        length = lengths[self.anchor_name]
+        return {
+            key: mask_out(latent, length)
+            for key, latent in latents.items()
+        }
+
+
+def mask_out(x, lengths):
+    """Zeroes out positions in the specified tensor extending
+    beyond provided relative lengths
+    
+    Arguments
+    ---------
+    x: torch.Tensor
+        a tensor
+    lengths: torch.Tensor
+        relative lengths
+    """
+    max_len = x.size(1)
+    mask = length_to_mask(lengths * max_len, max_len)
+    mask = mask.unsqueeze(-1)
+    return (mask * x)
+
 
 class ModalityType(Enum):
     PRIMARY = "primary"
@@ -994,8 +1066,9 @@ class LengthPredictor(nn.Module):
         """
         raise NotImplementedError()
     
-    def lengths(self, latent):
-        """Computes the forward pass
+    def to_lengths(self, length_pred):
+        """Predicts relative lengths from raw output
+        
         Arguments
         ---------
         latent: torch.Tensor
@@ -1007,9 +1080,27 @@ class LengthPredictor(nn.Module):
             a 1-D tensor of predicted lengths
         """
         raise NotImplementedError()
+    
+
+    def lengths(self, latent):
+        """Predicts relative lengths from raw output
+        
+        Arguments
+        ---------
+        latent: torch.Tensor
+            the latent space
+
+        Returns
+        -------
+        result: torch.Tensor
+            a 1-D tensor of predicted lengths
+        """
+        length_pred = self(latent)
+        return self.to_lengths(length_pred)
 
 
-class LinearLengthPredictor(nn.Module):
+
+class LinearLengthPredictor(LengthPredictor):
     """A sequence end detector implemented using
     a simple linear layer
     
@@ -1026,12 +1117,14 @@ class LinearLengthPredictor(nn.Module):
         )
         self.act = nn.Softmax(dim=1)
 
-    def forward(self, latent):
+    def forward(self, latent, length=None):
         """Computes the forward pass
         Arguments
         ---------
         latent: torch.Tensor
             the latent space
+        length: torch.Tensor
+            the relative length (for masking)
 
         Returns
         -------
@@ -1042,19 +1135,24 @@ class LinearLengthPredictor(nn.Module):
         x = latent
         x = self.lin(x)
         x = x.squeeze(-1)
+        if length is not None:
+            max_len = latent.size(1)
+            mask = length_to_mask(length * max_len, max_len)
+            x *= mask
         x = self.act(x)
         return x
     
-    def lengths(self, latent):
-        """Computes the forward pass
+    def to_lengths(self, length_pred):
+        """Predict absolute lengths
+        
         Arguments
         ---------
-        latent: torch.Tensor
-            the latent space
+        length_pred: torch.Tensor
+            the raw module output
 
         Returns
         -------
         result: torch.Tensor
             a 1-D tensor of predicted lengths
         """
-        return latent.size(1) / self(latent).argmax(dim=-1)
+        return length_pred.argmax(dim=-1).clamp(1.) / length_pred.size(1)

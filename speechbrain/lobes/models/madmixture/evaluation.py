@@ -274,7 +274,7 @@ class ModalityTransferTask(EvaluationTask):
         for tgt, tgt_rec in rec.items():
             evaluator = self.evaluators[src, tgt]
             src_latents = latents[src]
-            src_targets, tgt_targets = targets[src], targets[tgt]
+            _, tgt_targets = targets[src], targets[tgt]
             src_lengths, tgt_lengths = lengths[src], lengths[tgt]
             if evaluator.vis_samples_only:
                 (

@@ -44,16 +44,18 @@ class TacotronDecoder(nn.Module):
 
         """
         raw_lengths = lengths * latent.size(1)
+        max_len = raw_lengths.int().max().item()
         mel_lengths = None
-        if context is not None and self.decoder_input_key in context:
+        latent_cut = latent[:, :max_len, :]
+        if context is not None and self.decoder_input_key in context:        
             mel_outputs, gate_outputs, alignments = self.decoder(
-                memory=latent,
+                memory=latent_cut,
                 decoder_inputs=context[self.decoder_input_key].transpose(-1, -2),
                 memory_lengths=raw_lengths
             )
         else:
             mel_outputs, gate_outputs, alignments, mel_lengths = self.decoder.infer(
-                memory=latent,
+                memory=latent_cut,
                 memory_lengths=raw_lengths
             )
         out_context = {

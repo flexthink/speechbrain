@@ -227,6 +227,7 @@ class MadMixtureLoss(nn.Module):
             loss_details.update(weighted_context_loss_details)
         else:
             context_loss = torch.tensor(0.).to(rec_loss.device)
+            
 
         if self.length_loss_fn is not None and length_preds is not None:
             length_loss, modality_length_loss, weighted_modality_length_loss = self.compute_length_loss(
@@ -241,11 +242,9 @@ class MadMixtureLoss(nn.Module):
             )
             loss_details.update(length_loss_details)
             loss_details.update(weighted_length_loss_details)
+            loss_details["length_loss"] = length_loss
         else:
             length_loss = torch.tensor(0.).to(rec_loss.device)
-            context_loss_details = with_prefix(
-                "length", component_context_loss
-            )
 
         loss = (
             self.rec_loss_weight * rec_loss 
