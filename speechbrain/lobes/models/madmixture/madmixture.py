@@ -436,7 +436,10 @@ class MadMixture(nn.Module):
         length_preds = self.train_lengths(latents, lengths)
         
         if self.training:            
-            lengths_dec = lengths
+            lengths_dec = {
+                key: lengths[self.anchor_name]
+                for key in lengths
+            }
         else:
             lengths_dec = {
                 key: self.length_predictor.to_lengths(pred)
