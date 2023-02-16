@@ -485,7 +485,7 @@ class MadMixtureLoss(nn.Module):
             the weighted length loss, broken down by modality
         """
         modality_length_loss = {
-            key: self.length_loss_fn(length_preds[key], latents[key], length[key])
+            key: self.length_loss_fn(length_preds[key], latents[key], length[self.anchor])
             for key in length_preds
         }
         length_loss, weighted_modality_length_loss = self._weighted_modality_loss(
