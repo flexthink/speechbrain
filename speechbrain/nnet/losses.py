@@ -381,7 +381,7 @@ def cosine_similarity_loss(
         one loss per item in the batch, 'batchmean' returns sum / batch size."""
 
     predictions, targets = truncate(predictions, targets, allowed_len_diff)
-    return compute_masked_loss(
+    return -compute_masked_loss(
         _cosine_similairty, predictions, targets, length, reduction=reduction,
         mask_shape="loss"
     )
