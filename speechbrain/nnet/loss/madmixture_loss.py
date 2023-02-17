@@ -562,7 +562,7 @@ class ContextAlignmentLoss(nn.Module):
         alignments = out_context[key]
         _, max_output_length, max_input_length = alignments.shape
         input_lengths = rel_lengths * max_input_length
-        output_lengths = rel_lengths * max_output_length
+        output_lengths = rel_lengths * max_output_length        
         return self.loss_fn(
             attention=alignments, 
             input_lengths=input_lengths,
@@ -599,8 +599,10 @@ class DistanceDiffLengthLoss(nn.Module):
             length_pred,
             length_abs,
             beta=self.beta,
+            length=length,
             max_weight=self.max_weight,
-            reduction=reduction
+            reduction=reduction,
+            use_masked_penalty=True
         )
 
 

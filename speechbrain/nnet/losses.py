@@ -1354,6 +1354,8 @@ def distance_diff_loss(
     length=None,
     beta=0.25,
     max_weight=100.0,
+    use_masked_penalty=False,
+    masked_penalty=10.,
     reduction="mean",
 ):
     """A loss function that can be used in cases where a model outputs
@@ -1392,19 +1394,28 @@ def distance_diff_loss(
         See pytorch for 'mean', 'sum'. The 'batch' option returns
         one loss per item in the batch, 'batchmean' returns sum / batch size.
     """
+    if use_masked_penalty:
+        loss_masked_penalty = masked_penalty
+        loss_length = length
+        mask_length = None
+    else:
+        loss_masked_penalty, loss_length = None, None
+        mask_length = length
     return compute_masked_loss(
         functools.partial(
-            _distance_diff_loss, beta=beta, max_weight=max_weight
+            _distance_diff_loss, beta=beta, max_weight=max_weight,
+            masked_penalty=loss_masked_penalty,
+            length=loss_length
         ),
         predictions=predictions,
         targets=targets,
-        length=length,
+        length=mask_length,
         reduction=reduction,
         mask_shape="loss",
     )
 
 
-def _distance_diff_loss(predictions, targets, beta, max_weight):
+def _distance_diff_loss(predictions, targets, beta, max_weight, masked_penalty=0., length=None):
     """Computes the raw (unreduced) distance difference loss
     
     Arguments
@@ -1431,4 +1442,8 @@ def _distance_diff_loss(predictions, targets, beta, max_weight):
     )
     diff_range = (pos_range - targets.unsqueeze(-1)).abs()
     loss_weights = ((beta * diff_range).exp() - 1.0).clamp(max=max_weight)
+    if length is not None:
+        length_abs = length * max_len
+        loss_weights = torch.where(pos_range > length_abs[..., None], masked_penalty, loss_weights)
+    breakpoint()
     return (loss_weights * predictions).unsqueeze(-1)

@@ -157,7 +157,7 @@ class MadMixtureBrain(sb.Brain):
             length_preds=predictions.length_preds
         )
 
-        if self.hparams.enable_train_metrics:
+        if self.hparams.enable_train_metrics and self.step % self.hparams.train_metrics_interval == 0:
             self.loss_metric.append(
                 batch.snt_id,
                 inputs=predictions.feats,
