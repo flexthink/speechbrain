@@ -368,7 +368,7 @@ model: !new:speechbrain.lobes.models.madmixture.MadMixture
 compute_cost_rec_audio: !name:speechbrain.nnet.losses.mse_loss
 compute_cost_rec_char: !name:speechbrain.nnet.losses.nll_loss
 compute_cost_rec_phn: !name:speechbrain.nnet.losses.nll_loss
-compute_cost_alignment: !new:speechbrain.nnet.loss.guidedattn_loss.GuidedAttentionLoss
+compute_cost_alignment: !new:speechbrain.nnet.loss.madmixture_loss.AlignmentLoss
 compute_cost_distance: !name:speechbrain.nnet.losses.cosine_similarity_loss
 compute_cost_context_alignment: !new:speechbrain.nnet.loss.madmixture_loss.ContextAlignmentLoss
     keys:
@@ -472,7 +472,7 @@ lr_annealing: !new:speechbrain.nnet.schedulers.NewBobScheduler
 # are moved to the correct device. Then it will be added to the checkpointer.
 opt_class: !name:torch.optim.Adam
      lr: !ref <lr>
-     capturable: True
+     #capturable: True
 
 
 # This object is used for saving the state of training both so that it
