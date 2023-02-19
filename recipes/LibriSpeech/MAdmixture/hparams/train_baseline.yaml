@@ -120,6 +120,7 @@ vocoder_model: speechbrain/tts-hifigan-libritts-16kHz
 
 
 # Audio Encoder/Decoder Parameters
+audio_enabled: True
 audio_enc_activation: !name:torch.nn.LeakyReLU
 audio_enc_dropout: 0.15
 audio_enc_cnn_blocks: 2
@@ -145,6 +146,7 @@ audio_dec_decoder_no_early_stopping: False
 audio_aligner_scale: 1.25
 
 # Character Encoder/Decoder Parameters
+char_enabled: True
 char_embedding_dim: 512
 char_enc_dropout: 0.5
 char_enc_neurons: 512
@@ -156,6 +158,7 @@ char_dec_num_layers: 4
 char_aligner_scale: 1
 
 # Phoneme Encoder/Decoder Parameters
+phn_enabled: True
 phn_embedding_dim: 512
 phn_enc_dropout: 0.5
 phn_enc_neurons: 512
@@ -352,6 +355,10 @@ model: !new:speechbrain.lobes.models.madmixture.MadMixture
             encoder: !ref <phn_enc>
             decoder: !ref <phn_dec>
             aligner: !ref <phn_aligner>
+    modality_enabled:
+        audio: !ref <audio_enabled>
+        char: !ref <char_enabled>
+        phn: !ref <phn_enabled>
     length_predictor: !ref <length_predictor>
 
 
@@ -380,6 +387,10 @@ compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
     - audio
     - char
     - phn
+    modality_enabled:
+        audio: !ref <audio_enabled>
+        char: !ref <char_enabled>
+        phn: !ref <phn_enabled>
     rec_loss_fn:
         audio: !ref <compute_cost_rec_audio>
         phn: !ref <compute_cost_rec_char>

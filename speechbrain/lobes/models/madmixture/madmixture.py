@@ -39,18 +39,26 @@ class MadMixture(nn.Module):
     latent_size: int
         the size of the feature dimension of the latent space
     
+    modality_enabled: dict
+        a dictionary with on-off switch setting which modalities will be enabled
+        or disabled. This is a convenience parameter to be able to enable/disable
+        modalities using hparams switches
+    
     """
-    def __init__(self, modalities, length_predictor, anchor_name=None, latent_size=32):
+    def __init__(self, modalities, length_predictor, anchor_name=None, latent_size=32, modality_enabled=None):
         super().__init__()
+        self.modality_enabled = modality_enabled
         if isinstance(modalities, dict):
             modalities_dict = {
                 name: Modality(name=name, **modality_kwargs)
                 for name, modality_kwargs in modalities.items()
+                if self.is_enabled(name)
             }
         else:
             modalities_dict = {
                 modality.name: modality
-                for modality in modalities            
+                for modality in modalities
+                if self.is_enabled(modality.name)
             }
         self.modalities = nn.ModuleDict(modalities_dict)
         if not anchor_name:
@@ -82,6 +90,9 @@ class MadMixture(nn.Module):
         self.unaligned_modalities = modalities - self.aligned_modalities
         self.length_predictor = length_predictor
         self.eos_mark = EndOfSequenceMarker(feature_size=latent_size)
+
+    def is_enabled(self, key):
+        return self.modality_enabled.get(key, False) if self.modality_enabled is not None else True
 
 
     def forward(self, inputs, lengths=None, context=None):

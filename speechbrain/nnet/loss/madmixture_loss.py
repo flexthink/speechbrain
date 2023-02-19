@@ -21,7 +21,8 @@ Authors
 import torch
 from torch import nn
 from torch.nn import functional as F
-from speechbrain.nnet.losses import truncate, distance_diff_loss
+from speechbrain.nnet.losses import truncate, distance_diff_loss, reduce_loss
+from speechbrain.nnet.loss.guidedattn_loss import GuidedAttentionLoss
 
 class MadMixtureLoss(nn.Module):
     """The MAdmixture model loss
@@ -74,10 +75,14 @@ class MadMixtureLoss(nn.Module):
             context_loss_weight=1.,
             context_loss_fn=None,
             length_loss_weight=1.,
-            length_loss_fn=None
+            length_loss_fn=None,
+            modality_enabled=None
         ):
         super().__init__()
         self.modalities = modalities
+        self.modality_enabled = modality_enabled
+        if modality_enabled is not None:
+            self.modalities = [mod for mod in self.modalities if modality_enabled[mod]]
         self.rec_loss_weight = rec_loss_weight
         self.rec_loss_fn = rec_loss_fn
         self.align_attention_loss_fn = align_attention_loss_fn
@@ -335,9 +340,13 @@ class MadMixtureLoss(nn.Module):
             (src, tgt): self.modality_weights[tgt] * loss
             for (src, tgt), loss in modality_transfer_loss.items()
         }
-        transfer_loss = torch.stack(
-            list(weighted_modality_transfer_loss.values())
-        ).sum(dim=0)
+        if modality_transfer_loss:
+            transfer_loss = torch.stack(
+                list(weighted_modality_transfer_loss.values())
+            ).sum(dim=0)
+        else:
+            first_input = next(iter(inputs.values()))
+            transfer_loss = torch.tensor(0., device=first_input.device)
         return transfer_loss, modality_transfer_loss, weighted_modality_transfer_loss
         
 
@@ -422,6 +431,9 @@ class MadMixtureLoss(nn.Module):
         sec_lengths = dict(lengths)
         del sec_latent[self.anchor]
         del sec_lengths[self.anchor]
+        if not sec_latent:
+            first_alignment = next(iter(latents.values()))
+            return torch.tensor(0.).to(first_alignment.device), {}
 
         modality_latent_distance_loss = {
             key: self.compute_modality_latent_distance_loss(
@@ -534,6 +546,7 @@ class ContextAlignmentLoss(nn.Module):
         component_context_loss = {
             key: self.get_component(key, out_context, lengths, reduction)
             for key in self.keys
+            if key in out_context
         }
         context_loss, weighted_context_loss = weighted_loss(
             component_context_loss, self.weights
@@ -647,6 +660,65 @@ def weighted_loss(components, weights):
         list(weighted_loss.values())
     ).sum(dim=0)
     return total_loss, weighted_loss
+
+
+class AlignmentLoss(nn.Module):
+    def __init__(self, sigma=0.2, eos_weight=1.):
+        super().__init__()
+        self.attn_loss = GuidedAttentionLoss(sigma)
+        self.eos_weight = eos_weight
+
+    def forward(
+        self,
+        attention,
+        input_lengths,
+        target_lengths,
+        max_input_len=None,
+        max_target_len=None,
+        reduction="mean"
+    ):
+        attn_loss = self.attn_loss(
+            attention=attention,
+            input_lengths=input_lengths,
+            target_lengths=target_lengths,
+            max_input_len=max_input_len,
+            max_target_len=max_target_len,
+            reduction=reduction
+        )
+
+        eos_loss = self.eos_loss(
+            attention=attention,
+            input_lengths=input_lengths,
+            target_lengths=target_lengths,
+            max_input_len=max_input_len,
+            max_target_len=max_target_len,
+            reduction=reduction
+        )
+        return attn_loss + self.eos_weight * eos_loss
+
+    def eos_loss(self, attention, input_lengths, target_lengths, max_input_len, max_target_len, reduction):
+        if max_input_len is None:
+            max_input_len = input_lengths.max()
+        if max_target_len is None:
+            max_target_len = target_lengths.max()
+        input_coords, target_coords = torch.meshgrid(
+            torch.arange(max_input_len, device=attention.device),
+            torch.arange(max_target_len, device=attention.device),
+            indexing="xy"
+        )
+        batch_size = attention.size(0)
+        input_coords = input_coords.unsqueeze(0).repeat(batch_size, 1, 1)
+        target_coords = target_coords.unsqueeze(0).repeat(batch_size, 1, 1)
+        input_match = input_coords == input_lengths[:, None, None] - 1
+        target_match = target_coords == target_lengths[:, None, None] - 1
+        input_exceeds = input_coords >= input_lengths[:, None, None]
+        target_exceeds = target_coords >= target_lengths[:, None, None]
+        mask = (
+            (input_match ^ target_match)
+            &
+            (~(input_exceeds | target_exceeds))
+        )
+        return reduce_loss(attention * mask, mask, reduction)
 
 
 def with_prefix(prefix, loss_dict):

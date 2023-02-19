@@ -201,7 +201,11 @@ class ModalityTransferTask(EvaluationTask):
             for src, tgt in self.model.possible_transfers
             if tgt in self.evaluator_fn
         ]
-        self.targets = list(self.evaluator_fn.keys())
+        self.targets = [
+            key 
+            for key in self.evaluator_fn.keys()
+            if model.is_enabled(key)
+        ]
 
         self.evaluators = {
             (src, tgt): self.evaluator_fn[tgt]()

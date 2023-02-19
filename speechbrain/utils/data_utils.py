@@ -16,6 +16,7 @@ import torch
 import tqdm
 import pathlib
 import speechbrain as sb
+from numbers import Number
 
 
 def undo_padding(batch, lengths):
@@ -691,8 +692,8 @@ def concat_padded_features(
     for item, item_in_start, item_in_end, item_out_start, item_out_end in zip(
         feats, in_start, in_end, out_start, out_end
     ):
-        in_mask = _boundaries_to_mask(item, item_in_start, item_in_end, dim)
-        out_mask = _boundaries_to_mask(out, item_out_start, item_out_end, dim)
+        in_mask = boundaries_to_mask(item, item_in_start, item_in_end, dim)
+        out_mask = boundaries_to_mask(out, item_out_start, item_out_end, dim)
         out[out_mask] = item[in_mask]
 
     out_lens = out_end[-1, :].float() / total_length
@@ -788,7 +789,7 @@ def _lens_to_boundaries(
     return start, end
 
 
-def _boundaries_to_mask(target, start, end, len_dim=1):
+def boundaries_to_mask(target, start, end, len_dim=1):
     """For a given features tensor and tensors of start and end indexes,
     computes the corresponding Boolean mask
     

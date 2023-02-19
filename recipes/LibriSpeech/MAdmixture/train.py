@@ -97,27 +97,30 @@ class MadMixtureBrain(sb.Brain):
 
         #TODO: This can be made more modular
         # Feature computation and normalization
-        feats_audio = self.hparams.compute_features(wavs)
-        if self.hparams.compute_features_transpose:
-            feats_audio = feats_audio.transpose(-1, -2)
-        for norm in self.modules.normalize:
-            feats_audio = norm(feats_audio, wav_lens)
-        
+        feats = {}
+        lengths = {}
+        feats_audio = None
+        if self.hparams.audio_enabled:
+            feats_audio = self.hparams.compute_features(wavs)
+            if self.hparams.compute_features_transpose:
+                feats_audio = feats_audio.transpose(-1, -2)
+            for norm in self.modules.normalize:
+                feats_audio = norm(feats_audio, wav_lens)        
+            feats["audio"] = feats_audio
+            lengths["audio"] = wav_lens
+
+
         # TODO: Embeddings are computed twice, avoid this
-        feats_char_emb = self.hparams.char_emb(batch.char_encoded_bos.data)
-        feats_phn_emb = self.hparams.phn_emb(batch.phn_encoded_bos.data)
-
-        feats = {
-            "audio": feats_audio,
-            "char": batch.char_encoded_eos.data,
-            "phn": batch.phn_encoded_eos.data,
-        }
-
-        lengths = {
-            "audio": wav_lens,
-            "char": batch.char_encoded_eos.lengths,
-            "phn": batch.phn_encoded_eos.lengths,
-        }
+        feats_char_emb = None
+        feats_phn_emb = None
+        if self.hparams.char_enabled:
+            feats["char"] = batch.char_encoded_eos.data
+            lengths["char"] = batch.char_encoded_eos.lengths
+            feats_char_emb = self.hparams.char_emb(batch.char_encoded_bos.data)
+        if self.hparams.phn_enabled:
+            feats["phn"] = batch.phn_encoded_eos.data
+            lengths["phn"] = batch.phn_encoded_eos.lengths
+            feats_phn_emb = self.hparams.phn_emb(batch.phn_encoded_bos.data)
 
         context = {
             "audio": feats_audio,
