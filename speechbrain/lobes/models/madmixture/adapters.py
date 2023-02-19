@@ -44,7 +44,7 @@ class TacotronDecoder(nn.Module):
 
         """
         raw_lengths = lengths * latent.size(1)
-        max_len = raw_lengths.int().max().item()
+        max_len = raw_lengths.round().int().max().item()
         mel_lengths = None
         latent_cut = latent[:, :max_len, :]
         if context is not None and self.decoder_input_key in context:        
