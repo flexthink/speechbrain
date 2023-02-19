@@ -1267,7 +1267,7 @@ class EndOfSequenceMarker(nn.Module):
         """
         batch_size = x.size(0)
         marker = self.marker.repeat(batch_size, 1, 1)
-        marker_length = torch.ones(batch_size)
+        marker_length = torch.ones(batch_size, device=x.device)
         x_eos, length_eos = concat_padded_features(
             [x, marker],
             [length, marker_length]
