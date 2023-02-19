@@ -162,6 +162,7 @@ class GuidedAttentionLoss(nn.Module):
         input_mesh, target_mesh = torch.meshgrid(
             torch.arange(max_input_len).to(input_lengths.device),
             torch.arange(max_target_len).to(target_lengths.device),
+            indexing="ij"
         )
         input_mesh, target_mesh = (
             input_mesh.unsqueeze(0),
