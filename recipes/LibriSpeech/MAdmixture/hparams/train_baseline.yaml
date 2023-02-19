@@ -82,7 +82,7 @@ number_of_epochs: 15
 batch_size: 8
 lr: 0.001
 max_grad_norm: 0.05
-sorting: ascending
+sorting: random
 ckpt_interval_minutes: 15 # save checkpoint every N min
 label_smoothing: 0.1
 transfer_loss_enabled: true
