@@ -13,7 +13,7 @@ from speechbrain.nnet.linear import Linear
 from speechbrain.nnet.normalization import LayerNorm
 from speechbrain.dataio.dataio import length_to_mask
 from speechbrain.utils.callchains import arg_exists
-from speechbrain.utils.data_utils import adjust_dim
+from speechbrain.utils.data_utils import adjust_dim, concat_padded_features
 from speechbrain.lobes.models.transformer.Transformer import (
     PositionalEncoding)
 from math import floor, ceil
@@ -81,6 +81,7 @@ class MadMixture(nn.Module):
         modalities = set(self.modalities.keys())
         self.unaligned_modalities = modalities - self.aligned_modalities
         self.length_predictor = length_predictor
+        self.eos_mark = EndOfSequenceMarker(feature_size=latent_size)
 
 
     def forward(self, inputs, lengths=None, context=None):
@@ -171,28 +172,24 @@ class MadMixture(nn.Module):
             a key -> tensor dictionary of alignment matrices, only for
             modalities that support alignment
         enc_out: dict
-            raw encoder ouputs for each modality        
+            raw encoder ouputs for each modality
+        lengths_aligned: dict
+            post-alignment lengths     
         """
         if lengths is None:
             lengths = full_lengths(inputs)
         enc_out = self.encode(inputs, lengths, context)
-        aligner_out = {
-            key: self.alignment(key, enc_out, lengths)
-            for key in inputs
-            if key in self.aligned_modalities
-        }
-        latents = {
-            key: latent
-            for key, (latent, _) in aligner_out.items()
-        } | {
-            key: enc_out[key]
-            for key in self.unaligned_modalities
-        }
-        alignments = {
-            key: alignment
-            for key, (_, alignment) in aligner_out.items()
-        }
-        return latents, alignments, enc_out
+        latents, alignments, lengths_aligned = {}, {}, {}
+        for key in inputs:
+            if key in self.aligned_modalities:
+                latent, alignment, length = self.alignment(key, enc_out, lengths)
+                latents[key] = latent
+                alignments[key] = alignment
+                lengths_aligned[key] = length
+            else:
+                latents[key] = enc_out[key]
+                lengths_aligned[key] = lengths[key]
+        return latents, alignments, enc_out, lengths_aligned
     
     def alignment(self, key, enc_out, lengths):
         """Computes the alignment for the specified modality
@@ -209,11 +206,14 @@ class MadMixture(nn.Module):
 
         Returns
         -------
-        result: torch.Tensor
+        latent: torch.Tensor
             the aligned tensor
         
         alignment: torch.Tensor
             the raw alignment matrix
+
+        lengths: torch.Tensor
+            post-alignment lengths
         """
         if key in self.aligned_modalities:
             if self.anchor_name in lengths:
@@ -222,9 +222,9 @@ class MadMixture(nn.Module):
             else:
                 anchor_name, anchor_scale = None, None
             result = self.modalities[key].aligner(
-                key, enc_out, lengths, anchor_name, anchor_scale)
+                key, enc_out, lengths, anchor_name, anchor_scale, self.eos_mark)
         else:
-            result = None, None
+            result = None, None, None
         return result
 
 
@@ -354,8 +354,8 @@ class MadMixture(nn.Module):
         src_inputs = {src: inputs[src]}
         src_lengths = {src: lengths[src]}
         # Find latents
-        latents, alignments, enc_out = self.latent(src_inputs, src_lengths)
-        latents = self.mask_latents(latents, lengths)
+        latents, alignments, enc_out, lengths_aligned = self.latent(src_inputs, src_lengths)
+        latents = self.mask_latents(latents, lengths_aligned)
 
         # Reconstruct
         decode_length = (
@@ -431,13 +431,13 @@ class MadMixture(nn.Module):
             length predictions
         
         """
-        latents, alignments, enc_out = self.latent(inputs, lengths, context)
+        latents, alignments, enc_out, lengths_aligned = self.latent(inputs, lengths, context)
         
         length_preds = self.train_lengths(latents, lengths)
         
         if self.training:            
             lengths_dec = {
-                key: lengths[self.anchor_name]
+                key: lengths_aligned[self.anchor_name]
                 for key in lengths
             }
         else:
@@ -831,8 +831,12 @@ class Modality(nn.Module):
 class Aligner(nn.Module):
     """A base class for auxiliary modules that align encoded outputs in
     a given modality to the latent space"""
+
+    def __init__(self, eos_marker=None) -> None:
+        super().__init__()
+        self.eos_marker = eos_marker
     
-    def forward(self, key, enc_out, lengths, anchor=None, anchor_scale=None):
+    def forward(self, key, enc_out, lengths, anchor=None, anchor_scale=None, eos_mark=None):
         """Computes alignments
 
         Arguments
@@ -849,6 +853,9 @@ class Aligner(nn.Module):
             based on anchor lengths
         anchor_scale: float
             the scaling factor for the anchor modality
+        eos_mark: torch.nn.Module
+            a module that edds an explicit learned end-of-sequence
+            mark to the sequence to help with length detection
 
 
         Returns
@@ -970,7 +977,7 @@ class AttentionalAligner(nn.Module):
         enc_out_scaled = self.out_norm(enc_out_scaled)
         return adjust_dim(enc_out_scaled, 1, length)
 
-    def forward(self, key, enc_out, lengths, anchor=None, anchor_scale=None):
+    def forward(self, key, enc_out, lengths, anchor=None, anchor_scale=None, eos_mark=None):
         """Computes alignments using an attention module
 
         Arguments
@@ -987,6 +994,9 @@ class AttentionalAligner(nn.Module):
             based on anchor lengths
         anchor_scale: float
             the scaling factor for the anchor modality
+        eos_mark: torch.nn.Module
+            a module that edds an explicit learned end-of-sequence
+            mark to the sequence to help with length detection
 
         Returns
         -------
@@ -1012,11 +1022,14 @@ class AttentionalAligner(nn.Module):
         
         mod_enc_out_scaled = self.feature_scale(mod_enc_out)
         mod_enc_out_scaled = self.in_norm(mod_enc_out_scaled)
-        mod_enc_out_scaled_max_len = mod_enc_out.size(1)
-        out_mask = length_to_mask(
-            mod_length * mod_enc_out_scaled_max_len, mod_enc_out_scaled_max_len).unsqueeze(-1)
         pos_embs = self.pos_emb(mod_enc_out_scaled)
         mod_enc_out_scaled += pos_embs
+        if eos_mark is not None:
+            mod_enc_out_scaled, lengths = eos_mark(mod_enc_out_scaled, anchor_length)
+        mod_enc_out_scaled_max_len = mod_enc_out_scaled.size(1)
+        out_mask = length_to_mask(
+            mod_length * mod_enc_out_scaled_max_len, mod_enc_out_scaled_max_len).unsqueeze(-1)
+        
 
         output, alignment = self.attn(
             query=masked_queries,
@@ -1025,7 +1038,7 @@ class AttentionalAligner(nn.Module):
             key_padding_mask=~(out_mask.bool().squeeze(-1)),
             attn_mask=self._get_attention_mask(out_mask, queries_mask),
         )
-        return output, alignment
+        return output, alignment, lengths
     
     def _get_attention_mask(self, in_mask, out_mask):
         """Computes the attention mask
@@ -1163,3 +1176,100 @@ class LinearLengthPredictor(LengthPredictor):
             a 1-D tensor of predicted lengths
         """
         return length_pred.argmax(dim=-1).clamp(1.) / length_pred.size(1)
+
+class GateLengthPredictor(LengthPredictor):
+    """A sequence end detector implemented using
+    a simple linear layer with a sigmoid, outputting
+    independent probabilities of any given 
+    
+    Arguments
+    ---------
+    latent_size: int
+        the latent space dimension"""
+    def __init__(self, latent_size, threshold=0.5):
+        super().__init__()
+        self.latent_size = latent_size
+        self.lin = Linear(
+            input_size=latent_size,
+            n_neurons=1
+        )
+        self.act = nn.Sigmoid()
+        self.threshold = threshold
+
+    def forward(self, latent, length=None):
+        """Computes the forward pass
+        Arguments
+        ---------
+        latent: torch.Tensor
+            the latent space
+        length: torch.Tensor
+            the relative length (for masking)
+
+        Returns
+        -------
+        result: torch.Tensor
+            a raw representation of sequence ends,
+            for training, loss-dependent        
+        """        
+        x = latent
+        x = self.lin(x)
+        x = x.squeeze(-1)
+        x = self.act(x)
+        return x
+    
+    def to_lengths(self, length_pred):
+        """Predict absolute lengths
+        
+        Arguments
+        ---------
+        length_pred: torch.Tensor
+            the raw module output
+
+        Returns
+        -------
+        result: torch.Tensor
+            a 1-D tensor of predicted lengths
+        """
+        return (length_pred > self.threshold).int().argmax(dim=-1).clamp(1.) / length_pred.size(1)
+
+
+class EndOfSequenceMarker(nn.Module):
+    """A module that adds EOS markers to a sequence, intended
+    to be used for encoder outputs to facilitate length
+    prediction
+    
+    Arguments
+    ---------
+    dim: int
+        the feature dimension
+    """
+    def __init__(self, feature_size):
+        super().__init__()
+        self.feature_size = feature_size
+        self.marker = nn.Parameter(torch.randn(feature_size)[None, None, ...])
+
+    def forward(self, x, length):
+        """Adds an end-of-sequence marker to the end of the sequence
+
+        Arguments
+        ---------
+        x: torch.Tensor
+            a tensor (e.g. encoder outputs)
+        length: torch.Tensor
+            a length tensor
+
+        Returns
+        -------
+        x_eos: torch.Tensor
+            x, with the marker added
+        length_eos: torch.Tensor
+            the new lengths
+        """
+        batch_size = x.size(0)
+        marker = self.marker.repeat(batch_size, 1, 1)
+        marker_length = torch.ones(batch_size)
+        x_eos, length_eos = concat_padded_features(
+            [x, marker],
+            [length, marker_length]
+        )
+        return x_eos, length_eos

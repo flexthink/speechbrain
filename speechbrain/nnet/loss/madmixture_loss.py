@@ -20,6 +20,7 @@ Authors
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 from speechbrain.nnet.losses import truncate, distance_diff_loss
 
 class MadMixtureLoss(nn.Module):
@@ -604,6 +605,18 @@ class DistanceDiffLengthLoss(nn.Module):
             reduction=reduction,
             use_masked_penalty=True
         )
+    
+class GateLengthLoss(nn.Module):
+    def forward(self, length_pred, latent, length, reduction="mean"):
+        batch_size, max_len, _ = latent.shape
+        ground_truth = torch.zeros(
+            batch_size, max_len, device=length_pred.device
+        )
+        length_range = torch.arange(0, max_len)
+        length_abs = length * max_len
+        ground_truth[(length_range > length_abs[..., None] - 1)] = 1.
+
+        return F.cross_entropy(length_pred, ground_truth, reduction=reduction)
 
 
 def weighted_loss(components, weights):

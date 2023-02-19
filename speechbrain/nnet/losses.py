@@ -1445,5 +1445,4 @@ def _distance_diff_loss(predictions, targets, beta, max_weight, masked_penalty=0
     if length is not None:
         length_abs = length * max_len
         loss_weights = torch.where(pos_range > length_abs[..., None], masked_penalty, loss_weights)
-    breakpoint()
     return (loss_weights * predictions).unsqueeze(-1)
