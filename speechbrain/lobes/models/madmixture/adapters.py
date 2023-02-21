@@ -43,20 +43,19 @@ class TacotronDecoder(nn.Module):
             a context dictionary (from MadMixture)
 
         """
-        raw_lengths = (lengths * latent.size(1)).round().int()
-        max_len = raw_lengths.max().item()
+        max_len = lengths.max().item()
         mel_lengths = None
         latent_cut = latent[:, :max_len, :]
         if context is not None and self.decoder_input_key in context:        
             mel_outputs, gate_outputs, alignments = self.decoder(
                 memory=latent_cut,
                 decoder_inputs=context[self.decoder_input_key].transpose(-1, -2),
-                memory_lengths=raw_lengths
+                memory_lengths=lengths
             )
         else:
             mel_outputs, gate_outputs, alignments, mel_lengths = self.decoder.infer(
                 memory=latent_cut,
-                memory_lengths=raw_lengths
+                memory_lengths=lengths
             )
         out_context = {
             "gate_outputs": gate_outputs,
@@ -169,7 +168,8 @@ class RNNDecoder(nn.Module):
                 latent.device
             )
         #TODO: Add support for the default dummy value
-        output, alignments = self.rnn(input_value, latent, wav_len=lengths)
+        output, alignments = self.rnn(
+            input_value, latent, wav_len=lengths.float()/latent.size(1))
         output = self.lin_out(output)
         output = self.act(output)
         out_context = {"alignments": alignments}

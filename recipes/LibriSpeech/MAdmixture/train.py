@@ -52,10 +52,10 @@ class MadMixtureBrain(sb.Brain):
         # We first move the batch to the appropriate device.
         batch = batch.to(self.device)
         feats, lengths, context = self.prepare_features(stage, batch)
-        latents, alignments, enc_out, rec, transfer_rec, out_context, length_preds = self.modules.model.train_step(
+        latents, alignments, enc_out, rec, transfer_rec, out_context, length_preds, lengths_latent, lengths_input = self.modules.model.train_step(
             feats, lengths, context, transfer=self.hparams.transfer_loss_enabled)
         return MadMixturePredictions(
-            latents, alignments, enc_out, rec, transfer_rec, out_context, length_preds, feats, lengths)
+            latents, alignments, enc_out, rec, transfer_rec, out_context, length_preds, feats, lengths, lengths_latent, lengths_input)
     
     def fit_batch(self, batch):
         result = super().fit_batch(batch)
@@ -157,7 +157,9 @@ class MadMixtureBrain(sb.Brain):
             length=predictions.lengths,
             transfer_rec=predictions.transfer_rec,
             out_context=predictions.out_context,
-            length_preds=predictions.length_preds
+            length_preds=predictions.length_preds,
+            length_latent=predictions.lengths_latent,
+            length_input=predictions.lengths_input,
         )
 
         if self.hparams.enable_train_metrics and self.step % self.hparams.train_metrics_interval == 0:
@@ -170,6 +172,8 @@ class MadMixtureBrain(sb.Brain):
                 length=predictions.lengths,
                 transfer_rec=predictions.transfer_rec,
                 out_context=predictions.out_context,
+                length_latent=predictions.lengths_latent,
+                length_input=predictions.lengths_input,
                 reduction="batch"
             )
         return loss
@@ -320,7 +324,9 @@ MadMixturePredictions = namedtuple(
         "out_context",
         "length_preds",
         "feats",
-        "lengths"
+        "lengths",
+        "lengths_latent",
+        "lengths_input",
     ]
 )
 

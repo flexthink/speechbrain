@@ -635,7 +635,8 @@ def adjust_dim(x, dim, size):
     return x
 
 def concat_padded_features(
-    feats, lens, dim=1, feats_slice_start=None, feats_slice_end=None
+    feats, lengths, dim=1, feats_slice_start=None, feats_slice_end=None,
+    length_mode="relative"
 ):
     """Concatenates multiple padded feature tensors into a single
     padded tensor in a vectorized manner without including the 
@@ -650,7 +651,7 @@ def concat_padded_features(
     feats: list
         a list of padded tesnors
     
-    lens: list
+    lengths: list
         a list of length tensors
 
     feats_slice_start: list
@@ -662,27 +663,37 @@ def concat_padded_features(
         offsets, relative to the end of the sequence, for each
         of the tensors being concatenated. This is useful if only
         a subsequence of some slices is included
+
+    length_mode: str
+        if set to "relative", the length tensor is expected to be
+        relative to the maximum length
+        if set to "absolute", the length tensor is expected to be
+        absolute
         
-
-
     Returns
     -------
     out: torch.Tensor
         a concatenated tensor
+    out_lengths: torch.Tensor
+        output lengths
     """
     first_item = feats[0]
-    item_lengths = torch.tensor([item.size(dim) for item in feats]).to(first_item.device)
-    lens = torch.concat([len_rel.unsqueeze(0) for len_rel in lens])
-    lens_abs = (lens * item_lengths.unsqueeze(-1)).int()
 
-    feats_slice_start = _offset_to_tensor(feats_slice_start, lens_abs)
-    feats_slice_end = _offset_to_tensor(feats_slice_end, lens_abs)
+    if length_mode == "relative":
+        item_lengths = torch.tensor([item.size(dim) for item in feats]).to(first_item.device)
+        lengths = torch.concat([len_rel.unsqueeze(0) for len_rel in lengths])
+        lengths_abs = (lengths * item_lengths.unsqueeze(-1)).int()
+    else:
+        lengths_abs = torch.concat([length.unsqueeze(0) for length in lengths])
+
+    feats_slice_start = _offset_to_tensor(feats_slice_start, lengths_abs)
+    feats_slice_end = _offset_to_tensor(feats_slice_end, lengths_abs)
 
     out_start, out_end = _lens_to_boundaries(
-        lens_abs, feats_slice_start, feats_slice_end, cumulative=True
+        lengths_abs, feats_slice_start, feats_slice_end, cumulative=True
     )
     in_start, in_end = _lens_to_boundaries(
-        lens_abs, feats_slice_start, feats_slice_end, cumulative=False
+        lengths_abs, feats_slice_start, feats_slice_end, cumulative=False
     )
     total_length = out_end.max().int().item()
 
@@ -696,9 +707,11 @@ def concat_padded_features(
         out_mask = boundaries_to_mask(out, item_out_start, item_out_end, dim)
         out[out_mask] = item[in_mask]
 
-    out_lens = out_end[-1, :].float() / total_length
+    out_lengths = out_end[-1, :]
+    if length_mode == "relative":
+        out_lengths = out_lengths.float() * total_length
 
-    return out, out_lens
+    return out, out_lengths
 
 
 def _offset_to_tensor(offset, lengths):

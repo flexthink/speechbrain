@@ -109,6 +109,8 @@ class MadMixtureLoss(nn.Module):
             transfer_rec,
             out_context=None,
             length_preds=None,
+            length_latent=None,
+            length_input=None,
             reduction="mean"
         ):
         
@@ -121,6 +123,8 @@ class MadMixtureLoss(nn.Module):
             transfer_rec,
             out_context,
             length_preds,
+            length_latent,
+            length_input,
             reduction
         )
         return details["loss"]
@@ -135,6 +139,8 @@ class MadMixtureLoss(nn.Module):
             transfer_rec,
             out_context=None,
             length_preds=None,
+            length_latent=None,
+            length_input=None,
             reduction="mean"
         ):
         """Computes the MadMixture loss with the detailed breakdown
@@ -180,7 +186,7 @@ class MadMixtureLoss(nn.Module):
         loss_details.update(modality_rec_details)
         loss_details.update(modality_rec_weighted_details)
         alignment_loss, modality_alignment_loss = self.compute_alignment_loss(
-            alignments, length, reduction
+            alignments, length_latent, length_input, reduction
         )
         modality_alignment_loss_details = with_prefix(
             "align",
@@ -190,7 +196,7 @@ class MadMixtureLoss(nn.Module):
 
         latent_distance_loss, modality_distance_loss = self.compute_latent_distance_loss(
             latents=latents,
-            lengths=length,
+            lengths=length_latent,
             reduction=reduction
         )
         modality_distance_loss_details = with_prefix(
@@ -354,7 +360,7 @@ class MadMixtureLoss(nn.Module):
         return weighted_loss(modality_loss, self.modality_weights)
 
 
-    def compute_alignment_loss(self, alignments, lengths, reduction):
+    def compute_alignment_loss(self, alignments, lengths_latent, lengths_input, reduction):
         """Computes the loss on alignment matrices output by aligner modules,
         such as a guided attention loss
         
@@ -367,6 +373,14 @@ class MadMixtureLoss(nn.Module):
         lengths: dict
             an str -> tensor dictionary with relative lengths
             for all aligned modalities
+
+        lengths_latent: dict
+            an str -> tensor dictionary with absolute lengths of
+            the latent dimension
+
+        lengths_input: dict
+            an str -> tensor dictionary with absolute lengths of
+            the attention inputs
         
         reduction: str
             reduction mode: "batch" or "mean"
@@ -387,17 +401,17 @@ class MadMixtureLoss(nn.Module):
             first_alignment = next(iter(alignments.values()))
             return torch.tensor(0.).to(first_alignment.device), {}
         alignments_with_lengths = [
-            (key, alignment, alignment.size(2) * lengths[key], alignment.size(1) * lengths[key])
+            (key, alignment, lengths_input[key], lengths_latent[key])
             for key, alignment in alignments.items()
         ]
         modality_alignment_loss = {
             key: self.align_attention_loss_fn(
-                attention=modality_alignment, 
-                input_lengths=input_lengths,
-                target_lengths=target_lengths,
+                attention=mod_alignment, 
+                input_lengths=mod_length_input.float(),
+                target_lengths=mod_length_target.float(),
                 reduction=reduction
             )
-            for key, modality_alignment, input_lengths, target_lengths
+            for key, mod_alignment, mod_length_input, mod_length_target
             in alignments_with_lengths
         }
         alignment_loss, modality_alignment_loss = self._weighted_modality_loss(
@@ -718,6 +732,7 @@ class AlignmentLoss(nn.Module):
             &
             (~(input_exceeds | target_exceeds))
         )
+        from matplotlib import pyplot as plt
         return reduce_loss(attention * mask, mask, reduction)
 
 
