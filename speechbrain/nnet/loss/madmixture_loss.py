@@ -264,7 +264,7 @@ class MadMixtureLoss(nn.Module):
 
         if self.eos_loss_fn is not None:
             eos_loss, modality_eos_loss, weighted_modality_eos_loss = self.compute_eos_loss(
-                latents, length_latent
+                latents, length_latent, reduction
             )
             eos_loss_details = with_prefix("eos", modality_eos_loss)
             weighted_eos_loss_details = with_prefix("weighted_eos", weighted_modality_eos_loss)
@@ -536,9 +536,9 @@ class MadMixtureLoss(nn.Module):
         )
         return length_loss, modality_length_loss, weighted_modality_length_loss
     
-    def compute_eos_loss(self, latents, latent_lengths):
+    def compute_eos_loss(self, latents, latent_lengths, reduction="mean"):
         modality_eos_loss = {
-            key: self.eos_loss_fn(latents[key], latent_lengths[key])
+            key: self.eos_loss_fn(latents[key], latent_lengths[key], reduction)
             for key in latents
         }
         eos_loss, weighted_modality_eos_loss = self._weighted_modality_loss(
@@ -846,7 +846,7 @@ class LatentEOSMarkerLoss(nn.Module):
         self.eos_mark = eos_mark
         self.loss_fn = loss_fn
     
-    def forward(self, latents, latent_lengths):
+    def forward(self, latents, latent_lengths, reduction="mean"):
         """Computes the loss
         
         Arguments
@@ -857,11 +857,11 @@ class LatentEOSMarkerLoss(nn.Module):
             latent lengths (absolute)
         """
         batch_size, max_len, feature_size = latents.shape
-        idx_range = torch.arange(max_len)[None, :, None].expand_as(latents)
+        idx_range = torch.arange(max_len, device=latents.device)[None, :, None].expand_as(latents)
         idx = latent_lengths[:, None, None].expand_as(latents) - 1
         eos_markers = latents[idx_range == idx].reshape(batch_size, feature_size)
         desired_eos_markers = self.eos_mark.marker[None, :].expand_as(eos_markers)
-        return self.loss_fn(eos_markers, desired_eos_markers)
+        return self.loss_fn(eos_markers, desired_eos_markers, reduction=reduction)
 
         
 
