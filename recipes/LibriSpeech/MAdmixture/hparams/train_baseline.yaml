@@ -405,7 +405,7 @@ compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
     latent_distance_loss_fn: !ref <compute_cost_distance>
     context_loss_fn: !ref <compute_cost_context_alignment>
     length_loss_fn: !ref <compute_cost_length>
-    eos_loss_fn: !ref
+    eos_loss_fn: !ref <compute_cost_eos>
     anchor: audio
 
 char_beam_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
@@ -477,7 +477,7 @@ lr_annealing: !new:speechbrain.nnet.schedulers.NewBobScheduler
 # are moved to the correct device. Then it will be added to the checkpointer.
 opt_class: !name:torch.optim.Adam
      lr: !ref <lr>
-     capturable: True
+     capturable: False
 
 
 # This object is used for saving the state of training both so that it
