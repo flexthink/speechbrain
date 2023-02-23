@@ -76,6 +76,8 @@ class MadMixtureLoss(nn.Module):
             context_loss_fn=None,
             length_loss_weight=1.,
             length_loss_fn=None,
+            eos_loss_fn=None,
+            eos_loss_weight=1.,
             modality_enabled=None
         ):
         super().__init__()
@@ -98,6 +100,8 @@ class MadMixtureLoss(nn.Module):
         self.context_loss_fn = context_loss_fn
         self.length_loss_weight = length_loss_weight
         self.length_loss_fn = length_loss_fn
+        self.eos_loss_fn = eos_loss_fn
+        self.eos_loss_weight = eos_loss_weight
 
     def forward(
             self,
@@ -258,6 +262,17 @@ class MadMixtureLoss(nn.Module):
         else:
             length_loss = torch.tensor(0.).to(rec_loss.device)
 
+        if self.eos_loss_fn is not None:
+            eos_loss, modality_eos_loss, weighted_modality_eos_loss = self.compute_eos_loss(
+                latents, length_latent
+            )
+            eos_loss_details = with_prefix("eos", modality_eos_loss)
+            weighted_eos_loss_details = with_prefix("weighted_eos", weighted_modality_eos_loss)
+            loss_details.update(eos_loss_details)
+            loss_details.update(weighted_eos_loss_details)            
+        else:
+            eos_loss = torch.tensor(0.).to(rec_loss.device)
+
         loss = (
             self.rec_loss_weight * rec_loss 
             + self.align_attention_loss_weight * alignment_loss
@@ -265,6 +280,7 @@ class MadMixtureLoss(nn.Module):
             + self.transfer_loss_weight * transfer_loss
             + self.context_loss_weight * context_loss
             + self.length_loss_weight * length_loss
+            + self.eos_loss_weight * eos_loss
         )
         loss_details["loss"] = loss
         return loss_details
@@ -519,6 +535,16 @@ class MadMixtureLoss(nn.Module):
             modality_length_loss
         )
         return length_loss, modality_length_loss, weighted_modality_length_loss
+    
+    def compute_eos_loss(self, latents, latent_lengths):
+        modality_eos_loss = {
+            key: self.eos_loss_fn(latents[key], latent_lengths[key])
+            for key in latents
+        }
+        eos_loss, weighted_modality_eos_loss = self._weighted_modality_loss(
+            modality_eos_loss
+        )
+        return eos_loss, modality_eos_loss, weighted_modality_eos_loss
 
 
 class ContextAlignmentLoss(nn.Module):
@@ -677,6 +703,15 @@ def weighted_loss(components, weights):
 
 
 class AlignmentLoss(nn.Module):
+    """A modified guided attention loss forcing attention to the end-of-sequence
+    marker
+    
+    Arguments
+    ---------
+    sigma: float
+        the guided attention sigma parameter
+    eos_weight: float
+        the end-of-sequence loss weight"""
     def __init__(self, sigma=0.2, eos_weight=1.):
         super().__init__()
         self.attn_loss = GuidedAttentionLoss(sigma)
@@ -691,6 +726,36 @@ class AlignmentLoss(nn.Module):
         max_target_len=None,
         reduction="mean"
     ):
+        """Computes the guided attention loss for a single batch
+
+        Arguments
+        ---------
+        attention: torch.Tensor
+            A padded attention/alignments matrix
+            (batch, targets, inputs)
+        input_lengths: torch.tensor
+            A (batch, lengths) tensor of input lengths
+        target_lengths: torch.tensor
+            A (batch, lengths) tensor of target lengths
+        max_input_len: int
+            The maximum input length - optional,
+            if not computed will be set to the maximum
+            of target_lengths. Setting it explicitly
+            might be necessary when using data parallelism
+        max_target_len: int
+            The maximum target length - optional,
+            if not computed will be set to the maximum
+            of target_lengths. Setting it explicitly
+            might be necessary when using data parallelism
+        reduction: str
+            the reduction type (similar to other losses)
+
+
+        Returns
+        -------
+        loss: torch.Tensor
+            A single-element or multi-element tensor with the loss value
+        """        
         attn_loss = self.attn_loss(
             attention=attention,
             input_lengths=input_lengths,
@@ -711,6 +776,36 @@ class AlignmentLoss(nn.Module):
         return attn_loss + self.eos_weight * eos_loss
 
     def eos_loss(self, attention, input_lengths, target_lengths, max_input_len, max_target_len, reduction):
+        """Computes the EOS component of the loss
+
+        Arguments
+        ---------
+        attention: torch.Tensor
+            A padded attention/alignments matrix
+            (batch, targets, inputs)
+        input_lengths: torch.tensor
+            A (batch, lengths) tensor of input lengths
+        target_lengths: torch.tensor
+            A (batch, lengths) tensor of target lengths
+        max_input_len: int
+            The maximum input length - optional,
+            if not computed will be set to the maximum
+            of target_lengths. Setting it explicitly
+            might be necessary when using data parallelism
+        max_target_len: int
+            The maximum target length - optional,
+            if not computed will be set to the maximum
+            of target_lengths. Setting it explicitly
+            might be necessary when using data parallelism
+        reduction: str
+            the reduction type (similar to other losses)
+
+
+        Returns
+        -------
+        loss: torch.Tensor
+            A single-element or multi-element tensor with the loss value
+        """
         if max_input_len is None:
             max_input_len = input_lengths.max()
         if max_target_len is None:
@@ -734,7 +829,41 @@ class AlignmentLoss(nn.Module):
         )
         from matplotlib import pyplot as plt
         return reduce_loss(attention * mask, mask, reduction)
+    
+class LatentEOSMarkerLoss(nn.Module):
+    """A loss component that forces EOS markers
+    in the latent space
+    
+    Arguments
+    ---------
+    eos_mark: torch.nn.Module
+        an EOS mark module
+        
+    loss_fn: callable
+        the function that will be used to compute the loss"""
+    def __init__(self, eos_mark, loss_fn=None):
+        super().__init__()
+        self.eos_mark = eos_mark
+        self.loss_fn = loss_fn
+    
+    def forward(self, latents, latent_lengths):
+        """Computes the loss
+        
+        Arguments
+        ---------
+        latents: torch.Tensor
+            the latent representation
+        latent_lengths: torch.Tensor
+            latent lengths (absolute)
+        """
+        batch_size, max_len, feature_size = latents.shape
+        idx_range = torch.arange(max_len)[None, :, None].expand_as(latents)
+        idx = latent_lengths[:, None, None].expand_as(latents) - 1
+        eos_markers = latents[idx_range == idx].reshape(batch_size, feature_size)
+        desired_eos_markers = self.eos_mark.marker[None, :].expand_as(eos_markers)
+        return self.loss_fn(eos_markers, desired_eos_markers)
 
+        
 
 def with_prefix(prefix, loss_dict):
     """Adds a modality prefix to the specified loss dictionary

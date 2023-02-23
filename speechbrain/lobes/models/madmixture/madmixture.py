@@ -1277,7 +1277,7 @@ class EndOfSequenceMarker(nn.Module):
     def __init__(self, feature_size, length_mode="absolute"):
         super().__init__()
         self.feature_size = feature_size
-        self.marker = nn.Parameter(torch.randn(feature_size)[None, None, ...])
+        self.marker = nn.Parameter(torch.randn(feature_size))
         self.length_mode = length_mode
 
     def forward(self, x, length):
@@ -1298,7 +1298,7 @@ class EndOfSequenceMarker(nn.Module):
             the new lengths
         """
         batch_size = x.size(0)
-        marker = self.marker.repeat(batch_size, 1, 1)
+        marker = self.marker[None, None, ...].expand(batch_size, 1, self.feature_size)
         marker_length = torch.ones(batch_size, device=x.device)
         x_eos, length_eos = concat_padded_features(
             [x, marker],
