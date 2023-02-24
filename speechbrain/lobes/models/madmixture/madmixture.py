@@ -1271,14 +1271,43 @@ class EndOfSequenceMarker(nn.Module):
     
     Arguments
     ---------
-    dim: int
-        the feature dimension
+    feature_size: int
+        the size of the feature dimension
+    marker_type: str
+        "fixed" for a fixed pattern
+        "learned" for a learned parameter
+    length_mode: str
+        "absolute": absolute (integer) lengths
+        "relative": relative lengths
     """
-    def __init__(self, feature_size, length_mode="absolute"):
+    def __init__(
+            self,
+            feature_size,
+            marker_type="fixed",
+            length_mode="absolute"
+        ):
         super().__init__()
         self.feature_size = feature_size
-        self.marker = nn.Parameter(torch.randn(feature_size))
         self.length_mode = length_mode
+        if marker_type == "fixed":
+            marker = self._get_fixed_marker()  
+            self.register_buffer("marker", marker)
+        elif marker_type == "learned":
+            self.marker = nn.Parameter(torch.randn(feature_size))
+        else:
+            raise ValueError(f"Invalid marker type {marker_type}")
+    
+    def _get_fixed_marker(self):
+        """Initializes a fixed marker in a pattern of alternative
+        ones and zeros
+        
+        Returns
+        -------
+        marker: torch.Tensor
+            the marker"""
+        marker = torch.zeros(self.feature_size)
+        marker[::2] = 1.
+        return marker
 
     def forward(self, x, length):
         """Adds an end-of-sequence marker to the end of the sequence
