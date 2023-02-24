@@ -550,7 +550,7 @@ class MadMixture(nn.Module):
         }
     
     def mask_latents(self, latents, lengths=None):
-        if lengths is None:
+        if lengths is not None and self.anchor in lengths:
             latents_masked = self._mask_latents_anchor(latents, lengths)
         else:
             latents_masked = self._mask_latents_predicted(latents)
@@ -609,7 +609,7 @@ def mask_out(x, lengths):
         relative lengths
     """
     max_len = x.size(1)
-    mask = length_to_mask(lengths * max_len, max_len)
+    mask = length_to_mask(lengths, max_len)
     mask = mask.unsqueeze(-1)
     return (mask * x)
 
