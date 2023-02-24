@@ -177,9 +177,11 @@ ignore_tokens:
 #MAdmixture model parameters
 madmixture_latent_dim: 32
 madmixture_latent_distance_loss_weight: 0.1
-madmixture_align_attention_loss_weight: 10.
+madmixture_align_attention_loss_weight: 5.0
 madmixture_length_loss_beta: 0.25
 madmixture_length_loss_max_weight: 100.0
+madmixture_length_loss_weight: 0.25
+madmixture_eos_loss_weight: 0.25
 
 # The first object passed to the Brain class is this "Epoch Counter"
 # which is saved by the Checkpointer so that training can be resumed
@@ -404,7 +406,9 @@ compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
     latent_distance_loss_weight: !ref <madmixture_latent_distance_loss_weight>
     latent_distance_loss_fn: !ref <compute_cost_distance>
     context_loss_fn: !ref <compute_cost_context_alignment>
+    length_loss_weight: !ref <madmixture_length_loss_weight>
     length_loss_fn: !ref <compute_cost_length>
+    eos_loss_weight: !ref <madmixture_eos_loss_weight>
     eos_loss_fn: !ref <compute_cost_eos>
     anchor: audio
 
@@ -477,7 +481,7 @@ lr_annealing: !new:speechbrain.nnet.schedulers.NewBobScheduler
 # are moved to the correct device. Then it will be added to the checkpointer.
 opt_class: !name:torch.optim.Adam
      lr: !ref <lr>
-     capturable: False
+     capturable: True
 
 
 # This object is used for saving the state of training both so that it
