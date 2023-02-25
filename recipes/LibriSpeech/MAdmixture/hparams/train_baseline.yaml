@@ -81,6 +81,7 @@ train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
 number_of_epochs: 15
 batch_size: 8
 lr: 0.001
+opt_capturable: False
 max_grad_norm: 0.05
 sorting: random
 ckpt_interval_minutes: 15 # save checkpoint every N min
@@ -181,7 +182,13 @@ madmixture_align_attention_loss_weight: 5.0
 madmixture_length_loss_beta: 0.25
 madmixture_length_loss_max_weight: 100.0
 madmixture_length_loss_weight: 0.25
+madmixture_alignment_loss_eos_weight: 0.05
 madmixture_eos_loss_weight: 0.25
+madmixture_align_attention_loss_weight_half_life: 5
+madmixture_align_attention_loss_hard_stop: 10
+madmixture_audio_weight: 2.0
+madmixture_phn_weight: 1.0
+madmixture_char_weight: 1.0
 
 # The first object passed to the Brain class is this "Epoch Counter"
 # which is saved by the Checkpointer so that training can be resumed
@@ -371,6 +378,8 @@ compute_cost_rec_audio: !name:speechbrain.nnet.losses.mse_loss
 compute_cost_rec_char: !name:speechbrain.nnet.losses.nll_loss
 compute_cost_rec_phn: !name:speechbrain.nnet.losses.nll_loss
 compute_cost_alignment: !new:speechbrain.nnet.loss.madmixture_loss.AlignmentLoss
+    eos_weight: !ref <madmixture_alignment_loss_eos_weight>
+
 compute_cost_distance: !name:speechbrain.nnet.losses.cosine_similarity_loss
 compute_cost_context_alignment: !new:speechbrain.nnet.loss.madmixture_loss.ContextAlignmentLoss
     keys:
@@ -401,6 +410,10 @@ compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
         audio: !ref <compute_cost_rec_audio>
         phn: !ref <compute_cost_rec_char>
         char: !ref <compute_cost_rec_phn>
+    modality_weights:
+        audio: !ref <madmixture_audio_weight>
+        phn: !ref <madmixture_phn_weight>
+        char: !ref <madmixture_char_weight>
     align_attention_loss_weight: !ref <madmixture_align_attention_loss_weight>
     align_attention_loss_fn: !ref <compute_cost_alignment>
     latent_distance_loss_weight: !ref <madmixture_latent_distance_loss_weight>
@@ -431,6 +444,10 @@ phn_beam_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
     min_decode_ratio: !ref <phn_min_decode_ratio>
     max_decode_ratio: !ref <phn_max_decode_ratio>
     beam_size: !ref <phn_beam_size>
+
+guided_attention_scheduler: !new:speechbrain.nnet.schedulers.StepScheduler
+  initial_value: !ref <madmixture_align_attention_loss_weight>
+  half_life: !ref <madmixture_align_attention_loss_weight_half_life>
 
 
 evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
@@ -481,7 +498,7 @@ lr_annealing: !new:speechbrain.nnet.schedulers.NewBobScheduler
 # are moved to the correct device. Then it will be added to the checkpointer.
 opt_class: !name:torch.optim.Adam
      lr: !ref <lr>
-     capturable: True
+     capturable: !ref <opt_capturable>
 
 
 # This object is used for saving the state of training both so that it

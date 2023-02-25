@@ -9,12 +9,15 @@ import os
 import json
 import torch
 import logging
+from dataclasses import dataclass
+from collections import namedtuple
 from speechbrain.utils.metric_stats import ErrorRateStats
 from speechbrain.dataio.encoder import TextEncoder
 from speechbrain.dataio.batch import PaddedBatch
 from speechbrain.dataio.dataio import write_audio
 from speechbrain.decoders.seq2seq import S2SBaseSearcher
 from speechbrain.utils.data_utils import undo_padding, undo_padding_tensor
+from speechbrain.utils.metric_stats import MetricStats
 from torch import nn
 from torchaudio import functional as AF
 from functools import partial
@@ -22,6 +25,51 @@ from functools import partial
 logger = logging.getLogger(__name__)
 
 DEFAULT_OUTPUT = "./output"
+
+@dataclass
+class EvalBatch:
+    """
+    Represents an evaluation batch
+
+    ids: list
+        the IDs of samples, for reporting purposes, in
+        the same order as samples in the batch
+
+    inputs: dict
+        all available input features, for each modality
+
+    latents: dict
+        latent representations, for each modality
+
+    alignments: dict
+        alignment matrices, for each modality
+    
+    lengths: dict
+        all available output features, for each modality
+
+    targets: dict
+        ground truths for each modality
+    
+    out_context: dict
+        the output context (decoder-specific tensors, may contain
+        alignments, gates, etc)
+    
+    lengths_dec: dict
+        the lengths to be passed to the decoder, predicted latent
+        lengths
+    """
+    ids: list
+    inputs: dict
+    latents: dict
+    alignments: dict
+    lengths: dict
+    targets: dict
+    out_context: dict
+    latents_raw: dict
+    lengths_latent: dict
+    lengths_dec: dict
+
+
 
 # TODO: Work in progress. The interfaces will change - this will
 # be updated to also support Tensorboard
@@ -46,38 +94,18 @@ class MadMixtureEvaluator:
             task.bind(model)
         self.use_vis_sample(vis_sample)
 
-    def append(self, ids, inputs, latents, alignments, lengths, targets, out_context):
+    def append(self, batch):
         """Adds a data sample to the evaluation, for
         all available evaluation tasks
         
         Arguments
         ---------
-        ids: list
-            the IDs of samples, for reporting purposes, in
-            the same order as samples in the batch
-
-        inputs: dict
-            all available input features, for each modality
-
-        latents: dict
-            latent representations, for each modality
-
-        alignments: dict
-            alignment matrices, for each modality
-        
-        lengths: dict
-            all available output features, for each modality
-
-        targets: dict
-            ground truths for each modality
-        
-        out_context: dict
-            the output context (decoder-specific tensors, may contain
-            alignments, gates, etc)
+        batch: EvalBatch
+            an evaluation batch
 
         """
         for task in self.tasks.values():
-            task.append(ids, inputs, latents, alignments, lengths, targets, out_context)
+            task.append(batch)
 
     def report(self, path):
         """Outputs evaluation reports
@@ -126,34 +154,13 @@ class EvaluationTask:
         """
         self.model = model
 
-    def append(self, ids, inputs, latent, alignments, lengths, targets, out_context):
+    def append(self, batch):
         """Adds a data sample to the evaluation
         
         Arguments
         ---------
-        ids: list
-            the IDs of samples, for reporting purposes, in
-            the same order as samples in the batch
-
-        inputs: dict
-            all available input features, for each modality
-        
-        latents: dict
-            latent representations, for each modality
-
-        alignments: dict
-            alignment matrices, for each modality            
-        
-        lengths: dict
-            all available output features, for each modality
-
-        targets: dict
-            ground truths for each modality
-
-        out_context: dict
-            the output context (decoder-specific tensors, may contain
-            alignments, gates, etc)
-
+        batch: EvalBatch
+            an evaluation batch
         """
         raise NotImplementedError()
 
@@ -213,33 +220,23 @@ class ModalityTransferTask(EvaluationTask):
         }
 
 
-    def append(self, ids, inputs, latents, alignments, lengths, targets, out_context):
+    def append(self, batch):
         """Adds a data sample to the evaluation
         
         Arguments
         ---------
-        ids: list
-            the IDs of samples, for reporting purposes, in
-            the same order as samples in the batch
-
-        inputs: dict
-            all available input features, for each modality
-        
-        latents: dict
-            latent representations, for each modality
-
-        alignments: dict
-            alignments, for each modalities
-        
-        lengths: dict
-            all available output features, for each modality
-
-        targets: dict
-            ground truths for each modality
+        batch: EvalBatch
+            an evaluation batch
         """
         # Run evaluation for all primary modalities
         for src in self.model.primary_modalities:
-            self.append_modality(ids, inputs, lengths, targets, src)
+            self.append_modality(
+                ids=batch.ids,
+                inputs=batch.inputs,
+                lengths=batch.lengths,
+                targets=batch.targets, 
+                src=src
+            )
 
     def append_modality(self, ids, inputs, lengths, targets, src):
         """Adds a data sample to the evaluation, for a single source
@@ -340,12 +337,21 @@ ALGNMENT_DEFAULT_FIGSIZE = (16, 8)
 class LatentSpaceAnalysisTask(EvaluationTask):
     """A task that performs latent space analysis. Currently it will
     output latent spaces and alignments for each modality"""
+
+    FORMAT_LENGTH = "{sample_id:20} {length_pred:12} {length_actual:12} {score:8.2f}"
+    FORMAT_LENGTH_HEADER = "{sample_id:20} {length_pred:>12} {length_actual:>12} {score:>8}"
+    LENGTH_LABELS = {
+        "sample_id": "ID",
+        "length_pred": "Predicted",
+        "length_actual": "Actual",
+        "score": "Diff"
+    }
     def __init__(
             self,
             model=None,
             context_alignment_keys=None,
             figsize_latent=LATENT_DEFAULT_FIGSIZE,
-            figsize_aligment=ALGNMENT_DEFAULT_FIGSIZE
+            figsize_aligment=ALGNMENT_DEFAULT_FIGSIZE,
         ):
         super().__init__(model)
         self.ids = []
@@ -353,6 +359,13 @@ class LatentSpaceAnalysisTask(EvaluationTask):
         self.alignments = {}
         self.lengths = []
         self.context_alignments = {}
+        self.lengths_latent = {}
+        self.lengths_dec = {}
+        
+        self.full_ids = []
+        self.full_lengths_latent = {}
+        self.full_lengths_dec = {}
+
         if context_alignment_keys is None:
             context_alignment_keys = []
         self.context_alignment_keys = set(context_alignment_keys)
@@ -361,51 +374,64 @@ class LatentSpaceAnalysisTask(EvaluationTask):
 
         self.plt = _get_matplotlib()
 
+    def bind(self, model):
+        """Binds this task to a model
+        
+        Arguments
+        ---------
+        model: speechbrain.lobes.models.madmixture.MadMixture
+            the model to bind
+        """
+        super().bind(model)
+        self.length_diff_metrics = {
+            key: MetricStats(length_diff)
+            for key in self.model.modalities
+        }
+                
+
     """Computes and outputs latent representations for analysis"""
-    def append(self, ids, inputs, latents, alignments, lengths, targets, out_context):
+    def append(self, batch):
         """Adds a data sample to the evaluation
         
         Arguments
         ---------
-        ids: list
-            the IDs of samples, for reporting purposes, in
-            the same order as samples in the batch
-
-        inputs: dict
-            all available input features, for each modality
-
-        inputs: dict
-            all available input features, for each modality            
-
-        latents: dict
-            latent representations, for each modality
-
-        alignments: dict
-            alignments, for each modalities
-                    
-        lengths: dict
-            all available output features, for each modality
-
-        targets: dict
-            ground truths for each modality
-
-        out_context: dict
-            the output context
+        batch: EvalBatch
+            an evaluation batch
         """
-        ids, lengths, latents, alignments, out_context = filter_sample_ids(
-            ids, self.vis_sample, lengths, latents, alignments, out_context
+        ids, lengths, latents, alignments, out_context, lengths_latent, lengths_dec = filter_sample_ids(
+            batch.ids,
+            self.vis_sample,
+            batch.lengths,
+            batch.latents_raw,
+            batch.alignments,
+            batch.out_context,
+            batch.lengths_latent,
+            batch.lengths_dec
         )
         if ids:
             self.ids.extend(ids)
             self.lengths.extend(lengths)
             self._extend_dict(self.latents, latents)
             self._extend_dict(self.alignments, alignments)
+            self._extend_dict(self.lengths_latent, lengths_latent)            
+            self._extend_dict(self.lengths_dec, lengths_dec)            
             context_alignments = {
                 key: value for key, value in out_context.items()
                 if key in self.context_alignment_keys
             }
             self._extend_dict(
                 self.context_alignments, context_alignments)
+            
+        self.full_ids.extend(batch.ids)
+        self._extend_dict(self.full_lengths_latent, batch.lengths_latent)
+        self._extend_dict(self.full_lengths_dec, batch.lengths_dec)
+        
+        for key, metric in self.length_diff_metrics.items():
+            metric.append(
+                ids=batch.ids,
+                predict=batch.lengths_dec[key],
+                target=batch.lengths_latent[key]
+            )
 
     def _extend_dict(self, target, values):
         """Adds per-modality values to a tracking dictionary
@@ -434,8 +460,32 @@ class LatentSpaceAnalysisTask(EvaluationTask):
         """
         os.makedirs(path, exist_ok=True)
         self.save_raw(path)
+        self.save_lengths_stats(path)
         if self.plt is not None:
-            self.save_images(path)
+            self.save_images(path)        
+
+    def save_lengths_stats(self, path):
+        for key, metric in self.length_diff_metrics.items():
+            file_name = os.path.join(path, f"length_stats_{key}.txt")
+            with open(file_name, "w") as stats_file:
+                metric.write_stats(stats_file)
+                print(file=stats_file)
+                self._write_length_details(stats_file, key, metric)
+
+    def _write_length_details(self, stats_file, key, metric):
+        header = self.FORMAT_LENGTH_HEADER.format(**self.LENGTH_LABELS)
+        print(header, file=stats_file)
+        print("=" * len(header), file=stats_file)
+
+        for sample_id, length_dec, length_latent, score in zip(self.full_ids, self.full_lengths_dec[key], self.full_lengths_latent[key], metric.scores):
+            line = self.FORMAT_LENGTH.format(
+                sample_id=sample_id,
+                length_pred=length_dec,
+                length_actual=length_latent,
+                score=score
+            )
+            print(line, file=stats_file)
+        
 
     def save_raw(self, path):
         """Saves raw tensors"""
@@ -444,23 +494,37 @@ class LatentSpaceAnalysisTask(EvaluationTask):
             "latents": self.latents,
             "alignments": self.alignments,
             "lengths": self.lengths,
-            "context_alignments": self.context_alignments
+            "lengths_latent": self.lengths_latent,
+            "lengths_dec": self.lengths_dec,
+            "context_alignments": self.context_alignments,
         }
         file_name = os.path.join(path, "raw.pt")
         torch.save(data, file_name)
     
     def save_images(self, path):
         for idx, sample_id in enumerate(self.ids):
-            sample_latents = {
-                key: modality_latents[idx]
-                for key, modality_latents in self.latents.items()
-            }
-            sample_alignments = {
-                key: modality_alignments[idx]
-                for key, modality_alignments in self.alignments.items()
-            }
+            (
+                sample_latents,
+                sample_alignments,
+                sample_lengths_latent,
+                sample_lengths_dec,
+            ) = [
+                self._extract_idx(record, idx)
+                for record in [
+                    self.latents,
+                    self.alignments,
+                    self.lengths_latent,
+                    self.lengths_dec
+                ]
+            ]
             file_name = os.path.join(path, f"{sample_id}.png")
-            fig = self.plot_latent(sample_id, sample_latents, sample_alignments)
+            fig = self.plot_latent(
+                sample_id=sample_id,
+                sample_latents=sample_latents,
+                sample_alignments=sample_alignments,
+                sample_lengths_latent=sample_lengths_latent,
+                sample_lengths_dec=sample_lengths_dec
+            )
             try:
                 fig.savefig(file_name)
             finally:
@@ -476,43 +540,71 @@ class LatentSpaceAnalysisTask(EvaluationTask):
                 fig.savefig(file_name)
             finally:
                 self.plt.close(fig)
+    
+    def _extract_idx(self, record, idx):
+        return {
+            key: mod_values[idx]
+            for key, mod_values in record.items()
+        }
 
 
-    def plot_latent(self, sample_id, sample_latents, sample_alignments):
+    def plot_latent(
+            self,
+            sample_id,
+            sample_latents,
+            sample_alignments,
+            sample_lengths_latent,
+            sample_lengths_dec
+        ):
         """Plots a latent space with the corresponding alignments
         
         Arguments
         ---------
         sample_id: str
             the sample identifier
-        sample_latents: torch.Tensor
-            the latent space context
-        sample_alignments: torch.Tensor
-            the corresponding alignments
+        sample_latents: dict
+            the latent space context, per modality
+        sample_alignments: dict
+            the corresponding alignments, per modality
+        sample_lengths_latent: dict
+            latent lengths (ground truth), per modality
+        sample_lengths_dec: dict
+            latent lengths to be passed to the decoder (predicted),
+            per modality
         """
         fig = self.plt.figure(figsize=self.figsize_latent)
         try:
             modality_count = len(sample_latents)
             fig.suptitle(f"Latent: {sample_id}")
             for idx, (key, sample_latent) in enumerate(sample_latents.items()):
+                dim = sample_latent.size(-1)
                 ax = fig.add_subplot(2, modality_count, idx + 1)
                 ax.set_title(key)
-                ax.set_ylabel("Features")
                 ax.set_xlabel("Time")
-                im = ax.imshow(sample_latent.t(), aspect="auto", origin="lower")
+                ax.set_ylabel("Features")
+                im = ax.imshow(sample_latent.t(), aspect="auto", origin="lower")                
+                self._plot_length_bar(
+                    ax=ax, length=sample_lengths_latent[key], dim=dim, color="red", marker="o")
+                self._plot_length_bar(
+                    ax=ax, length=sample_lengths_dec[key], dim=dim, color="blue", marker="x")
                 fig.colorbar(im, orientation="vertical")
             for idx, (key, sample_alignment) in enumerate(sample_alignments.items()):
                 ax = fig.add_subplot(2, modality_count, modality_count + idx + 1)
                 ax.set_title(f"align: {key}")
-                ax.set_ylabel("Outputs")
-                ax.set_xlabel("Inputs")
-                im = ax.imshow(sample_alignment, aspect="auto", origin="lower")
+                ax.set_xlabel("Outputs")
+                ax.set_ylabel("Inputs")
+                im = ax.imshow(sample_alignment.t(), aspect="auto", origin="lower")
                 fig.colorbar(im, orientation="vertical")                   
             fig.tight_layout()
             return fig
         except:
             self.plt.close(fig)
             raise
+
+    def _plot_length_bar(self, ax, length, dim, color, marker):
+        x = [length, length]
+        y = [0, dim-1]
+        ax.plot(x, y, color=color, marker=marker)
 
     def plot_alignment(self, sample_id, alignments):
         """Plots simple alignments
@@ -538,6 +630,17 @@ class LatentSpaceAnalysisTask(EvaluationTask):
             self.plt.close()
             raise
 
+
+def length_diff(predict, target):
+    """Computes the average absolute error in length calculations
+    
+    Arguments
+    ---------
+    predictions: torch.Tensor
+        a tensor of predicted lengths
+    targets: torch.Tensor
+        a tensor of ground truth lengths"""
+    return (predict - target).abs() / target
 
     
 TOKEN_SEQUENCE_SUMMARY_REPORT = "summary.json"

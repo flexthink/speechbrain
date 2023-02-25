@@ -5,6 +5,7 @@ Authors
  * Artem Ploujnikov 2022-2023
 """
 import torch
+from collections import namedtuple
 from torch import nn, Tensor
 from typing import Dict, Tuple
 from speechbrain.nnet.attention import MultiheadAttention
@@ -442,14 +443,27 @@ class MadMixture(nn.Module):
             transfers will not be attempted
         out_context: dict
             the output context, from all decoders        
+        latents_raw: dict
+            raw, unmasked latent representations
         length_preds: dict
             length predictions
+        lengths_input: dict
+            input lengths
         lengths_latent: dict
             latent space lengths
+        lengths_dec: dict
+            lengths to be passed to decoders
+            
+            During training, each is set to the anchor latent length
+            During evaluation, each is set to the predicted length
         """
-        latents, alignments, enc_out, lengths_latent, lengths_input = self.latent(inputs, lengths, context)
+        latents_raw, alignments, enc_out, lengths_latent, lengths_input = self.latent(
+            inputs,
+            lengths,
+            context
+        )
         
-        length_preds = self.train_lengths(latents, lengths)
+        length_preds = self.train_lengths(latents_raw, lengths)
         
         if self.training:            
             lengths_dec = {
@@ -461,7 +475,7 @@ class MadMixture(nn.Module):
                 key: self.length_predictor.to_lengths(pred)
                 for key, pred in length_preds.items()}
 
-        latents = self.mask_latents(latents, lengths_dec)
+        latents = self.mask_latents(latents_raw, lengths_dec)
         
         rec, out_context = self.decode_multiple(latents, lengths_dec, context)
         if transfer:
@@ -470,8 +484,19 @@ class MadMixture(nn.Module):
         else:
             transfer_rec = None
         
-        # TODO: Create a named tuple
-        return latents, alignments, enc_out, rec, transfer_rec, out_context, length_preds, lengths_latent, lengths_input
+        return TrainStepOutput(
+            latents=latents,
+            alignments=alignments,
+            enc_out=enc_out,
+            rec=rec,
+            transfer_rec=transfer_rec,
+            out_context=out_context,
+            latents_raw=latents_raw,
+            length_preds=length_preds,
+            lengths_input=lengths_input,
+            lengths_latent=lengths_latent,
+            lengths_dec=lengths_dec
+        )
     
     def cross_decode(self, latents, length, context=None):
         """Decodes multipe latents into multiple modalities, useful during
@@ -595,6 +620,25 @@ class MadMixture(nn.Module):
             key: mask_out(latent, length)
             for key, latent in latents.items()
         }
+    
+
+TrainStepOutput = namedtuple(
+    "TrainStepOutput",
+    [
+        "latents",
+        "alignments",
+        "enc_out",
+        "rec",
+        "transfer_rec",
+        "out_context",
+        "latents_raw",
+        "length_preds",
+        "lengths_input",
+        "lengths_latent",
+        "lengths_dec"
+    ]
+    
+)
 
 
 def mask_out(x, lengths):

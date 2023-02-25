@@ -15,6 +15,7 @@ from hyperpyyaml import load_hyperpyyaml
 from librispeech_prepare import prepare_librispeech, LibriSpeechMode
 from collections import namedtuple
 from speechbrain.dataio.dataset import apply_overfit_test
+from speechbrain.lobes.models.madmixture.evaluation import EvalBatch
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +53,23 @@ class MadMixtureBrain(sb.Brain):
         # We first move the batch to the appropriate device.
         batch = batch.to(self.device)
         feats, lengths, context = self.prepare_features(stage, batch)
-        latents, alignments, enc_out, rec, transfer_rec, out_context, length_preds, lengths_latent, lengths_input = self.modules.model.train_step(
+        out = self.modules.model.train_step(
             feats, lengths, context, transfer=self.hparams.transfer_loss_enabled)
         return MadMixturePredictions(
-            latents, alignments, enc_out, rec, transfer_rec, out_context, length_preds, feats, lengths, lengths_latent, lengths_input)
+            latents=out.latents,
+            alignments=out.alignments,
+            enc_out=out.enc_out,
+            rec=out.rec,
+            transfer_rec=out.transfer_rec,
+            out_context=out.out_context,
+            length_preds=out.length_preds,
+            latents_raw=out.latents_raw,
+            feats=feats,
+            lengths=lengths,
+            lengths_input=out.lengths_input,
+            lengths_latent=out.lengths_latent,
+            lengths_dec=out.lengths_dec,
+        )
     
     def fit_batch(self, batch):
         result = super().fit_batch(batch)
@@ -204,15 +218,21 @@ class MadMixtureBrain(sb.Brain):
 
         out = self.compute_forward(batch, stage=stage)
         loss = self.compute_objectives(out, batch, stage=stage)
-        self.evaluator.append(
+
+        eval_batch = EvalBatch(
             ids=batch.snt_id,
             inputs=out.feats,
             latents=out.latents,
             alignments=out.alignments,
             lengths=out.lengths,
             targets=out.feats,
-            out_context=out.out_context
-        )        
+            out_context=out.out_context,
+            latents_raw=out.latents_raw,
+            lengths_latent=out.lengths_latent,
+            lengths_dec=out.lengths_dec
+        )
+
+        self.evaluator.append(eval_batch)        
         return loss.detach().cpu()
     
     def on_stage_start(self, stage, epoch):
@@ -323,10 +343,12 @@ MadMixturePredictions = namedtuple(
         "transfer_rec",
         "out_context",
         "length_preds",
+        "latents_raw",
         "feats",
         "lengths",
-        "lengths_latent",
         "lengths_input",
+        "lengths_latent",
+        "lengths_dec"
     ]
 )
 
