@@ -105,7 +105,7 @@ class MadMixtureLoss(nn.Module):
 
     def forward(
             self,
-            inputs,
+            targets,
             length,
             latents,
             alignments,
@@ -119,7 +119,7 @@ class MadMixtureLoss(nn.Module):
         ):
         
         details = self.details(
-            inputs,
+            targets,
             length,
             latents,
             alignments,
@@ -135,7 +135,7 @@ class MadMixtureLoss(nn.Module):
 
     def details(
             self,
-            inputs,
+            targets,
             length,
             latents,
             alignments,
@@ -152,8 +152,8 @@ class MadMixtureLoss(nn.Module):
         
         Arguments
         ---------
-        inputs: dict
-            the orignal inputs to the MadMixture model
+        targets: dict
+            the targets to which reconstructions will be compared
         length: dict
             the length tensor
         latents: dict
@@ -175,7 +175,7 @@ class MadMixtureLoss(nn.Module):
             for tracking in Tensorboard, etc
         """
         rec_loss, modality_rec_loss, weighted_modality_rec_loss = (
-            self.compute_rec_loss(inputs, rec, length, reduction)
+            self.compute_rec_loss(targets, rec, length, reduction)
         )
         loss_details = {
             "rec_loss": rec_loss
@@ -210,7 +210,7 @@ class MadMixtureLoss(nn.Module):
         loss_details.update(modality_distance_loss_details)
         if transfer_rec is not None:
             transfer_loss, modality_transfer_loss, weighted_modality_transfer_loss = self.compute_transfer_loss(
-                inputs=inputs,
+                targets=targets,
                 transfer_rec=transfer_rec, 
                 lengths=length,
                 reduction=reduction
@@ -305,13 +305,13 @@ class MadMixtureLoss(nn.Module):
             for key, value in loss_dict.items()
         }    
     
-    def compute_rec_loss(self, inputs, rec, lengths, reduction="mean"):
+    def compute_rec_loss(self, targets, rec, lengths, reduction="mean"):
         """Computes the recreation losses
         
         Arguments
         ---------
-        inputs: dict
-            modality inputs
+        targets: dict
+            modality targets
         rec: dict
             modality reconstructions
         lengths: dict
@@ -335,7 +335,7 @@ class MadMixtureLoss(nn.Module):
         modality_rec_loss = {
             key: self.rec_loss_fn[key](
                 rec[key],            
-                inputs[key],
+                targets[key],
                 length=lengths[key],
                 reduction=reduction
             )
@@ -347,11 +347,11 @@ class MadMixtureLoss(nn.Module):
         return rec_loss, modality_rec_loss, weighted_modality_rec_loss
     
 
-    def compute_transfer_loss(self, inputs, transfer_rec, lengths, reduction="mean"):
+    def compute_transfer_loss(self, targets, transfer_rec, lengths, reduction="mean"):
         modality_transfer_loss = {
             (src, tgt): self.rec_loss_fn[tgt](
                 modality_transfer_rec,
-                inputs[tgt],
+                targets[tgt],
                 length=lengths[tgt],
                 reduction=reduction
             )
@@ -367,8 +367,8 @@ class MadMixtureLoss(nn.Module):
                 list(weighted_modality_transfer_loss.values())
             ).sum(dim=0)
         else:
-            first_input = next(iter(inputs.values()))
-            transfer_loss = torch.tensor(0., device=first_input.device)
+            first_target = next(iter(targets.values()))
+            transfer_loss = torch.tensor(0., device=first_target.device)
         return transfer_loss, modality_transfer_loss, weighted_modality_transfer_loss
         
 

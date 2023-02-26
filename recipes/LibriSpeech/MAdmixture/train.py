@@ -52,7 +52,7 @@ class MadMixtureBrain(sb.Brain):
         """
         # We first move the batch to the appropriate device.
         batch = batch.to(self.device)
-        feats, lengths, context = self.prepare_features(stage, batch)
+        feats, targets, lengths, context = self.prepare_features(stage, batch)
         out = self.modules.model.train_step(
             feats, lengths, context, transfer=self.hparams.transfer_loss_enabled)
         return MadMixturePredictions(
@@ -65,6 +65,7 @@ class MadMixtureBrain(sb.Brain):
             length_preds=out.length_preds,
             latents_raw=out.latents_raw,
             feats=feats,
+            targets=targets,
             lengths=lengths,
             lengths_input=out.lengths_input,
             lengths_latent=out.lengths_latent,
@@ -112,6 +113,7 @@ class MadMixtureBrain(sb.Brain):
         #TODO: This can be made more modular
         # Feature computation and normalization
         feats = {}
+        targets = {}
         lengths = {}
         feats_audio = None
         if self.hparams.audio_enabled:
@@ -121,6 +123,7 @@ class MadMixtureBrain(sb.Brain):
             for norm in self.modules.normalize:
                 feats_audio = norm(feats_audio, wav_lens)        
             feats["audio"] = feats_audio
+            targets["audio"] = feats_audio
             lengths["audio"] = wav_lens
 
 
@@ -128,11 +131,13 @@ class MadMixtureBrain(sb.Brain):
         feats_char_emb = None
         feats_phn_emb = None
         if self.hparams.char_enabled:
-            feats["char"] = batch.char_encoded_eos.data
+            feats["char"] = batch.char_encoded_bos.data
+            targets["char"] = batch.char_encoded_eos.data
             lengths["char"] = batch.char_encoded_eos.lengths
             feats_char_emb = self.hparams.char_emb(batch.char_encoded_bos.data)
         if self.hparams.phn_enabled:
-            feats["phn"] = batch.phn_encoded_eos.data
+            feats["phn"] = batch.phn_encoded_bos.data
+            targets["phn"] = batch.char_encoded_eos.data
             lengths["phn"] = batch.phn_encoded_eos.lengths
             feats_phn_emb = self.hparams.phn_emb(batch.phn_encoded_bos.data)
 
@@ -142,7 +147,8 @@ class MadMixtureBrain(sb.Brain):
             "phn_emb": feats_phn_emb,
         }
 
-        return feats, lengths, context
+
+        return feats, targets, lengths, context
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss given the predicted and targeted outputs. We here
@@ -164,7 +170,7 @@ class MadMixtureBrain(sb.Brain):
             A one-element tensor used for backpropagating the gradient.
         """
         loss = self.hparams.compute_cost(
-            inputs=predictions.feats,
+            targets=predictions.targets,
             latents=predictions.latents,
             alignments=predictions.alignments,
             rec=predictions.rec,
@@ -179,13 +185,14 @@ class MadMixtureBrain(sb.Brain):
         if self.hparams.enable_train_metrics and self.step % self.hparams.train_metrics_interval == 0:
             self.loss_metric.append(
                 batch.snt_id,
-                inputs=predictions.feats,
+                targets=predictions.targets,
                 latents=predictions.latents,
                 alignments=predictions.alignments,
                 rec=predictions.rec,
                 length=predictions.lengths,
                 transfer_rec=predictions.transfer_rec,
                 out_context=predictions.out_context,
+                length_preds=predictions.length_preds,
                 length_latent=predictions.lengths_latent,
                 length_input=predictions.lengths_input,
                 reduction="batch"
@@ -347,6 +354,7 @@ MadMixturePredictions = namedtuple(
         "length_preds",
         "latents_raw",
         "feats",
+        "targets",
         "lengths",
         "lengths_input",
         "lengths_latent",
