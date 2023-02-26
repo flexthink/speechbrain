@@ -92,11 +92,10 @@ class MadMixtureBrain(sb.Brain):
             "lr": self.optimizer.param_groups[0]["lr"],
             **self.loss_metric.summarize(field="average")
         }
-        self.hparams.tensorboard_train_logger.log_stats(
-            stats_meta={"step": self.step}, train_stats=stats
-        )
-
-
+        if self.hparams.use_tensorboard:
+            self.hparams.tensorboard_train_logger.log_stats(
+                stats_meta={"step": self.step}, train_stats=stats
+            )
     
     def prepare_features(self, stage, batch):
         """Prepare features for computation on-the-fly
