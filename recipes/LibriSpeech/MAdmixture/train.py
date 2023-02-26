@@ -257,6 +257,8 @@ class MadMixtureBrain(sb.Brain):
         )
         self.evaluator = self.hparams.evaluator()
         self.evaluator.use_vis_sample(self.stage_vis_sample)
+        align_attention_loss_weight, _ = self.hparams.guided_attention_scheduler(epoch - 1)
+        self.hparams.compute_cost.align_attention_loss_weight = align_attention_loss_weight
 
     def on_stage_end(self, stage, stage_loss, epoch):
         """Gets called at the end of an epoch.

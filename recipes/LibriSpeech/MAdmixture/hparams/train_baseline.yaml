@@ -377,7 +377,7 @@ compute_cost_rec_phn: !name:speechbrain.nnet.losses.nll_loss
 compute_cost_alignment: !new:speechbrain.nnet.loss.madmixture_loss.AlignmentLoss
     eos_weight: !ref <madmixture_alignment_loss_eos_weight>
 
-compute_cost_distance: !name:speechbrain.nnet.losses.cosine_similarity_loss
+compute_cost_distance: !name:speechbrain.nnet.losses.mse_loss
 compute_cost_context_alignment: !new:speechbrain.nnet.loss.madmixture_loss.ContextAlignmentLoss
     keys:
     - audio_decoder_alignments
