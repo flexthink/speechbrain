@@ -1128,8 +1128,9 @@ class PQAttentionalAligner(Aligner):
     dropout: float
         the dropout probability
     """
-    def __init__(self, dim, in_dim, nhead=1, dropout=0.):
+    def __init__(self, dim, in_dim, max_scale=2., nhead=1, dropout=0.):
         super().__init__()
+        self.dim = dim
         self.feature_scale = Conv1d(
             in_channels=in_dim, out_channels=dim, padding="same", kernel_size=1)
         
@@ -1144,6 +1145,7 @@ class PQAttentionalAligner(Aligner):
             d_model=dim,
             dropout=dropout
         )
+        self.max_scale = max_scale
         self.scale = None
 
     def forward(self, key, enc_out, lengths, anchor=None, anchor_scale=None, eos_mark=None):
@@ -1183,6 +1185,7 @@ class PQAttentionalAligner(Aligner):
         mod_enc_out = enc_out[key]
         mod_length = lengths[key]
         anchor_length = lengths[anchor]
+        batch_size = mod_enc_out.size(1)
 
         mod_enc_out_scaled = self.feature_scale(mod_enc_out)
         mod_enc_out_scaled = self.in_norm(mod_enc_out_scaled)
@@ -1198,15 +1201,24 @@ class PQAttentionalAligner(Aligner):
         pos_embs = self.pos_emb(mod_enc_out_scaled)
         mod_enc_out_scaled[:, :-1, :] += pos_embs[:, :-1, :]
 
-        anchor_length_queries_abs = (
-            anchor_length * mod_enc_out_scaled_max_len).round().int()
-        queries_mask = length_to_mask(
-            anchor_length_queries_abs, mod_enc_out_scaled_max_len).unsqueeze(-1)
+        if anchor is None:
+            queries_max_len = mod_enc_out_scaled.size(1) * self.max_scale
+            anchor_length_queries_abs = torch.ones_like(mod_length)
+        else:
+            queries_max_len = enc_out[anchor].size(1) + 1
+            anchor_length_queries_abs = (
+                anchor_length * queries_max_len).round().int()
 
         out_mask = length_to_mask(
             mod_enc_out_scaled_length_abs, mod_enc_out_scaled_max_len).unsqueeze(-1)
         
-        masked_queries = pos_embs * queries_mask
+        queries = self.pos_emb(
+            torch.zeros(batch_size, queries_max_len, self.dim)
+        )
+        queries_mask = length_to_mask(
+            anchor_length_queries_abs, queries_max_len).unsqueeze(-1)
+        
+        masked_queries = queries * queries_mask
         
         attn_mask = get_attention_mask(out_mask, queries_mask)
         output, alignment = self.attn(
