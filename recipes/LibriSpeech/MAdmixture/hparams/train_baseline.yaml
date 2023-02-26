@@ -33,9 +33,10 @@ skip_checkpoint: False
 
 # Path where data manifest files will be stored. The data manifest files are created by the
 # data preparation script
-train_annotation: !ref <output_folder>/train.json
-valid_annotation: !ref <output_folder>/dev-clean.json
-test_annotation: !ref <output_folder>/test-clean.json
+annotation_folder: !ref <output_folder>
+train_annotation: !ref <annotation_folder>/train.json
+valid_annotation: !ref <annotation_folder>/dev-clean.json
+test_annotation: !ref <annotation_folder>/test-clean.json
 train_split: "train-clean-100"
 train_splits: [!ref <train_split>]
 dev_splits: ["dev-clean"]
