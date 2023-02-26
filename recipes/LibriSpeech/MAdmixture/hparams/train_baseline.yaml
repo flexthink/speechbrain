@@ -329,20 +329,17 @@ phn_dec: !new:speechbrain.lobes.models.madmixture.adapters.RNNDecoder
     bos_index: !ref <bos_index>
 
 
-audio_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
+audio_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <audio_enc_dnn_neurons>
-    scale: !ref <audio_aligner_scale>
 
-char_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
+char_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <char_enc_neurons>
-    scale: !ref <char_aligner_scale>
 
-phn_aligner: !new:speechbrain.lobes.models.madmixture.AttentionalAligner
+phn_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <char_enc_neurons>
-    scale: !ref <phn_aligner_scale>
 
 vocoder: !name:speechbrain.pretrained.interfaces.HIFIGAN.from_hparams
     source: !ref <vocoder_model>

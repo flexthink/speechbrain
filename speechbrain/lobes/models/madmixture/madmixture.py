@@ -1104,7 +1104,7 @@ class AttentionalAligner(nn.Module):
         out_mask = length_to_mask(
             mod_enc_out_scaled_length_abs, mod_enc_out_scaled_max_len).unsqueeze(-1)
         
-        attn_mask = self._get_attention_mask(out_mask, queries_mask)
+        attn_mask = get_attention_mask(out_mask, queries_mask)
         
         output, alignment = self.attn(
             query=masked_queries,
@@ -1115,30 +1115,134 @@ class AttentionalAligner(nn.Module):
         )
         return output, alignment, anchor_length_queries_abs, mod_enc_out_scaled_length_abs
     
-    def _get_attention_mask(self, in_mask, out_mask):
-        """Computes the attention mask
+
+class PQAttentionalAligner(Aligner):
+    """An aligner that uses an attention mechanism to align the raw encoder
+    outputs to the target latent space
+    dim: int
+        the output dimension
+    in_dim: int
+        the input dimension (defaults to the output dimension)
+    nhead: int
+        the number of attention heads
+    dropout: float
+        the dropout probability
+    """
+    def __init__(self, dim, in_dim, nhead=1, dropout=0.):
+        super().__init__()
+        self.feature_scale = Conv1d(
+            in_channels=in_dim, out_channels=dim, padding="same", kernel_size=1)
         
+        self.pos_emb = PositionalEncoding(
+            input_size=dim
+        )
+        self.in_norm = LayerNorm(
+            input_shape=[None, None, dim]
+        )
+        self.attn = MultiheadAttention(
+            nhead=nhead,
+            d_model=dim,
+            dropout=dropout
+        )
+        self.scale = None
+
+    def forward(self, key, enc_out, lengths, anchor=None, anchor_scale=None, eos_mark=None):
+        """Computes alignments using an attention module
+
         Arguments
         ---------
-        in_mask: torch.Tensor
-            the input mask
-        out_mask: torch.Tensor
-            the output mask
+        key: str
+            the modality key
+        enc_out: torch.Tensor
+            raw encoded states
+        length: torch.Tensor
+            relative lengths
+        anchor: str
+            the modality to which outputs will be "anchored".
+            If prvided, masking of outputs will be done
+            based on anchor lengths
+        anchor_scale: float
+            the scaling factor for the anchor modality
+        eos_mark: torch.nn.Module
+            a module that edds an explicit learned end-of-sequence
+            mark to the sequence to help with length detection
 
         Returns
         -------
-        attn_mask: torch.Tensor
-            the attention mask
+        output: torch.Tensor
+            aligned outputs
+        alignment: torch.Tensor
+            the alignment matrices from the attention module
+        lengths_latent: torch.Tensor
+            the lengths of latent representations
+        lengths_input: torch.Tensor
+            the precise lengths of inputs, in the alignment matrix
         """
-        batch_size, in_max_len, _ = in_mask.shape
-        _, out_max_len, _ = out_mask.shape
-        attn_mask = torch.zeros(batch_size, out_max_len, in_max_len).to(
-            in_mask.device)
-        out_mask_attn = ~out_mask.squeeze().bool()
-        in_mask_attn = ~in_mask.squeeze().bool()
-        attn_mask[out_mask_attn.unsqueeze(-1).repeat(1, 1, in_max_len)] = 1
-        attn_mask[in_mask_attn.unsqueeze(1).repeat(1, out_max_len, 1)] = 1
-        return attn_mask
+        if anchor is None:
+            anchor = key
+        mod_enc_out = enc_out[key]
+        mod_length = lengths[key]
+        anchor_length = lengths[anchor]
+
+        mod_enc_out_scaled = self.feature_scale(mod_enc_out)
+        mod_enc_out_scaled = self.in_norm(mod_enc_out_scaled)
+
+        mod_enc_out_scaled_max_len = mod_enc_out_scaled.size(1)
+        mod_enc_out_scaled_length_abs = (
+            mod_length * mod_enc_out_scaled_max_len).round().int()
+        if eos_mark is not None:
+            mod_enc_out_scaled, mod_enc_out_scaled_length_abs = eos_mark(
+                mod_enc_out_scaled, mod_enc_out_scaled_length_abs)
+            mod_enc_out_scaled_max_len = mod_enc_out_scaled.size(1)
+
+        pos_embs = self.pos_emb(mod_enc_out_scaled)
+        mod_enc_out_scaled[:, :-1, :] += pos_embs[:, :-1, :]
+
+        anchor_length_queries_abs = (
+            anchor_length * mod_enc_out_scaled_max_len).round().int()
+        queries_mask = length_to_mask(
+            anchor_length_queries_abs, mod_enc_out_scaled_max_len).unsqueeze(-1)
+
+        out_mask = length_to_mask(
+            mod_enc_out_scaled_length_abs, mod_enc_out_scaled_max_len).unsqueeze(-1)
+        
+        masked_queries = pos_embs * queries_mask
+        
+        attn_mask = get_attention_mask(out_mask, queries_mask)
+        output, alignment = self.attn(
+            query=masked_queries,
+            key=mod_enc_out_scaled,
+            value=mod_enc_out_scaled,
+            key_padding_mask=~(out_mask.bool().squeeze(-1)),
+            attn_mask=attn_mask,
+        )
+        return output, alignment, anchor_length_queries_abs, mod_enc_out_scaled_length_abs
+
+
+def get_attention_mask(in_mask, out_mask):
+    """Computes the attention mask
+    
+    Arguments
+    ---------
+    in_mask: torch.Tensor
+        the input mask
+    out_mask: torch.Tensor
+        the output mask
+
+    Returns
+    -------
+    attn_mask: torch.Tensor
+        the attention mask
+    """
+    batch_size, in_max_len, _ = in_mask.shape
+    _, out_max_len, _ = out_mask.shape
+    attn_mask = torch.zeros(batch_size, out_max_len, in_max_len).to(
+        in_mask.device)
+    out_mask_attn = ~out_mask.squeeze().bool()
+    in_mask_attn = ~in_mask.squeeze().bool()
+    attn_mask[out_mask_attn.unsqueeze(-1).repeat(1, 1, in_max_len)] = 1
+    attn_mask[in_mask_attn.unsqueeze(1).repeat(1, out_max_len, 1)] = 1
+    return attn_mask
 
 
 class LengthPredictor(nn.Module):
