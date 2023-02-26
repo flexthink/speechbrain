@@ -137,7 +137,7 @@ class MadMixtureBrain(sb.Brain):
             feats_char_emb = self.hparams.char_emb(batch.char_encoded_bos.data)
         if self.hparams.phn_enabled:
             feats["phn"] = batch.phn_encoded_bos.data
-            targets["phn"] = batch.char_encoded_eos.data
+            targets["phn"] = batch.phn_encoded_eos.data
             lengths["phn"] = batch.phn_encoded_eos.lengths
             feats_phn_emb = self.hparams.phn_emb(batch.phn_encoded_bos.data)
 
