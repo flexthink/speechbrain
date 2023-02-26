@@ -247,7 +247,7 @@ class MadMixtureLoss(nn.Module):
 
         if self.length_loss_fn is not None and length_preds is not None:
             length_loss, modality_length_loss, weighted_modality_length_loss = self.compute_length_loss(
-                length_preds, latents, length
+                length_preds, latents, length, reduction=reduction
             )
             length_loss_details = with_prefix(
                 "length", modality_length_loss
@@ -506,7 +506,7 @@ class MadMixtureLoss(nn.Module):
             reduction=reduction
         )
     
-    def compute_length_loss(self, length_preds, latents, length):
+    def compute_length_loss(self, length_preds, latents, length, reduction):
         """Computes the length loss
         
         Arguments
@@ -517,6 +517,8 @@ class MadMixtureLoss(nn.Module):
             latent representations for each modality
         length: dict
             relative length for each modality
+        reduction: str
+            the loss reduction method
 
         Returns
         -------
@@ -528,7 +530,8 @@ class MadMixtureLoss(nn.Module):
             the weighted length loss, broken down by modality
         """
         modality_length_loss = {
-            key: self.length_loss_fn(length_preds[key], latents[key], length[self.anchor])
+            key: self.length_loss_fn(length_preds[key], latents[key], length[self.anchor],
+                                     reduction=reduction)
             for key in length_preds
         }
         length_loss, weighted_modality_length_loss = self._weighted_modality_loss(
@@ -858,7 +861,7 @@ class LatentEOSMarkerLoss(nn.Module):
         """
         batch_size, max_len, feature_size = latents.shape
         idx_range = torch.arange(max_len, device=latents.device)[None, :, None].expand_as(latents)
-        idx = latent_lengths[:, None, None].expand_as(latents) - 1
+        idx = (latent_lengths[:, None, None].expand_as(latents) - 1).clip(1)
         eos_markers = latents[idx_range == idx].reshape(batch_size, feature_size)
         desired_eos_markers = self.eos_mark.marker[None, :].expand_as(eos_markers)
         return self.loss_fn(eos_markers, desired_eos_markers, reduction=reduction)
