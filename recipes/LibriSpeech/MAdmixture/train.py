@@ -16,6 +16,7 @@ from librispeech_prepare import prepare_librispeech, LibriSpeechMode
 from collections import namedtuple
 from speechbrain.dataio.dataset import apply_overfit_test
 from speechbrain.lobes.models.madmixture.evaluation import EvalBatch
+from pprint import pformat
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,23 @@ class MadMixtureBrain(sb.Brain):
             length_latent=predictions.lengths_latent,
             length_input=predictions.lengths_input,
         )
+        if not torch.isfinite(loss):
+            logger.warn("Non-finite loss encountered")
+            details = self.hparams.compute_cost.details(
+                targets=predictions.targets,
+                latents=predictions.latents,
+                alignments=predictions.alignments,
+                rec=predictions.rec,
+                length=predictions.lengths,
+                transfer_rec=predictions.transfer_rec,
+                out_context=predictions.out_context,
+                length_preds=predictions.length_preds,
+                length_latent=predictions.lengths_latent,
+                length_input=predictions.lengths_input,
+            )
+            details_log = {key: value.item() for key, value in details.items()}
+            logger.warn("Details: %s", pformat(details_log))
+            logger.warn("Lengths: %s", pformat(predictions.lengths))
 
         if self.hparams.enable_train_metrics and self.step % self.hparams.train_metrics_interval == 0:
             self.loss_metric.append(
