@@ -185,7 +185,7 @@ modalities:
     - phn
 
 #MAdmixture model parameters
-madmixture_latent_dim: 32
+madmixture_latent_dim: 64
 madmixture_latent_distance_loss_weight: 0.1
 madmixture_align_attention_loss_weight: 5.0
 madmixture_length_loss_beta: 0.25

@@ -9,6 +9,7 @@ from collections import namedtuple
 from torch import nn, Tensor
 from typing import Dict, Tuple
 from speechbrain.nnet.attention import MultiheadAttention
+from speechbrain.nnet.containers import Sequential
 from speechbrain.nnet.CNN import Conv1d, ConvTranspose1d
 from speechbrain.nnet.linear import Linear
 from speechbrain.nnet.normalization import LayerNorm
@@ -1126,9 +1127,13 @@ class PQAttentionalAligner(Aligner):
     nhead: int
         the number of attention heads
     dropout: float
-        the dropout probability
+        the attention dropout probability
+    proj_layers: int
+        the number of projection (post-attention) layers
+    proj_kernel_size: int|list
+        the projection kernel size
     """
-    def __init__(self, dim, in_dim, max_scale=2., nhead=1, dropout=0.):
+    def __init__(self, dim, in_dim, max_scale=2., nhead=1, dropout=0., proj_layers=2, proj_kernel_size=3):
         super().__init__()
         self.dim = dim
         self.feature_scale = Conv1d(
@@ -1145,6 +1150,21 @@ class PQAttentionalAligner(Aligner):
             d_model=dim,
             dropout=dropout
         )
+        if proj_layers is not None and proj_layers > 0:
+            if isinstance(proj_kernel_size, int):
+                proj_kernel_size = [proj_kernel_size] * proj_layers
+            self.proj = nn.Sequential(
+                *[
+                    Conv1d(
+                        in_channels=dim,
+                        out_channels=dim,
+                        kernel_size=layer_kernel_size
+                    ) 
+                    for layer_kernel_size in proj_kernel_size
+                ]
+            )
+        else:
+            self.proj = nn.Identity()
         self.max_scale = max_scale
         self.scale = None
 
@@ -1228,7 +1248,8 @@ class PQAttentionalAligner(Aligner):
             key_padding_mask=~(out_mask.bool().squeeze(-1)),
             attn_mask=attn_mask,
         )
-        return output, alignment, anchor_length_queries_abs, mod_enc_out_scaled_length_abs
+        output_proj = self.proj(output)
+        return output_proj, alignment, anchor_length_queries_abs, mod_enc_out_scaled_length_abs
 
 
 def get_attention_mask(in_mask, out_mask):
