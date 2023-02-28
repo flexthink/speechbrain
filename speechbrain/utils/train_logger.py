@@ -7,6 +7,7 @@ import logging
 import ruamel.yaml
 import torch
 import os
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -439,3 +440,46 @@ def detach(value):
     else:
         result = value
     return result
+
+
+class TensorLogger:
+    """A logger that stores a sequence of raw tensors in a binary
+    file. One  possible use is to save latent representations.
+    
+    Arguments
+    ---------
+    file_name: str
+        the file name
+    """
+    def __init__(self, file_name):
+        self.file_name = file_name
+        self.tensor_file = None
+    
+    def open(self):
+        """Opens the file"""
+        self.tensor_file = open(self.file_name, "ab+")
+    
+    def ensure_open(self):
+        """Opens the file if it is not already open"""
+        if self.tensor_file is None:
+            self.open()
+
+    def append(self, value):
+        """Appends a tensor
+
+        Arguments
+        ---------
+        value: torch.Tensor
+            the value to append
+        """
+        self.ensure_open()
+        value_np = value.detach().cpu().numpy()
+        np.save(self.tensor_file, value_np)
+
+    def close(self):
+        """Closes the file"""
+        if self.tensor_file is not None:
+            self.tensor_file.close()
+            self.tensor_file = None
+
+    

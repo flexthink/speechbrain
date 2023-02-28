@@ -24,9 +24,11 @@ wer_file: !ref <output_folder>/wer.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 reports_folder: !ref <output_folder>/reports
+latent_folder: !ref <output_folder>/latent
 use_tensorboard: True
 tensorboard_logs: !ref <output_folder>/logs
 enable_train_metrics: True
+enable_latent_log: True
 train_metrics_interval: 10
 train_log_interval: 1
 skip_checkpoint: False
@@ -146,7 +148,7 @@ audio_dec_gate_threshold: 0.5
 audio_dec_p_attention_dropout: 0.1
 audio_dec_p_decoder_dropout: 0.1
 audio_dec_decoder_no_early_stopping: False
-audio_aligner_scale: 1.25
+audio_aligner_dropout: 0.1
 
 # Character Encoder/Decoder Parameters
 char_enabled: True
@@ -158,7 +160,7 @@ char_dec_dropout: 0.5
 char_dec_neurons: 512
 char_dec_att_neurons: 256
 char_dec_num_layers: 4
-char_aligner_scale: 1
+char_aligner_dropout: 0.1
 
 # Phoneme Encoder/Decoder Parameters
 phn_enabled: True
@@ -170,12 +172,17 @@ phn_dec_dropout: 0.5
 phn_dec_neurons: 512
 phn_dec_att_neurons: 256
 phn_dec_num_layers: 4
-phn_aligner_scale: 1.25
+phn_aligner_dropout: 0.1
 
 ignore_tokens:
     - !ref <bos_index>
     - !ref <eos_index>
 
+#Available modalities
+modalities:
+    - audio
+    - char
+    - phn
 
 #MAdmixture model parameters
 madmixture_latent_dim: 32
@@ -334,14 +341,17 @@ phn_dec: !new:speechbrain.lobes.models.madmixture.adapters.RNNDecoder
 audio_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <audio_enc_dnn_neurons>
+    dropout: !ref <audio_aligner_dropout>
 
 char_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <char_enc_neurons>
+    dropout: !ref <char_aligner_dropout>
 
 phn_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <char_enc_neurons>
+    dropout: !ref <phn_aligner_dropout>
 
 vocoder: !name:speechbrain.pretrained.interfaces.HIFIGAN.from_hparams
     source: !ref <vocoder_model>
@@ -397,10 +407,7 @@ compute_cost_eos: !new:speechbrain.nnet.loss.madmixture_loss.LatentEOSMarkerLoss
     loss_fn: !name:speechbrain.nnet.losses.mse_loss
 
 compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
-    modalities:
-    - audio
-    - char
-    - phn
+    modalities: !ref <modalities>
     modality_enabled:
         audio: !ref <audio_enabled>
         char: !ref <char_enabled>

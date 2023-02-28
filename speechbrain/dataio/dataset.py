@@ -14,6 +14,7 @@ from torch.utils.data import Dataset
 from speechbrain.utils.data_pipeline import DataPipeline
 from speechbrain.dataio.dataio import load_data_json, load_data_csv
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -416,6 +417,34 @@ class DynamicItemDataset(Dataset):
         overfit_samples = base_data_ids * num_repetitions
         overfit_samples = overfit_samples[:total_count]
         return FilteredSortedDynamicItemDataset(self, overfit_samples)
+    
+    def to_json(self, json_file):
+        """Exports this dataset to JSON. This is only usable if the dataset
+        contains only JSON-serializable values.
+
+        One possible use case is to save a filtered or transformed dataset
+        
+        Arguments
+        ---------
+        json_file: str|file-like
+            the output file
+        """
+        if isinstance(json_file, str):
+            with open(json_file, "w") as fp:
+                self._save_json(fp)
+        else:
+            self._save_json(json_file)
+
+    def _save_json(self, fp):
+        """Saves the dataset to the specified file pointer
+        
+        Arguments
+        ---------
+        fp: file
+            a writable file-like object
+        """
+        data = {data_id: item for data_id, item in zip(self.data_ids, self)}
+        json.dump(data, fp)
     
 
 class FilteredSortedDynamicItemDataset(DynamicItemDataset):

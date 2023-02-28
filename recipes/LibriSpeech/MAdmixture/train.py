@@ -16,6 +16,7 @@ from librispeech_prepare import prepare_librispeech, LibriSpeechMode
 from collections import namedtuple
 from speechbrain.dataio.dataset import apply_overfit_test
 from speechbrain.lobes.models.madmixture.evaluation import EvalBatch
+from speechbrain.utils.train_logger import TensorLogger
 from pprint import pformat
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,9 @@ class MadMixtureBrain(sb.Brain):
         feats, targets, lengths, context = self.prepare_features(stage, batch)
         out = self.modules.model.train_step(
             feats, lengths, context, transfer=self.hparams.transfer_loss_enabled)
+        if self.hparams.enable_latent_log:
+            for key, mod_latent in out.latents.items():
+                self.latent_logger[key].append(mod_latent)
         return MadMixturePredictions(
             latents=out.latents,
             alignments=out.alignments,
@@ -283,6 +287,21 @@ class MadMixtureBrain(sb.Brain):
         self.evaluator.use_vis_sample(self.stage_vis_sample)
         align_attention_loss_weight, _ = self.hparams.guided_attention_scheduler(epoch - 1)
         self.hparams.compute_cost.align_attention_loss_weight = align_attention_loss_weight
+        if self.hparams.enable_latent_log:
+            self.latent_logger = {
+                key: self.create_latent_logger(key, epoch, stage)
+                for key in self.hparams.modalities
+            }
+
+    def create_latent_logger(self, key, epoch, stage):
+        target_folder = os.path.join(
+            self.hparams.latent_folder,
+            str(epoch)
+        )
+        os.makedirs(target_folder, exist_ok=True)
+        stage_suffix = str(stage).lower()
+        file_name = os.path.join(target_folder, f"latent_{key}_{stage_suffix}.np")
+        return TensorLogger(file_name)
 
     def on_stage_end(self, stage, stage_loss, epoch):
         """Gets called at the end of an epoch.
@@ -306,6 +325,10 @@ class MadMixtureBrain(sb.Brain):
         # Summarize the statistics from the stage for record-keeping.
         else:
             pass
+
+        if self.hparams.enable_latent_log:
+            for latent_logger in self.latent_logger.values():
+                latent_logger.close()
 
         # Perform end-of-iteration things, like annealing, logging, etc.
         if stage == sb.Stage.VALID:
@@ -382,7 +405,6 @@ MadMixturePredictions = namedtuple(
 LIBRISPEECH_OUTPUT_KEYS = [
     "snt_id",
     "wrd_count",
-    "sig",
     "wrd_start",
     "wrd_end",
     "phn_start",
@@ -394,6 +416,7 @@ LIBRISPEECH_OUTPUT_KEYS = [
 ]
 
 LIBRISPEECH_OUTPUT_KEYS_DYNAMIC = LIBRISPEECH_OUTPUT_KEYS + [
+    "sig",
     "phn_encoded",
     "phn_encoded_bos",
     "phn_encoded_eos",
@@ -566,6 +589,23 @@ def dataio_prepare(hparams):
     return datasets, vis_samples
 
 
+def save_datasets(datasets, hparams):
+    """Saves the specified datasets as JSON
+    
+    Arguments
+    ---------
+    dataset: dict
+        a key -> dataset dictionary
+
+    hparams: dict
+        raw hyperparameters
+    """
+    for key, dataset in datasets.items():
+        file_name = os.path.join(hparams["output_folder"], f"curriculum_{key}.json")
+        with dataset.output_keys_as(LIBRISPEECH_OUTPUT_KEYS):
+            dataset.to_json(file_name)
+
+
 def select_vis_sample(dataset, hparams):
     """Selects a sample of the specified size
     
@@ -692,6 +732,11 @@ if __name__ == "__main__":
 
     # We can now directly create the datasets for training, valid, and test
     datasets, vis_samples = dataio_prepare(hparams)
+
+    # Save datasets for future reference. Since the dataset is dynamically
+    # sampled depending on hyperparameter values, a snapshot of what was actually
+    # used for training can be useful for further analysis
+    save_datasets(datasets, hparams)
 
     # Trainer initialization
     madmixture_brain = MadMixtureBrain(
