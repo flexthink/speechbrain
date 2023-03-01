@@ -1167,6 +1167,10 @@ class PQAttentionalAligner(Aligner):
             self.proj = nn.Identity()
         self.max_scale = max_scale
         self.scale = None
+        self.out_norm = LayerNorm(
+            input_shape=[None, None, dim]
+        )
+
 
     def forward(self, key, enc_out, lengths, anchor=None, anchor_scale=None, eos_mark=None):
         """Computes alignments using an attention module
@@ -1249,6 +1253,7 @@ class PQAttentionalAligner(Aligner):
             attn_mask=attn_mask,
         )
         output_proj = self.proj(output)
+        output_proj = self.out_norm(output)
         return output_proj, alignment, anchor_length_queries_abs, mod_enc_out_scaled_length_abs
 
 
