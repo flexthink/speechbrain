@@ -1133,7 +1133,7 @@ class PQAttentionalAligner(Aligner):
     proj_kernel_size: int|list
         the projection kernel size
     """
-    def __init__(self, dim, in_dim, max_scale=2., nhead=1, dropout=0., proj_layers=2, proj_kernel_size=3):
+    def __init__(self, dim, in_dim, max_scale=2., nhead=1, dropout=0., proj_layers=1, proj_kernel_size=3):
         super().__init__()
         self.dim = dim
         self.feature_scale = Conv1d(
