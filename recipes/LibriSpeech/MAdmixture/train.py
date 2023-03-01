@@ -9,6 +9,7 @@ Authors
 import sys
 import torch
 import logging
+import multiprocessing
 import speechbrain as sb
 import os
 from hyperpyyaml import load_hyperpyyaml
@@ -702,6 +703,16 @@ if __name__ == "__main__":
     # Load hyperparameters file with command-line overrides
     with open(hparams_file) as fin:
         hparams = load_hyperpyyaml(fin, overrides)
+
+    # Multiprocessing in spawn mode will not work - pipelines are not picklable
+    start_methods = multiprocessing.get_all_start_methods()
+    if "fork" in start_methods:
+        multiprocessing.set_start_method("fork")
+    else:
+        logger.warning(
+            "Fork multiprocessing is not supported, in-process dataloading will be used")
+        for key in ["train", "valid", "test"]:
+            hparams[f"{key}_dataloader_opts"]["num_workers"] = 0
 
     # Check whether Tensorboard is available and enabled
     check_tensorboard(hparams)

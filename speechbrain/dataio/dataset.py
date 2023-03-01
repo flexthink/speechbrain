@@ -540,7 +540,7 @@ def apply_overfit_test(hparams, dataset):
             result = dataset.overfit_test(
                  hparams["overfit_test_sample_count"],
                  hparams["overfit_test_epoch_data_count"],
-                 hparams.get("overfit_test_shuffle", True))
+                 hparams.get("overfit_test_shuffle", shuffle))
     else:
         result = dataset
     return result
