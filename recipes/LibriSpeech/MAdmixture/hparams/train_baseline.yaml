@@ -54,6 +54,7 @@ overfit_test_sample_count: !ref <batch_size>
 overfit_test_epoch_data_count: 1000
 overfit_test_shuffle: True
 eval_vis_sample_size: 16
+eval_train_sample_size: 1000
 filter_spk_id: null
 
 
@@ -309,6 +310,7 @@ char_dec_rnn: !new:speechbrain.nnet.RNN.AttentionalRNNDecoder
     num_layers: !ref <char_dec_num_layers>
 
 char_dec: !new:speechbrain.lobes.models.madmixture.adapters.RNNDecoder
+    latent_size: !ref <madmixture_latent_dim>
     rnn: !ref <char_dec_rnn>
     out_dim: !ref <char_count>
     input_key: char_emb
@@ -342,6 +344,7 @@ phn_dec_rnn: !new:speechbrain.nnet.RNN.AttentionalRNNDecoder
     num_layers: !ref <phn_dec_num_layers>
 
 phn_dec: !new:speechbrain.lobes.models.madmixture.adapters.RNNDecoder
+    latent_size: !ref <madmixture_latent_dim>
     rnn: !ref <phn_dec_rnn>
     out_dim: !ref <phn_count>
     input_key: phn_emb
@@ -537,4 +540,7 @@ curriculum:
     num_samples: 
         train: !ref <curriculum_num_samples_train>
         valid: !ref <curriculum_num_samples_valid>
-        test: !ref <curriculum_num_samples_test>                
+        test: !ref <curriculum_num_samples_test>
+
+eval_sample_size:
+    train: !ref <eval_train_sample_size>

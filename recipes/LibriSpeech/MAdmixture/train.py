@@ -15,10 +15,12 @@ import os
 from hyperpyyaml import load_hyperpyyaml
 from librispeech_prepare import prepare_librispeech, LibriSpeechMode
 from collections import namedtuple
-from speechbrain.dataio.dataset import apply_overfit_test
+from speechbrain.dataio.dataset import apply_overfit_test, FilteredSortedDynamicItemDataset
 from speechbrain.lobes.models.madmixture.evaluation import EvalBatch
 from speechbrain.utils.train_logger import TensorLogger
 from pprint import pformat
+from tqdm.contrib import tqdm
+
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +80,98 @@ class MadMixtureBrain(sb.Brain):
             lengths_dec=out.lengths_dec,
         )
     
+    def fit(
+        self,
+        epoch_counter,
+        train_set,
+        valid_set=None,
+        progressbar=None,
+        train_loader_kwargs={},
+        valid_loader_kwargs={},
+    ):
+        """Iterate epochs and datasets to improve objective.
+
+        Relies on the existence of multiple functions that can (or should) be
+        overridden. The following methods are used and expected to have a
+        certain behavior:
+
+        * ``fit_batch()``
+        * ``evaluate_batch()``
+        * ``update_average()``
+
+        If the initialization was done with distributed_count > 0 and the
+        distributed_backend is ddp, this will generally handle multiprocess
+        logic, like splitting the training data into subsets for each device and
+        only saving a checkpoint on the main process.
+
+        Arguments
+        ---------
+        epoch_counter : iterable
+            Each call should return an integer indicating the epoch count.
+        train_set : Dataset, DataLoader
+            A set of data to use for training. If a Dataset is given, a
+            DataLoader is automatically created. If a DataLoader is given, it is
+            used directly.
+        valid_set : Dataset, DataLoader
+            A set of data to use for validation. If a Dataset is given, a
+            DataLoader is automatically created. If a DataLoader is given, it is
+            used directly.
+        train_loader_kwargs : dict
+            Kwargs passed to `make_dataloader()` for making the train_loader
+            (if train_set is a Dataset, not DataLoader).
+            E.G. batch_size, num_workers.
+            DataLoader kwargs are all valid.
+        valid_loader_kwargs : dict
+            Kwargs passed to `make_dataloader()` for making the valid_loader
+            (if valid_set is a Dataset, not DataLoader).
+            E.g., batch_size, num_workers.
+            DataLoader kwargs are all valid.
+        progressbar : bool
+            Whether to display the progress of each epoch in a progressbar.
+        """
+        self._train_loader_kwargs = train_loader_kwargs
+        self._valid_loader_kwargs = valid_loader_kwargs
+        super().fit(
+            epoch_counter,
+            train_set,
+            valid_set,
+            progressbar,
+            train_loader_kwargs,
+            valid_loader_kwargs,
+        )
+
+    
+    def _fit_train(self, train_set, epoch, enable):
+        super()._fit_train(train_set, epoch, enable)
+        if sb.Stage.TRAIN in self.eval_sample:
+            self.evaluate_sample(
+                sample_dataset=self.eval_sample[sb.Stage.TRAIN],
+                stage=sb.Stage.TRAIN,
+                dataloader_kwargs=self._train_loader_kwargs
+            )
+
     def fit_batch(self, batch):
+        """Fit one batch, override to do multiple updates.
+
+        The default implementation depends on a few methods being defined
+        with a particular behavior:
+
+        * ``compute_forward()``
+        * ``compute_objectives()``
+
+        Also depends on having optimizers passed at initialization.
+
+        Arguments
+        ---------
+        batch : list of torch.Tensors
+            Batch of data to use for training. Default implementation assumes
+            this batch has two elements: inputs and targets.
+
+        Returns
+        -------
+        detached loss
+        """
+
         result = super().fit_batch(batch)
         if (
             self.hparams.enable_train_metrics
@@ -136,12 +229,12 @@ class MadMixtureBrain(sb.Brain):
         feats_char_emb = None
         feats_phn_emb = None
         if self.hparams.char_enabled:
-            feats["char"] = batch.char_encoded_bos.data
+            feats["char"] = batch.char_encoded.data
             targets["char"] = batch.char_encoded_eos.data
             lengths["char"] = batch.char_encoded_eos.lengths
             feats_char_emb = self.hparams.char_emb(batch.char_encoded_bos.data)
         if self.hparams.phn_enabled:
-            feats["phn"] = batch.phn_encoded_bos.data
+            feats["phn"] = batch.phn_encoded.data
             targets["phn"] = batch.phn_encoded_eos.data
             lengths["phn"] = batch.phn_encoded_eos.lengths
             feats_phn_emb = self.hparams.phn_emb(batch.phn_encoded_bos.data)
@@ -221,6 +314,31 @@ class MadMixtureBrain(sb.Brain):
             )
         return loss
     
+    def evaluate_sample(self, sample_dataset, stage, dataloader_kwargs):
+        """Runs evaluation on a sample
+        
+        Arguments
+        ---------
+        sample_dataset: DynamicItemDataset
+            a dataset
+        stage: speechbrain.Stage
+            the training stage
+        dataloader_kwargs:
+            dataloader keyword arguments
+        """
+        self.modules.eval()
+        logger.info("%s: evaluating on a sample", stage.name.lower())
+        self._create_evaluator(stage)
+        sample_loader = self.make_dataloader(
+            sample_dataset, stage=stage, **dataloader_kwargs)
+        with tqdm(sample_loader, dynamic_ncols=True) as t:
+            for step, batch in enumerate(t, start=1):
+                self.evaluate_batch(batch, stage)
+                if self.debug and step == self.debug_batches:
+                    break
+
+        self.evaluation_report(stage, is_sample=True)
+
     def evaluate_batch(self, batch, stage):
         """Evaluate one batch, performing the various tasks configured in
         hparams (e.g. same-modality reconstruction, cross-modality evaluation,
@@ -279,13 +397,7 @@ class MadMixtureBrain(sb.Brain):
             metric=self.hparams.compute_cost.details,
             batch_eval=True
         )
-        self.stage_vis_sample = (
-            self.vis_sample[stage]
-            if hasattr(self, "vis_sample")
-            else None
-        )
-        self.evaluator = self.hparams.evaluator()
-        self.evaluator.use_vis_sample(self.stage_vis_sample)
+        self._create_evaluator(stage)
         align_attention_loss_weight, _ = self.hparams.guided_attention_scheduler(epoch - 1)
         self.hparams.compute_cost.align_attention_loss_weight = align_attention_loss_weight
         if self.hparams.enable_latent_log:
@@ -294,7 +406,36 @@ class MadMixtureBrain(sb.Brain):
                 for key in self.hparams.modalities
             }
 
+    def _create_evaluator(self, stage):
+        """Creates a latent space logger instance
+
+        Arguments
+        ---------
+        stage : speechbrain.Stage
+            The stage of the experiment: Stage.TRAIN, Stage.VALID, Stage.TEST
+
+        """
+        self.stage_vis_sample = (
+            self.vis_sample[stage]
+            if hasattr(self, "vis_sample")
+            else None
+        )
+        self.evaluator = self.hparams.evaluator()
+        self.evaluator.use_vis_sample(self.stage_vis_sample)
+        
+
     def create_latent_logger(self, key, epoch, stage):
+        """Creates a latent space logger instance
+        
+        Arguments
+        ---------
+        key: str
+            the modality key
+        epoch: int
+            the epoch number
+        stage: speechbrain.Stage
+            The stage of the experiment: Stage.TRAIN, Stage.VALID, Stage.TEST
+        """
         target_folder = os.path.join(
             self.hparams.latent_folder,
             str(epoch)
@@ -354,7 +495,7 @@ class MadMixtureBrain(sb.Brain):
                 )
 
             # Write evaluation reports for the epoch
-            self.evaluation_report()
+            self.evaluation_report(stage)
 
         # We also write statistics about test data to stdout and to the logfile.
         elif stage == sb.Stage.TEST:
@@ -363,24 +504,38 @@ class MadMixtureBrain(sb.Brain):
                 test_stats=stage_stats,
             )
 
-    def evaluation_report(self):
-        """Outputs the evaluation report"""
+    def evaluation_report(self, stage, is_sample=False):
+        """Outputs the evaluation report
+        
+        Arguments
+        ---------
+        stage : speechbrain.Stage
+            The stage of the experiment: Stage.TRAIN, Stage.VALID, Stage.TEST
+        """
+        stage_folder = stage.name.lower()
+        if is_sample:
+            stage_folder += "-sample"
         report_path = os.path.join(
             self.hparams.reports_folder,
-            str(self.hparams.epoch_counter.current)
+            str(self.hparams.epoch_counter.current),
+            stage_folder,
         )
         self.evaluator.report(report_path)
 
-    def use_vis_sample(self, data_ids):
+    def use_samples(self, eval_sample, vis_sample):
         """
         Arguments
         ---------
         data_ids: dict
             a key -> enumerable dictionary
         """
+        self.eval_sample = {
+            sb.Stage[key.upper()]: stage_dataset
+            for key, stage_dataset in eval_sample.items()
+        }
         self.vis_sample = {
             sb.Stage[key.upper()]: stage_data_ids
-            for key, stage_data_ids in data_ids.items()
+            for key, stage_data_ids in vis_sample.items()
         }
 
 MadMixturePredictions = namedtuple(
@@ -553,11 +708,7 @@ def dataio_prepare(hparams):
     datasets = apply_overfit_test(
         hparams, datasets)
 
-    vis_samples = {
-        key: select_vis_sample(dynamic_dataset, hparams)
-        for key, dynamic_dataset in datasets.items()    
-    }
-    
+    eval_samples, vis_samples = select_samples(datasets, hparams)
 
     # Apply the sort order. Sorting by duration can help reduce
     # zero-padding. Such sorting is not applicable for overfit
@@ -587,7 +738,7 @@ def dataio_prepare(hparams):
         raise NotImplementedError(
             "sorting must be random, ascending or descending"
         )
-    return datasets, vis_samples
+    return datasets, eval_samples, vis_samples
 
 
 def save_datasets(datasets, hparams):
@@ -607,7 +758,7 @@ def save_datasets(datasets, hparams):
             dataset.to_json(file_name)
 
 
-def select_vis_sample(dataset, hparams):
+def select_sample(dataset, sample_size, seed):
     """Selects a sample of the specified size
     
     Arguments
@@ -619,9 +770,60 @@ def select_vis_sample(dataset, hparams):
     """
     sample_size = hparams["eval_vis_sample_size"]
     generator = torch.Generator()
-    generator.manual_seed(hparams["seed"])
+    generator.manual_seed(seed)
     indexes = torch.randperm(len(dataset.data_ids), generator=generator)[:sample_size]
     return [dataset.data_ids[idx] for idx in indexes]
+
+
+def select_samples(datasets, hparams):
+    """Selects samples for evaluation or visualization, ased on
+    hyperparameters
+
+    Arguments
+    ---------
+    datasets: dict
+        a stage -> dataset dictionary
+    hparams: dict
+        hyperparameters
+
+    Returns
+    -------
+    eval_samples: dict
+        evaluation samples
+    vis_samples: dict
+        visualization samples
+    """
+    if hparams["overfit_test"]:
+        eval_samples = {}
+    else:
+        eval_sample_ids = {
+            key: select_sample(
+                dataset,
+                sample_size=hparams["eval_sample_size"][key],
+                seed=hparams["seed"]
+            )
+            for key, dataset in datasets.items()
+            if (
+                key in hparams["eval_sample_size"]
+                and hparams["eval_sample_size"][key] is not None
+            )
+        }
+        eval_samples = {
+            key: FilteredSortedDynamicItemDataset(
+                from_dataset=datasets[key],
+                data_ids=data_ids
+            )
+            for key, data_ids in eval_sample_ids.items()
+        }
+    vis_samples = {
+        key: select_sample(
+            eval_samples.get(key, datasets[key]),
+            sample_size=hparams["eval_vis_sample_size"],
+            seed=hparams["seed"]
+        )
+        for key in datasets
+    }
+    return eval_samples, vis_samples
 
 
 def read_token_list(file_name):
@@ -706,13 +908,25 @@ if __name__ == "__main__":
 
     # Multiprocessing in spawn mode will not work - pipelines are not picklable
     start_methods = multiprocessing.get_all_start_methods()
+    multiprocessing_enabled = True
     if "fork" in start_methods:
         multiprocessing.set_start_method("fork")
     else:
+        multiprocessing_enabled = False
         logger.warning(
             "Fork multiprocessing is not supported, in-process dataloading will be used")
-        for key in ["train", "valid", "test"]:
-            hparams[f"{key}_dataloader_opts"]["num_workers"] = 0
+
+    for key in ["train", "valid", "test"]:
+        if not multiprocessing_enabled:
+            opts["num_workers"] = 0
+        opts = hparams[f"{key}_dataloader_opts"]
+        if (
+            opts["num_workers"] == 0
+            and
+            "prefetch_factor" in opts
+        ):
+            del opts["prefetch_factor"]
+
 
     # Check whether Tensorboard is available and enabled
     check_tensorboard(hparams)
@@ -742,7 +956,7 @@ if __name__ == "__main__":
     )
 
     # We can now directly create the datasets for training, valid, and test
-    datasets, vis_samples = dataio_prepare(hparams)
+    datasets, eval_samples, vis_samples = dataio_prepare(hparams)
 
     # Save datasets for future reference. Since the dataset is dynamically
     # sampled depending on hyperparameter values, a snapshot of what was actually
@@ -757,7 +971,10 @@ if __name__ == "__main__":
         run_opts=run_opts,
         checkpointer=hparams["checkpointer"],
     )
-    madmixture_brain.use_vis_sample(vis_samples)
+    madmixture_brain.use_samples(
+        eval_samples,
+        vis_samples
+    )
 
     # The `fit()` method iterates the training loop, calling the methods
     # necessary to update the parameters of the model. Since all objects

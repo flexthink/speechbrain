@@ -103,6 +103,9 @@ class RNNDecoder(nn.Module):
     
     Arguments
     ---------
+    latent_size: int
+        the latent space dimension
+
     rnn: torch.Module
         an RNN module with an interface compatible to
         speechbrain.nnet.RNN.AttentionalRNNDecoder
@@ -116,6 +119,9 @@ class RNNDecoder(nn.Module):
         If specified, a linear layer will be added to
         output the correct shape
     
+    emb: nn.Module
+        the output sequenece imbedding module
+    
     act: nn.Module
         the final activation layer to use (softmax by default)
     
@@ -125,7 +131,7 @@ class RNNDecoder(nn.Module):
     
     outputs_context = True
 
-    def __init__(self, rnn, input_key, emb, act=None, out_dim=None, bos_index=0):
+    def __init__(self, latent_size, rnn, input_key, emb, act=None, out_dim=None, bos_index=0):
         super().__init__()
         self.rnn = rnn
         if out_dim is None:
@@ -136,13 +142,23 @@ class RNNDecoder(nn.Module):
                 out_features=out_dim,
                 bias=False
             )
-        self.input_key = input_key        
+        self.input_key = input_key
+        self.emb = emb
         self.out_dim = out_dim
         if act is None:
             act = Softmax(apply_log=True)
         self.act = act
-        self.emb = emb
-        self.bos_index = bos_index
+        self.register_buffer(
+            "latent_bos", self._get_latent_bos(
+                size=latent_size
+            )
+        )
+        self.bos_index = 1
+
+    def _get_latent_bos(self, size):
+        marker = torch.ones(size)
+        marker[::2] = 0
+        return marker
 
     def forward(self, latent, lengths, context):
         """Performs the decoding forward pass
@@ -160,23 +176,39 @@ class RNNDecoder(nn.Module):
             the input_key will be fed as ground truth
             encoder outputs during training
         """
-        if context is not None and self.input_key in context:
+        batch_size, max_len, _ = latent.shape
+        latent_length = lengths.float() / max_len
+
+        if self.training:            
             input_value = context[self.input_key]
+            latent, latent_length = self._add_latent_bos(latent, latent_length)
         else:
             input_value = self._get_dummy_sequence(
-                latent.size(0),
-                latent.device
-            )
+                batch_size, device=latent.device)
         #TODO: Add support for the default dummy value
         output, alignments = self.rnn(
-            input_value, latent, wav_len=lengths.float()/latent.size(1))
+            input_value, latent, wav_len=latent_length)
         output = self.lin_out(output)
         output = self.act(output)
         out_context = {"alignments": alignments}
         return output, out_context
     
+    def _add_latent_bos(self, latent, latent_length):
+        batch_size, max_len, latent_size = latent.shape
+        latent_length_abs = latent_length * max_len
+        latent_length_bos = (
+            (latent_length_abs + 1) / (max_len + 1)
+        )
+        bos_seq = self.latent_bos[None, None, :].expand(
+            batch_size, 1, latent_size
+        )
+        latent_bos = torch.concat(
+            (bos_seq, latent),
+            dim=1
+        )
+        return latent_bos, latent_length_bos
+    
     def _get_dummy_sequence(self, batch_size, device):
         seq = torch.tensor([[self.bos_index]], device=device)
         seq = seq.repeat(batch_size, 1)
         return self.emb(seq)
-    
