@@ -131,7 +131,17 @@ class RNNDecoder(nn.Module):
     
     outputs_context = True
 
-    def __init__(self, latent_size, rnn, input_key, emb, act=None, out_dim=None, bos_index=0):
+    def __init__(
+            self, 
+            latent_size,
+            rnn,
+            input_key,
+            emb,
+            act=None,
+            out_dim=None,
+            bos_index=0,
+            use_latent_bos=False
+        ):
         super().__init__()
         self.rnn = rnn
         if out_dim is None:
@@ -148,12 +158,14 @@ class RNNDecoder(nn.Module):
         if act is None:
             act = Softmax(apply_log=True)
         self.act = act
-        self.register_buffer(
-            "latent_bos", self._get_latent_bos(
-                size=latent_size
+        self.use_latent_bos = use_latent_bos
+        if self.use_latent_bos:
+            self.register_buffer(
+                "latent_bos", self._get_latent_bos(
+                    size=latent_size
+                )
             )
-        )
-        self.bos_index = 1
+        self.bos_index = bos_index
 
     def _get_latent_bos(self, size):
         marker = torch.ones(size)
@@ -179,12 +191,13 @@ class RNNDecoder(nn.Module):
         batch_size, max_len, _ = latent.shape
         latent_length = lengths.float() / max_len
 
-        if self.training:            
-            input_value = context[self.input_key]
-            latent, latent_length = self._add_latent_bos(latent, latent_length)
+        if context is not None and self.input_key in context:            
+            input_value = context[self.input_key]            
         else:
             input_value = self._get_dummy_sequence(
                 batch_size, device=latent.device)
+        if self.use_latent_bos:
+            latent, latent_length = self._add_latent_bos(latent, latent_length)
         #TODO: Add support for the default dummy value
         output, alignments = self.rnn(
             input_value, latent, wav_len=latent_length)

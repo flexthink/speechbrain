@@ -53,6 +53,7 @@ overfit_test: False
 overfit_test_sample_count: !ref <batch_size>
 overfit_test_epoch_data_count: 1000
 overfit_test_shuffle: True
+eval_enabled: true
 eval_vis_sample_size: 16
 eval_train_sample_size: 1000
 filter_spk_id: null

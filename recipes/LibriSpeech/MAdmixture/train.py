@@ -344,12 +344,6 @@ class MadMixtureBrain(sb.Brain):
         hparams (e.g. same-modality reconstruction, cross-modality evaluation,
         etc)
 
-        The default implementation depends on two methods being defined
-        with a particular behavior:
-
-        * ``compute_forward()``
-        * ``compute_objectives()``
-
         Arguments
         ---------
         batch : list of torch.Tensors
@@ -365,21 +359,22 @@ class MadMixtureBrain(sb.Brain):
 
         out = self.compute_forward(batch, stage=stage)
         loss = self.compute_objectives(out, batch, stage=stage)
+        
+        if self.hparams.eval_enabled:
+            eval_batch = EvalBatch(
+                ids=batch.snt_id,
+                inputs=out.feats,
+                latents=out.latents,
+                alignments=out.alignments,
+                lengths=out.lengths,
+                targets=out.feats,
+                out_context=out.out_context,
+                latents_raw=out.latents_raw,
+                lengths_latent=out.lengths_latent,
+                lengths_dec=out.lengths_dec
+            )
 
-        eval_batch = EvalBatch(
-            ids=batch.snt_id,
-            inputs=out.feats,
-            latents=out.latents,
-            alignments=out.alignments,
-            lengths=out.lengths,
-            targets=out.feats,
-            out_context=out.out_context,
-            latents_raw=out.latents_raw,
-            lengths_latent=out.lengths_latent,
-            lengths_dec=out.lengths_dec
-        )
-
-        self.evaluator.append(eval_batch)        
+            self.evaluator.append(eval_batch)        
         return loss.detach().cpu()
     
     def on_stage_start(self, stage, epoch):
@@ -420,8 +415,9 @@ class MadMixtureBrain(sb.Brain):
             if hasattr(self, "vis_sample")
             else None
         )
-        self.evaluator = self.hparams.evaluator()
-        self.evaluator.use_vis_sample(self.stage_vis_sample)
+        if self.hparams.eval_enabled:
+            self.evaluator = self.hparams.evaluator()
+            self.evaluator.use_vis_sample(self.stage_vis_sample)
         
 
     def create_latent_logger(self, key, epoch, stage):
@@ -520,7 +516,8 @@ class MadMixtureBrain(sb.Brain):
             str(self.hparams.epoch_counter.current),
             stage_folder,
         )
-        self.evaluator.report(report_path)
+        if self.hparams.eval_enabled:
+            self.evaluator.report(report_path)
 
     def use_samples(self, eval_sample, vis_sample):
         """
