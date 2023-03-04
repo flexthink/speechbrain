@@ -1142,6 +1142,10 @@ class PQAttentionalAligner(Aligner):
         self.pos_emb = PositionalEncoding(
             input_size=dim
         )
+        self.pos_emb_proj = Linear(
+            n_neurons=dim,
+            input_size=dim
+        )
         self.in_norm = LayerNorm(
             input_shape=[None, None, dim]
         )
@@ -1223,6 +1227,7 @@ class PQAttentionalAligner(Aligner):
             mod_enc_out_scaled_max_len = mod_enc_out_scaled.size(1)
 
         pos_embs = self.pos_emb(mod_enc_out_scaled)
+        pos_embs = self.pos_emb_proj(pos_embs)
         mod_enc_out_scaled[:, :-1, :] += pos_embs[:, :-1, :]
 
         if anchor is None:
