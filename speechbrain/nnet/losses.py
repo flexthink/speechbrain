@@ -1446,3 +1446,54 @@ def _distance_diff_loss(predictions, targets, beta, max_weight, masked_penalty=0
         length_abs = length * max_len
         loss_weights = torch.where(pos_range > length_abs[..., None], masked_penalty, loss_weights)
     return (loss_weights * predictions).unsqueeze(-1)
+
+
+def _distance_l2(x, y):
+    """Computes the L2-squared distance between two vectors"""
+    elementwise_distance = (x - y)**2
+    return elementwise_distance.sum(dim=-1).sqrt()
+
+
+def triplet_loss(
+    anchor,
+    positive,
+    negative,
+    length,
+    margin=1.0,
+    distance=None,
+    reduction="mean"
+):
+    """Computes a triplet loss - useful when attempting to "tie down" embeddings from  multiple
+    modalities (e.g. https://arxiv.org/pdf/2011.09044v2.pdf), also useful for learning difference
+    functions
+
+    Arguments
+    ---------
+    anchor: torch.Tensor
+        the anchor example
+    positive: torch.Tensor
+        the positive example
+    negative: torch.Tensor
+        the negative example
+    margin: double|torch.Tensor
+        the desired difference positive and negative pairs
+    distance: callable
+        the distance metric. By default, the MSE loss is used
+    reduction : str
+        Options are 'mean', 'batch', 'sum'.
+        See pytorch for 'mean', 'sum'. The 'batch' option returns
+
+    Returns
+    -------
+    loss: torch.Tensor
+        the triplet loss
+    """
+    if not distance:
+        distance = _distance_l2
+    loss = torch.maximum(
+        torch.tensor(0., device=anchor.device),
+        margin + distance(anchor, positive) - distance(anchor, negative)
+    )
+    mask = compute_length_mask(loss, length)
+    loss_reduced = reduce_loss(loss * mask, mask=mask, reduction=reduction)
+    return loss_reduced

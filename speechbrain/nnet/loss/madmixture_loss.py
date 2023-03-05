@@ -22,7 +22,10 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from speechbrain.nnet.losses import truncate, distance_diff_loss, reduce_loss
+from speechbrain.utils.data_utils import concat_padded_features
+from speechbrain.dataio.dataio import length_to_mask
 from speechbrain.nnet.loss.guidedattn_loss import GuidedAttentionLoss
+
 
 class MadMixtureLoss(nn.Module):
     """The MAdmixture model loss
@@ -58,7 +61,13 @@ class MadMixtureLoss(nn.Module):
         the relative weight of the length loss
     length_loss_fn: callable
         the length loss function or module
-        
+    eos_loss_fn: callable
+        the end-of-sequence loss function
+    eos_loss_weight: int
+        the relative weight of the end-of-sequence loss
+    modality_enabled: dict
+        a str->bool dictionary indicating which modalities
+        are enabled
     """
     def __init__(
             self,
@@ -115,36 +124,8 @@ class MadMixtureLoss(nn.Module):
             length_preds=None,
             length_latent=None,
             length_input=None,
-            reduction="mean"
-        ):
-        
-        details = self.details(
-            targets,
-            length,
-            latents,
-            alignments,
-            rec,
-            transfer_rec,
-            out_context,
-            length_preds,
-            length_latent,
-            length_input,
-            reduction
-        )
-        return details["loss"]
-
-    def details(
-            self,
-            targets,
-            length,
-            latents,
-            alignments,
-            rec,
-            transfer_rec,
-            out_context=None,
-            length_preds=None,
-            length_latent=None,
-            length_input=None,
+            latents_neg=None,
+            length_latent_neg=None,
             reduction="mean"
         ):
         """Computes the MadMixture loss with the detailed breakdown
@@ -161,12 +142,89 @@ class MadMixtureLoss(nn.Module):
         alignments: dict
             alignments
         rec: dict
-            reconstructions in each modality
+            a str->tensor dictionary with reconstructions in each modality 
+        transfer_rec: dict
+            a (str,str)->tensor dictionary with transfer reconstructions
+        length_preds: dict
+            a str->tensor dictionary with length predictions for each modality
+        length_input: dict
+            a str->tensor dictionary with ground truths for lengths
+        latents_neg: dict
+            a str->tensor dictionary for negative examples
+        length_latent_neg: dict
+            negative example lengths
         reduction : str
             Options are 'mean', 'batch'
             See pytorch for 'mean' The 'batch' option returns
             one loss per item in the batch
 
+        Returns
+        -------
+        loss: torch.Tensor
+            the total loss value
+        """        
+        details = self.details(
+            targets,
+            length,
+            latents,
+            alignments,
+            rec,
+            transfer_rec,
+            out_context,
+            length_preds,
+            length_latent,
+            length_input,
+            latents_neg,
+            length_latent_neg,
+            reduction
+        )
+        return details["loss"]
+
+    def details(
+            self,
+            targets,
+            length,
+            latents,
+            alignments,
+            rec,
+            transfer_rec,
+            out_context=None,
+            length_preds=None,
+            length_latent=None,
+            length_input=None,
+            latents_neg=None,
+            length_latent_neg=None,
+            reduction="mean"
+        ):
+        """Computes the MadMixture loss with the detailed breakdown
+        of all loss components
+        
+        Arguments
+        ---------
+        targets: dict
+            the targets to which reconstructions will be compared
+        length: dict
+            the length tensor
+        latents: dict
+            latent representation
+        alignments: dict
+            alignments
+        rec: dict
+            a str->tensor dictionary with reconstructions in each modality 
+        transfer_rec: dict
+            a (str,str)->tensor dictionary with transfer reconstructions
+        length_preds: dict
+            a str->tensor dictionary with length predictions for each modality
+        length_input: dict
+            a str->tensor dictionary with ground truths for lengths
+        latents_neg: dict
+            a str->tensor dictionary for negative examples
+        length_latent_neg: dict
+            negative example lengths
+        reduction : str
+            Options are 'mean', 'batch'
+            See pytorch for 'mean' The 'batch' option returns
+            one loss per item in the batch
 
         Returns
         -------
@@ -201,6 +259,8 @@ class MadMixtureLoss(nn.Module):
         latent_distance_loss, modality_distance_loss = self.compute_latent_distance_loss(
             latents=latents,
             lengths=length_latent,
+            latents_neg=latents_neg,
+            lengths_latent_neg=length_latent_neg,
             reduction=reduction
         )
         modality_distance_loss_details = with_prefix(
@@ -376,7 +436,13 @@ class MadMixtureLoss(nn.Module):
         return weighted_loss(modality_loss, self.modality_weights)
 
 
-    def compute_alignment_loss(self, alignments, lengths_latent, lengths_input, reduction):
+    def compute_alignment_loss(
+            self,
+            alignments,
+            lengths_latent,
+            lengths_input,
+            reduction
+        ):
         """Computes the loss on alignment matrices output by aligner modules,
         such as a guided attention loss
         
@@ -435,7 +501,14 @@ class MadMixtureLoss(nn.Module):
         )
         return alignment_loss, modality_alignment_loss
     
-    def compute_latent_distance_loss(self, latents, lengths, reduction="mean"):
+    def compute_latent_distance_loss(
+            self,
+            latents,
+            lengths,
+            latents_neg,
+            lengths_latent_neg,
+            reduction="mean"
+        ):
         """Computes a distance loss across modalities, which is
         used to ensure that the latent representations of a single
         sample are similar in different modalities
@@ -448,6 +521,12 @@ class MadMixtureLoss(nn.Module):
         lengths: dict
             an str -> tensor dictionary with relative lengths
             for all aligned modalities
+        latents_neg: dict
+            an str -> tensor dictionary with negative example latents
+        lengths_latent_neg: dict
+            an str->tensor dictionary with negative example length
+        reduction : str
+            Options are 'mean', 'batch', ''sum'.
         """
         if self.latent_distance_loss_fn is None:
             # NOTE: In this case, there is nothing to compute, the loss is 0
@@ -465,12 +544,30 @@ class MadMixtureLoss(nn.Module):
             first_alignment = next(iter(latents.values()))
             return torch.tensor(0.).to(first_alignment.device), {}
 
-        modality_latent_distance_loss = {
-            key: self.compute_modality_latent_distance_loss(
-                anchor_latent, anchor_length, sec_latent[key], sec_lengths[key],
-                reduction=reduction)
-            for key in sec_latent            
-        }
+        if latents_neg is None:
+            modality_latent_distance_loss = {
+                key: self.compute_modality_latent_distance_loss(
+                    anchor_latent,
+                    anchor_length,
+                    sec_latent[key],
+                    sec_lengths[key],
+                    reduction=reduction
+                )
+                for key in sec_latent            
+            }
+        else:
+            modality_latent_distance_loss = {
+                key: self.compute_modality_latent_distance_loss_with_neg(
+                    anchor_latent,
+                    anchor_length,
+                    sec_latent[key],
+                    sec_lengths[key],
+                    latents_neg[key],
+                    lengths_latent_neg[key],
+                    reduction=reduction
+                )
+                for key in sec_latent            
+            }
         total_loss = torch.stack(
             list(modality_latent_distance_loss.values())
         ).sum(dim=0)
@@ -485,9 +582,22 @@ class MadMixtureLoss(nn.Module):
         sec_length,
         reduction
     ):
-        # It is important to ensure the lentgths match, and only
-        # unpadded locations are used for loss calculations
-        # Find the max length of anchor and secondary modalities
+        """Computes the latent distance loss for a single modality - used for 2-point
+        losses, such as MSE or cosine distance
+        
+        Arguments
+        ---------
+        anchor_latent: torch.Tensor
+            the latent representation in the anchor modality
+        anchor_length: torch.Tensor
+            absolute latent lengths in the anchor modality
+        sec_latent: torch.Tensor
+            the latent representation in a secondary modality
+        sec_length: torch.Tensor
+            absolute latent lengths in a secondary modality
+        reduction: str
+            Options are 'mean', 'batch', ''sum'.
+        """
         sec_latent_trunc, anchor_latent_trunc = truncate(
             sec_latent, anchor_latent, torch.inf
         )
@@ -498,13 +608,64 @@ class MadMixtureLoss(nn.Module):
         length = torch.minimum(
             anchor_length * anchor_max_length / max_len_trunc, 
             sec_length * sec_max_length / max_len_trunc
-        ).clamp(0., 1.)
+        )
         return self.latent_distance_loss_fn(
             sec_latent_trunc,
             anchor_latent_trunc,
             length=length,
             reduction=reduction
         )
+    
+    def compute_modality_latent_distance_loss_with_neg(
+        self,
+        anchor_latent,
+        anchor_length,
+        sec_latent,
+        sec_length,
+        sec_latent_neg,
+        sec_length_neg,
+        reduction
+    ):
+        """Computes the latent distance loss for a single modality - used for 2-point
+        losses, such as MSE or cosine distance
+        
+        Arguments
+        ---------
+        anchor_latent: torch.Tensor
+            the latent representation in the anchor modality
+        anchor_length: torch.Tensor
+            absolute latent lengths in the anchor modality
+        sec_latent: torch.Tensor
+            the latent representation in a secondary modality
+        sec_length: torch.Tensor
+            absolute latent lengths in a secondary modality
+        reduction: str
+            Options are 'mean', 'batch', ''sum'.
+        """        
+        sec_latent_trunc, anchor_latent_trunc = truncate(
+            sec_latent, anchor_latent, torch.inf
+        )
+        anchor_max_length = anchor_latent_trunc.size(1)
+        sec_max_length = sec_latent.size(1)
+        max_len_trunc = sec_latent_trunc.size(1)
+        # Recalculate the lengths post-truncation
+        length = torch.minimum(
+            anchor_length * anchor_max_length / max_len_trunc, 
+            sec_length * sec_max_length / max_len_trunc
+        )
+        sec_neg_len_match = tile_to_length(
+            batch=sec_latent_neg,
+            lengths=sec_length_neg,
+            target_lengths=length
+        )
+        return self.latent_distance_loss_fn(
+            anchor=anchor_latent_trunc,
+            positive=sec_latent_trunc,
+            negative=sec_neg_len_match,
+            length=length / sec_max_length,
+            reduction=reduction
+        )        
+
     
     def compute_length_loss(self, length_preds, latents, length, reduction):
         """Computes the length loss
@@ -614,7 +775,7 @@ class ContextAlignmentLoss(nn.Module):
         -------
         result: torch.Tensor
             the loss value
-        """
+        """ 
         rel_lengths = lengths[self.anchor]
         alignments = out_context[key]
         _, max_output_length, max_input_length = alignments.shape
@@ -909,3 +1070,36 @@ def with_prefix_transfer(prefix, loss_dict):
         f"{prefix}_{src}_to_{tgt}_loss": value
         for (src, tgt), value in loss_dict.items()
     }
+
+
+def tile_to_length(batch, lengths, target_lengths):
+    """Tiles a batch to match the specified length. This is used for negative examples,
+    which could be shorter than the target, for calculating triplet losses
+    
+    Arguments
+    ---------
+    batch: torch.Tensor
+        a (batch x length x feature) batch
+    
+    lengths: torch.Tensor
+        the actual lengths of a batch
+    
+    target_lengths: torch.Tensor
+        the lengths to which examples will be tiled
+
+
+    Returns
+    -------
+    result: torch.Tensor
+        a batch tiled to the specified length
+    """
+    max_ratio = (target_lengths / lengths).max().ceil().int().item()
+    batch_tiled, _ = concat_padded_features(
+        feats=[batch] * max_ratio,
+        lengths=[lengths / batch.size(1)] * max_ratio,
+        dim=1
+    )
+    max_target_length = target_lengths.max().int().item()
+    result = batch_tiled[:, :max_target_length, :]
+    mask = length_to_mask(target_lengths, max_target_length).unsqueeze(-1)
+    return result * mask

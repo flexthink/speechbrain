@@ -18,6 +18,7 @@ from collections import namedtuple
 from speechbrain.dataio.dataset import apply_overfit_test, FilteredSortedDynamicItemDataset
 from speechbrain.lobes.models.madmixture.evaluation import EvalBatch
 from speechbrain.utils.train_logger import TensorLogger
+from speechbrain.dataio.negative import add_negative
 from pprint import pformat
 from tqdm.contrib import tqdm
 
@@ -57,12 +58,20 @@ class MadMixtureBrain(sb.Brain):
         """
         # We first move the batch to the appropriate device.
         batch = batch.to(self.device)
-        feats, targets, lengths, context = self.prepare_features(stage, batch)
+        feats, targets, lengths, context, feats_neg, lengths_neg = self.prepare_features(stage, batch)
         out = self.modules.model.train_step(
             feats, lengths, context, transfer=self.hparams.transfer_loss_enabled)
+        latents_neg, lengths_latent_neg = None, None
+        if self.hparams.negative_samples_enabled:
+            latents_neg, _, _, lengths_latent_neg, _ = self.modules.model.latent(
+                inputs=feats_neg,
+                lengths=lengths_neg,
+                context=context
+            )
         if self.hparams.enable_latent_log:
             for key, mod_latent in out.latents.items():
                 self.latent_logger[key].append(mod_latent)
+
         return MadMixturePredictions(
             latents=out.latents,
             alignments=out.alignments,
@@ -78,6 +87,8 @@ class MadMixtureBrain(sb.Brain):
             lengths_input=out.lengths_input,
             lengths_latent=out.lengths_latent,
             lengths_dec=out.lengths_dec,
+            latents_neg=latents_neg,
+            lengths_latent_neg=lengths_latent_neg
         )
     
     def fit(
@@ -203,10 +214,24 @@ class MadMixtureBrain(sb.Brain):
         ---------
         stage : sb.Stage
             Currently executing stage.
-        wavs : tuple
-            The input signals (tensor) and their lengths (tensor).
+        batch : speechbrain.dataio.batch.PaddedBatch
+            An input batch
+
+        Returns
+        -------
+        feats: dict
+            Computed input features, in each modality
+        targets: dict
+            Computed targets in each modality
+        lengths: dict
+            Relative lengths, in the input space
+        context: dict
+            Context features (not used in inputs/outputs)
+        feats_neg: dict
+            Features from negative examples
+        lengths_neg: dict
+            Lengths from negative examples
         """
-        wavs, wav_lens = batch.sig
 
         #TODO: This can be made more modular
         # Feature computation and normalization
@@ -214,7 +239,10 @@ class MadMixtureBrain(sb.Brain):
         targets = {}
         lengths = {}
         feats_audio = None
+        feats_neg = None
+        lengths_neg = None
         if self.hparams.audio_enabled:
+            wavs, wav_lens = batch.sig
             feats_audio = self.hparams.compute_features(wavs)
             if self.hparams.compute_features_transpose:
                 feats_audio = feats_audio.transpose(-1, -2)
@@ -239,6 +267,9 @@ class MadMixtureBrain(sb.Brain):
             lengths["phn"] = batch.phn_encoded_eos.lengths
             feats_phn_emb = self.hparams.phn_emb(batch.phn_encoded_bos.data)
 
+        if self.hparams.negative_samples_enabled:
+            feats_neg, lengths_neg = self.prepare_features_negative(batch)
+
         context = {
             "audio": feats_audio,
             "char_emb": feats_char_emb,
@@ -246,7 +277,32 @@ class MadMixtureBrain(sb.Brain):
         }
 
 
-        return feats, targets, lengths, context
+        return feats, targets, lengths, context, feats_neg, lengths_neg
+    
+    def prepare_features_negative(self, batch):
+        feats_neg = {}
+        lengths_neg = {}
+
+        if self.hparams.audio_enabled:
+            wavs, wav_lens = batch.sig_neg
+            feats_audio = self.hparams.compute_features(wavs)
+            if self.hparams.compute_features_transpose:
+                feats_audio = feats_audio.transpose(-1, -2)
+            for norm in self.modules.normalize:
+                feats_audio = norm(feats_audio, wav_lens)        
+            feats_neg["audio"] = feats_audio
+            lengths_neg["audio"] = wav_lens
+
+        if self.hparams.char_enabled:
+            feats_neg["char"] = batch.char_encoded_neg.data
+            lengths_neg["char"] = batch.char_encoded_neg.lengths
+        
+        if self.hparams.phn_enabled:
+            feats_neg["phn"] = batch.char_encoded_neg.data
+            lengths_neg["phn"] = batch.char_encoded_neg.lengths
+
+        return feats_neg, lengths_neg
+
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss given the predicted and targeted outputs. We here
@@ -278,6 +334,8 @@ class MadMixtureBrain(sb.Brain):
             length_preds=predictions.length_preds,
             length_latent=predictions.lengths_latent,
             length_input=predictions.lengths_input,
+            latents_neg=predictions.latents_neg,
+            length_latent_neg=predictions.lengths_latent_neg,
         )
         if not torch.isfinite(loss):
             logger.warn("Non-finite loss encountered")
@@ -292,6 +350,8 @@ class MadMixtureBrain(sb.Brain):
                 length_preds=predictions.length_preds,
                 length_latent=predictions.lengths_latent,
                 length_input=predictions.lengths_input,
+                latents_neg=predictions.latents_neg,
+                length_latent_neg=predictions.lengths_latent_neg,
             )
             details_log = {key: value.item() for key, value in details.items()}
             logger.warn("Details: %s", pformat(details_log))
@@ -310,7 +370,9 @@ class MadMixtureBrain(sb.Brain):
                 length_preds=predictions.length_preds,
                 length_latent=predictions.lengths_latent,
                 length_input=predictions.lengths_input,
-                reduction="batch"
+                latents_neg=predictions.latents_neg,
+                length_latent_neg=predictions.lengths_latent_neg,
+                reduction="batch",
             )
         return loss
     
@@ -551,7 +613,9 @@ MadMixturePredictions = namedtuple(
         "lengths",
         "lengths_input",
         "lengths_latent",
-        "lengths_dec"
+        "lengths_dec",
+        "latents_neg",
+        "lengths_latent_neg"
     ]
 )
 
@@ -577,6 +641,15 @@ LIBRISPEECH_OUTPUT_KEYS_DYNAMIC = LIBRISPEECH_OUTPUT_KEYS + [
     "char_encoded_bos",
     "char_encoded_eos"
 ]
+
+LIBRISPEECH_OUTPUT_KEYS_NEGATIVE_SRC = [
+    "sig",
+    "phn_encoded",
+    "char_encoded"
+]
+
+LIBRISPEECH_OUTPUT_KEYS_NEGATIVE = [
+    f"{key}_neg" for key in LIBRISPEECH_OUTPUT_KEYS_NEGATIVE_SRC]
 
 def dataio_prepare(hparams):
     """This function prepares the datasets to be used in the brain class.
@@ -703,6 +776,8 @@ def dataio_prepare(hparams):
         datasets[dataset] = dynamic_dataset
         hparams[f"{dataset}_dataloader_opts"]["shuffle"] = False
     datasets = apply_overfit_test(
+        hparams, datasets)
+    datasets = apply_negative(
         hparams, datasets)
 
     eval_samples, vis_samples = select_samples(datasets, hparams)
@@ -841,6 +916,19 @@ def read_token_list(file_name):
         raise ValueError(f"Token file {file_name} not found")
     with open(file_name) as token_file:
         return [line.strip("\r\n") for line in token_file if line]
+    
+
+def apply_negative(hparams, datasets):
+    """Adds negative samples, if enabled"""
+    if hparams["negative_samples_enabled"]:
+        datasets = {
+            key: add_negative(dataset, LIBRISPEECH_OUTPUT_KEYS_NEGATIVE_SRC)
+            for key, dataset in datasets.items()
+        }
+        for dataset in datasets.values():
+            dataset.set_output_keys(
+                LIBRISPEECH_OUTPUT_KEYS_DYNAMIC + LIBRISPEECH_OUTPUT_KEYS_NEGATIVE)
+    return datasets
     
 
 def init_sequence_encoder(hparams, prefix):
