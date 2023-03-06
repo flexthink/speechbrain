@@ -217,6 +217,7 @@ madmixture_audio_weight: 2.0
 madmixture_phn_weight: 1.0
 madmixture_char_weight: 1.0
 madmixture_triplet_loss_margin: 0.5
+madmixture_triplet_loss_weight: 0.5
 madmixture_context_loss_weight: 1.0
 
 # The first object passed to the Brain class is this "Epoch Counter"
@@ -414,8 +415,9 @@ compute_cost_alignment: !new:speechbrain.nnet.loss.madmixture_loss.AlignmentLoss
 compute_cost_distance: !apply:speechbrain.utils.hparams.choice
     value: !ref <negative_samples_enabled>
     choices:
-        True: !name:speechbrain.nnet.losses.triplet_loss
+        True: !name:speechbrain.nnet.losses.distance_triplet_loss
             margin: !ref <madmixture_triplet_loss_margin>
+            triplet_loss_weight: !ref <madmixture_triplet_loss_weight>
         False: !name:speechbrain.nnet.losses.mse_loss
 compute_cost_context_alignment: !new:speechbrain.nnet.loss.madmixture_loss.ContextAlignmentLoss
     keys:
