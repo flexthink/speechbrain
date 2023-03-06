@@ -840,7 +840,6 @@ def select_sample(dataset, sample_size, seed):
     hparams: dict 
         hyperparameters
     """
-    sample_size = hparams["eval_vis_sample_size"]
     generator = torch.Generator()
     generator.manual_seed(seed)
     indexes = torch.randperm(len(dataset.data_ids), generator=generator)[:sample_size]

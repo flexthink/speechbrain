@@ -1502,7 +1502,7 @@ def triplet_loss(
 def _distance_l2_squared(x, y):
     """Computes the L2-squared distance between two vectors"""
     elementwise_distance = (x - y)**2
-    return elementwise_distance.sum(dim=-1)
+    return elementwise_distance.mean(dim=-1)
 
 
 def distance_triplet_loss(

@@ -28,11 +28,11 @@ latent_folder: !ref <output_folder>/latent
 use_tensorboard: True
 tensorboard_logs: !ref <output_folder>/logs
 enable_train_metrics: True
-enable_latent_log: True
+enable_latent_log: False
 train_metrics_interval: 10
 train_log_interval: 1
 skip_checkpoint: False
-negative_samples_enabled: false
+negative_samples_enabled: False
 
 # Path where data manifest files will be stored. The data manifest files are created by the
 # data preparation script
@@ -73,10 +73,10 @@ bos_index: 0
 eos_index: 1
 char_min_decode_ratio: 0
 char_max_decode_ratio: 1.0
-char_beam_size: 1
+char_beam_size: 3
 phn_min_decode_ratio: 0
 phn_max_decode_ratio: 1.0
-phn_beam_size: 1
+phn_beam_size: 3
 
 
 
@@ -202,9 +202,9 @@ modalities:
 
 #MAdmixture model parameters
 madmixture_rec_loss_weight: 1.0
-madmixture_transfer_loss_weight: 1.0
-madmixture_latent_dim: 64
-madmixture_latent_distance_loss_weight: 0.1
+madmixture_transfer_loss_weight: 2.0
+madmixture_latent_dim: 128
+madmixture_latent_distance_loss_weight: 1.0
 madmixture_align_attention_loss_weight: 5.0
 madmixture_length_loss_beta: 0.25
 madmixture_length_loss_max_weight: 100.0
