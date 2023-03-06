@@ -201,6 +201,8 @@ modalities:
     - phn
 
 #MAdmixture model parameters
+madmixture_rec_loss_weight: 1.0
+madmixture_transfer_loss_weight: 1.0
 madmixture_latent_dim: 64
 madmixture_latent_distance_loss_weight: 0.1
 madmixture_align_attention_loss_weight: 5.0
@@ -215,6 +217,7 @@ madmixture_audio_weight: 2.0
 madmixture_phn_weight: 1.0
 madmixture_char_weight: 1.0
 madmixture_triplet_loss_margin: 0.5
+madmixture_context_loss_weight: 1.0
 
 # The first object passed to the Brain class is this "Epoch Counter"
 # which is saved by the Checkpointer so that training can be resumed
@@ -436,6 +439,8 @@ compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
         audio: !ref <audio_enabled>
         char: !ref <char_enabled>
         phn: !ref <phn_enabled>
+    rec_loss_weight: !ref <madmixture_rec_loss_weight>
+    transfer_loss_weight: !ref <madmixture_transfer_loss_weight>
     rec_loss_fn:
         audio: !ref <compute_cost_rec_audio>
         phn: !ref <compute_cost_rec_char>
@@ -448,6 +453,7 @@ compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
     align_attention_loss_fn: !ref <compute_cost_alignment>
     latent_distance_loss_weight: !ref <madmixture_latent_distance_loss_weight>
     latent_distance_loss_fn: !ref <compute_cost_distance>
+    context_loss_weight: !ref <madmixture_context_loss_weight>
     context_loss_fn: !ref <compute_cost_context_alignment>
     length_loss_weight: !ref <madmixture_length_loss_weight>
     length_loss_fn: !ref <compute_cost_length>
