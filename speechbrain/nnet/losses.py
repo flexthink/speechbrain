@@ -1448,10 +1448,10 @@ def _distance_diff_loss(predictions, targets, beta, max_weight, masked_penalty=0
     return (loss_weights * predictions).unsqueeze(-1)
 
 
-def _distance_l2(x, y):
+def _distance_l2_squared(x, y):
     """Computes the L2-squared distance between two vectors"""
     elementwise_distance = (x - y)**2
-    return elementwise_distance.sum(dim=-1).sqrt()
+    return elementwise_distance.sum(dim=-1)
 
 
 def triplet_loss(
@@ -1489,7 +1489,7 @@ def triplet_loss(
         the triplet loss
     """
     if not distance:
-        distance = _distance_l2
+        distance = _distance_l2_squared
     loss = torch.maximum(
         torch.tensor(0., device=anchor.device),
         margin + distance(anchor, positive) - distance(anchor, negative)
