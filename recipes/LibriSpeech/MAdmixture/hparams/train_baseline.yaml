@@ -423,7 +423,11 @@ compute_cost_context_alignment: !new:speechbrain.nnet.loss.madmixture_loss.Conte
     keys:
     - audio_decoder_alignments
     - phn_to_audio_decoder_alignments
+    - phn_to_char_decoder_alignments
     - char_to_audio_decoder_alignments
+    - char_to_phn_decoder_alignments
+    - audio_to_phn_decoder_alignments
+    - audio_to_char_decoder_alignments
     loss_fn: !new:speechbrain.nnet.loss.guidedattn_loss.GuidedAttentionLoss
     anchor: audio
 
@@ -511,8 +515,12 @@ evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
         latent: !name:speechbrain.lobes.models.madmixture.LatentSpaceAnalysisTask
             context_alignment_keys:
             - audio_decoder_alignments
+            - audio_to_phn_decoder_alignments
+            - audio_to_char_decoder_alignments
             - char_to_audio_decoder_alignments
+            - char_to_phn_decoder_alignments
             - phn_to_audio_decoder_alignments
+            - phn_to_char_decoder_alignments
 
 # Objects in "modules" dict will have their parameters moved to the correct
 # device, as well as having train()/eval() called on them by the Brain class
