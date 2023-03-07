@@ -9,6 +9,7 @@ import os
 import json
 import torch
 import logging
+import math
 from dataclasses import dataclass
 from collections import namedtuple
 from speechbrain.utils.metric_stats import ErrorRateStats
@@ -330,7 +331,7 @@ class ModalityTransferTask(EvaluationTask):
             self.evaluators[src, tgt].report(tgt_path)
 
 
-LATENT_DEFAULT_FIGSIZE = (16, 16)
+LATENT_DEFAULT_FIGSIZE = (32, 16)
 ALGNMENT_DEFAULT_FIGSIZE = (16, 8)
 
 
@@ -352,6 +353,7 @@ class LatentSpaceAnalysisTask(EvaluationTask):
             context_alignment_keys=None,
             figsize_latent=LATENT_DEFAULT_FIGSIZE,
             figsize_aligment=ALGNMENT_DEFAULT_FIGSIZE,
+            columns_alignment=3,
         ):
         super().__init__(model)
         self.ids = []
@@ -371,6 +373,7 @@ class LatentSpaceAnalysisTask(EvaluationTask):
         self.context_alignment_keys = set(context_alignment_keys)
         self.figsize_latent = figsize_latent
         self.figsize_alignment = figsize_aligment
+        self.columns_alignment = columns_alignment
 
         self.plt = _get_matplotlib()
 
@@ -619,9 +622,10 @@ class LatentSpaceAnalysisTask(EvaluationTask):
         fig = self.plt.figure(figsize=self.figsize_alignment)
         try:
             count = len(alignments)
+            rows = math.ceil(count / self.columns_alignment)
             fig.suptitle(f"Context: {sample_id}")
-            for idx, (key, alignment) in enumerate(alignments.items()):
-                ax = fig.add_subplot(1, count, idx + 1)
+            for idx, (key, alignment) in enumerate(alignments.items(), start=1):
+                ax = fig.add_subplot(self.columns_alignment, rows, idx)
                 ax.set_title(f"{key}", fontsize=10)
                 im = ax.imshow(alignment, aspect="auto", origin="lower")
                 fig.colorbar(im, orientation="vertical")
@@ -909,8 +913,8 @@ class SpectrogramEvaluator(OutputEvaluator):
         self.save_spectrograms_raw(path)
         if self.plt is not None:
             self.save_spectrograms_image(path)
-        if self.vocoder_fn is not None:
-            self.save_audio(path)
+#        if self.vocoder_fn is not None:
+#            self.save_audio(path)
     
 
     def save_spectrograms_image(self, path):

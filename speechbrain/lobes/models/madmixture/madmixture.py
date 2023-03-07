@@ -5,6 +5,7 @@ Authors
  * Artem Ploujnikov 2022-2023
 """
 import torch
+import torch.nn.functional as F
 from collections import namedtuple
 from torch import nn, Tensor
 from typing import Dict, Tuple
@@ -1132,8 +1133,25 @@ class PQAttentionalAligner(Aligner):
         the number of projection (post-attention) layers
     proj_kernel_size: int|list
         the projection kernel size
+    use_content: bool
+        if set to True, the aligner will use a scaled-up interpolated
+        batch
+    interpolation_mode: str
+        the interpolation mode to use (see torch.nn.functional.interpolate)
     """
-    def __init__(self, dim, in_dim, max_scale=2., nhead=1, dropout=0., proj_layers=1, proj_kernel_size=3):
+    def __init__(
+            self,
+            dim,
+            in_dim,
+            max_scale=2.,
+            nhead=1,
+            dropout=0.,
+            proj_layers=1,
+            proj_kernel_size=3,
+            use_content=True,
+            interpolation_mode="nearest"
+
+        ):
         super().__init__()
         self.dim = dim
         self.feature_scale = Conv1d(
@@ -1174,7 +1192,8 @@ class PQAttentionalAligner(Aligner):
         self.out_norm = LayerNorm(
             input_shape=[None, None, dim]
         )
-
+        self.use_content = use_content
+        self.interpolation_mode = interpolation_mode
 
     def forward(self, key, enc_out, lengths, anchor=None, anchor_scale=None, eos_mark=None):
         """Computes alignments using an attention module
@@ -1241,9 +1260,21 @@ class PQAttentionalAligner(Aligner):
         out_mask = length_to_mask(
             mod_enc_out_scaled_length_abs, mod_enc_out_scaled_max_len).unsqueeze(-1)
         
-        queries = self.pos_emb(
-            torch.zeros(batch_size, queries_max_len, self.dim)
+        pos_emb = self.pos_emb(
+            torch.zeros(batch_size, queries_max_len, self.dim, device=mod_enc_out_scaled.device)
         )
+
+        if self.use_content:
+            queries = multiscale(
+                mod_enc_out_scaled,
+                mod_enc_out_scaled_length_abs,
+                anchor_length_queries_abs,
+                mode=self.interpolation_mode
+            )
+            queries = queries + pos_emb
+        else:
+            queries = pos_emb        
+            
         queries_mask = length_to_mask(
             anchor_length_queries_abs, queries_max_len).unsqueeze(-1)
         
@@ -1259,7 +1290,7 @@ class PQAttentionalAligner(Aligner):
         )
         output_proj = self.proj(output)
         output_proj = self.out_norm(output)
-        return output_proj, alignment, anchor_length_queries_abs, mod_enc_out_scaled_length_abs
+        return output_proj, alignment, anchor_length_queries_abs, mod_enc_out_scaled_length_abs    
 
 
 def get_attention_mask(in_mask, out_mask):
@@ -1526,3 +1557,35 @@ class EndOfSequenceMarker(nn.Module):
             length_mode=self.length_mode
         )
         return x_eos, length_eos
+
+def multiscale(src, src_lengths, tgt_lengths, mode="nearest"):
+    """Scales a padded batch to the specified target lengths
+    
+    Arguments
+    ---------
+    src: torch.Tensor
+        the source tensor
+    src_lengths: torch.Tensor
+        the source tensor lengths
+    tgt_lengths
+        the lengths to which data items will be scaled
+    mode: str
+        the interpolation mode
+        (see torch.nn.functional.interpolate)
+    """
+    batch_size, _, feature_size = src.shape
+    tgt_max_length = tgt_lengths.max().int().item()
+    src = src.transpose(1, 2)
+    out = torch.zeros(
+        (batch_size, feature_size, tgt_max_length),
+        device=src.device)
+    for idx, (item, src_len, tgt_len) in enumerate(
+        zip(src, src_lengths.int(), tgt_lengths.int())):
+       src_scaled = F.interpolate(
+           item[None, :, :src_len],
+           size=tgt_len,
+           mode=mode
+       )
+       out[idx, :, :tgt_len] = src_scaled.squeeze(0)
+    out = out.transpose(1, 2)
+    return out

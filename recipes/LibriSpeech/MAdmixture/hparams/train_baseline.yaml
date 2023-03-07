@@ -219,6 +219,8 @@ madmixture_char_weight: 1.0
 madmixture_triplet_loss_margin: 0.5
 madmixture_triplet_loss_weight: 0.5
 madmixture_context_loss_weight: 1.0
+madmixture_align_use_content: True
+madmixture_align_interpolation_mode: nearest
 
 # The first object passed to the Brain class is this "Epoch Counter"
 # which is saved by the Checkpointer so that training can be resumed
@@ -365,16 +367,22 @@ audio_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <audio_enc_dnn_neurons>
     dropout: !ref <audio_aligner_dropout>
+    use_content: !ref <madmixture_align_use_content>
+    interpolation_mode: !ref <madmixture_align_interpolation_mode>
 
 char_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <char_enc_neurons>
     dropout: !ref <char_aligner_dropout>
+    use_content: !ref <madmixture_align_use_content>
+    interpolation_mode: !ref <madmixture_align_interpolation_mode>
 
 phn_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
     dim: !ref <madmixture_latent_dim>
     in_dim: !ref <char_enc_neurons>
     dropout: !ref <phn_aligner_dropout>
+    use_content: !ref <madmixture_align_use_content>
+    interpolation_mode: !ref <madmixture_align_interpolation_mode>
 
 vocoder: !name:speechbrain.pretrained.interfaces.HIFIGAN.from_hparams
     source: !ref <vocoder_model>
@@ -422,6 +430,8 @@ compute_cost_distance: !apply:speechbrain.utils.hparams.choice
 compute_cost_context_alignment: !new:speechbrain.nnet.loss.madmixture_loss.ContextAlignmentLoss
     keys:
     - audio_decoder_alignments
+    - char_decoder_alignments
+    - phn_decoder_alignments
     - phn_to_audio_decoder_alignments
     - phn_to_char_decoder_alignments
     - char_to_audio_decoder_alignments
@@ -515,6 +525,8 @@ evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
         latent: !name:speechbrain.lobes.models.madmixture.LatentSpaceAnalysisTask
             context_alignment_keys:
             - audio_decoder_alignments
+            - char_decoder_alignments
+            - phn_decoder_alignments
             - audio_to_phn_decoder_alignments
             - audio_to_char_decoder_alignments
             - char_to_audio_decoder_alignments
