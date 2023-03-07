@@ -427,17 +427,12 @@ compute_cost_distance: !apply:speechbrain.utils.hparams.choice
             margin: !ref <madmixture_triplet_loss_margin>
             triplet_loss_weight: !ref <madmixture_triplet_loss_weight>
         False: !name:speechbrain.nnet.losses.mse_loss
+
 compute_cost_context_alignment: !new:speechbrain.nnet.loss.madmixture_loss.ContextAlignmentLoss
     keys:
-    - audio_decoder_alignments
-    - char_decoder_alignments
-    - phn_decoder_alignments
-    - phn_to_audio_decoder_alignments
-    - phn_to_char_decoder_alignments
-    - char_to_audio_decoder_alignments
-    - char_to_phn_decoder_alignments
-    - audio_to_phn_decoder_alignments
-    - audio_to_char_decoder_alignments
+        audio_decoder_alignments: audio
+        char_decoder_alignments: char
+        phn_decoder_alignments: phn
     loss_fn: !new:speechbrain.nnet.loss.guidedattn_loss.GuidedAttentionLoss
     anchor: audio
 

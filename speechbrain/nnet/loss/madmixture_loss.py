@@ -289,7 +289,8 @@ class MadMixtureLoss(nn.Module):
         if self.context_loss_fn is not None:
             context_loss, component_context_loss, weighted_context_loss = self.context_loss_fn(                
                 out_context=out_context,
-                lengths=length,
+                latent_lengths=length_latent,
+                target_lengths=length,
                 reduction=reduction
             )
             context_loss_details = with_prefix(
@@ -725,15 +726,17 @@ class ContextAlignmentLoss(nn.Module):
         self.weights = weights
         self.anchor = anchor
 
-    def forward(self, out_context, lengths, reduction="mean"):
+    def forward(self, out_context,  latent_lengths, target_lengths, reduction="mean"):
         """Computes the alignment loss
         
         Arguments
         ---------
         out_context: dict
             output context keys containing alignments
-        lengths: dict
-            sequence lengths
+        latent_lengths: dict
+            sequence lengths in the latent space
+        target_lengtsh: dict
+            target lengths
         reduction: str
             reduction type
 
@@ -748,22 +751,25 @@ class ContextAlignmentLoss(nn.Module):
             weights supplied in the constructor
         """
         component_context_loss = {
-            key: self.get_component(key, out_context, lengths, reduction)
-            for key in self.keys
-            if key in out_context
+            context_key: self.get_component(
+                context_key, out_context, latent_lengths[mod_key],
+                target_lengths[mod_key], reduction
+            )
+            for context_key, mod_key in self.keys.items()
+            if context_key in out_context
         }
         context_loss, weighted_context_loss = weighted_loss(
             component_context_loss, self.weights
         )
         return context_loss, component_context_loss, weighted_context_loss
     
-    def get_component(self, key, out_context, lengths, reduction="mean"):
+    def get_component(self, key, out_context, latent_lengths, target_lengths, reduction="mean"):
         """Computes a single component of the loss
 
         Arguments
         ---------
         key: str
-            the conetxt key
+            the context key
         out_context: dict
             the output context
         lengths: dict
@@ -776,15 +782,12 @@ class ContextAlignmentLoss(nn.Module):
         result: torch.Tensor
             the loss value
         """ 
-        rel_lengths = lengths[self.anchor]
         alignments = out_context[key]
-        _, max_output_length, max_input_length = alignments.shape
-        input_lengths = rel_lengths * max_input_length
-        output_lengths = rel_lengths * max_output_length        
+        target_lengths_abs = (target_lengths * alignments.size(1)).round().int()
         return self.loss_fn(
             attention=alignments, 
-            input_lengths=input_lengths,
-            target_lengths=output_lengths,
+            input_lengths=latent_lengths,
+            target_lengths=target_lengths_abs,
             reduction=reduction
         )
 
