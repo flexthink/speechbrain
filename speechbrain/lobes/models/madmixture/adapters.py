@@ -203,7 +203,7 @@ class RNNDecoder(nn.Module):
             input_value, latent, wav_len=latent_length)
         output = self.lin_out(output)
         output = self.act(output)
-        out_context = {"alignments": alignments}
+        out_context = {"decoder_alignments": alignments}
         return output, out_context
     
     def _add_latent_bos(self, latent, latent_length):
