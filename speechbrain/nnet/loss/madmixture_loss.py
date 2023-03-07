@@ -783,10 +783,12 @@ class ContextAlignmentLoss(nn.Module):
             the loss value
         """ 
         alignments = out_context[key]
-        target_lengths_abs = (target_lengths * alignments.size(1)).round().int()
+        _, max_len_out, max_len_in = alignments.shape
+        target_lengths_abs = (target_lengths * max_len_out).round().int()
+        latent_lengths_clip = latent_lengths.clip(0, max_len_in)
         return self.loss_fn(
             attention=alignments, 
-            input_lengths=latent_lengths,
+            input_lengths=latent_lengths_clip,
             target_lengths=target_lengths_abs,
             reduction=reduction
         )
