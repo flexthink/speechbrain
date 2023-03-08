@@ -378,12 +378,7 @@ class MadMixture(nn.Module):
         latents = self.mask_latents(latents, lengths_latent)
 
         # Reconstruct
-        if self.anchor_name in lengths_latent:
-            length_dec = lengths_latent[self.anchor_name]
-        else:
-            pred = self.length_predictor(latents[src])
-            length_dec = self.length_predictor.to_lengths(pred)
-        
+        length_dec = self.length_predictor.lengths(latents[src])        
         lengths_latent = {src: length_dec}
 
         rec, out_context = self.decode_single(latents[src], length_dec, tgt=tgt)
