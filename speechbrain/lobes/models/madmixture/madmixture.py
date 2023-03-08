@@ -1433,7 +1433,7 @@ class LinearLengthPredictor(LengthPredictor):
         result: torch.Tensor
             a 1-D tensor of predicted lengths
         """
-        return length_pred.argmax(dim=-1).clamp(1.).round().int()
+        return length_pred.argmax(dim=-1).clamp(1.).round().int() + 1
 
 class GateLengthPredictor(LengthPredictor):
     """A sequence end detector implemented using
