@@ -69,14 +69,14 @@ curriculum_num_samples_valid: 1000
 curriculum_num_samples_test: 1000
 
 # Character and phoneme parameters
-bos_index: 0
-eos_index: 1
+bos_index: 1
+eos_index: 2
 char_min_decode_ratio: 0
-char_max_decode_ratio: 1.0
-char_beam_size: 3
+char_max_decode_ratio: 1.2
+char_beam_size: 1
 phn_min_decode_ratio: 0
-phn_max_decode_ratio: 1.0
-phn_beam_size: 3
+phn_max_decode_ratio: 1.2
+phn_beam_size: 1
 
 
 
@@ -483,6 +483,7 @@ char_beam_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
     min_decode_ratio: !ref <char_min_decode_ratio>
     max_decode_ratio: !ref <char_max_decode_ratio>
     beam_size: !ref <char_beam_size>
+    using_eos_threshold: False
 
 phn_beam_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
     embedding: !ref <phn_emb>
@@ -493,6 +494,8 @@ phn_beam_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
     min_decode_ratio: !ref <phn_min_decode_ratio>
     max_decode_ratio: !ref <phn_max_decode_ratio>
     beam_size: !ref <phn_beam_size>
+    using_eos_threshold: False
+
 
 guided_attention_scheduler: !new:speechbrain.nnet.schedulers.StepScheduler
   initial_value: !ref <madmixture_align_attention_loss_weight>

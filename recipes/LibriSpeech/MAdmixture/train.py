@@ -429,7 +429,7 @@ class MadMixtureBrain(sb.Brain):
                 latents=out.latents,
                 alignments=out.alignments,
                 lengths=out.lengths,
-                targets=out.feats,
+                targets=out.targets,
                 out_context=out.out_context,
                 latents_raw=out.latents_raw,
                 lengths_latent=out.lengths_latent,
@@ -951,8 +951,8 @@ def init_sequence_encoder(hparams, prefix):
     encoder = hparams[f"{prefix}_label_encoder"]
     token_list_file_name = hparams[f"{prefix}_list_file"]
     tokens = read_token_list(token_list_file_name)
-    encoder.add_bos_eos()
     encoder.add_unk()
+    encoder.add_bos_eos()
     encoder.update_from_iterable(tokens, sequence_input=False)
     return encoder
 
