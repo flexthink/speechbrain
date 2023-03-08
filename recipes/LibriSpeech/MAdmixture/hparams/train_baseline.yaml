@@ -139,6 +139,8 @@ amp_multiplier: 0.25 # This scales the amplitude to prevent vocoder noise
 # Vocoder Settings
 vocoder_model: speechbrain/tts-hifigan-libritts-16kHz
 
+# Anchor
+anchor: audio
 
 # Audio Encoder/Decoder Parameters
 audio_enabled: True
@@ -411,7 +413,7 @@ model: !new:speechbrain.lobes.models.madmixture.MadMixture
     length_predictor: !ref <length_predictor>
 
 
-    anchor_name: audio
+    anchor_name: !ref <anchor>
     latent_size: !ref <madmixture_latent_dim>
 
 compute_cost_rec_audio: !name:speechbrain.nnet.losses.mse_loss
@@ -434,7 +436,7 @@ compute_cost_context_alignment: !new:speechbrain.nnet.loss.madmixture_loss.Conte
         char_decoder_alignments: char
         phn_decoder_alignments: phn
     loss_fn: !new:speechbrain.nnet.loss.guidedattn_loss.GuidedAttentionLoss
-    anchor: audio
+    anchor: !ref <anchor>
 
 compute_cost_length: !new:speechbrain.nnet.loss.madmixture_loss.DistanceDiffLengthLoss
     beta: !ref <madmixture_length_loss_beta>
@@ -470,7 +472,7 @@ compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
     length_loss_fn: !ref <compute_cost_length>
     eos_loss_weight: !ref <madmixture_eos_loss_weight>
     eos_loss_fn: !ref <compute_cost_eos>
-    anchor: audio
+    anchor: !ref <anchor>
 
 char_beam_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
     embedding: !ref <char_emb>

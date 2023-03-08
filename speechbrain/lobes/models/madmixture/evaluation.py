@@ -265,7 +265,7 @@ class ModalityTransferTask(EvaluationTask):
         # A single transfer can produce latents from one modality
         # (running an encoder once with its aligner) and then
         # decode to all available targets
-        rec, latents, alignments, enc_out, out_context = self.model.transfer(
+        rec, latents, lengths_latent, alignments, enc_out, out_context = self.model.transfer(
             inputs=inputs,
             lengths=lengths,
             src=src,
@@ -313,8 +313,9 @@ class ModalityTransferTask(EvaluationTask):
                 predict=eval_tgt_rec,
                 target=eval_tgt_targets,
                 latent=eval_src_latents,
-                src_lengths=eval_src_lengths,
-                tgt_lengths=tgt_lengths,
+                lengths_src=eval_src_lengths,
+                lengths_tgt=tgt_lengths,
+                lengths_latent=lengths_latent[src]
             )
 
     def report(self, path):
@@ -659,7 +660,7 @@ class OutputEvaluator:
     samples."""
     vis_samples_only = False
 
-    def append(self, ids, predict, target, latent, src_lengths, tgt_lengths):
+    def append(self, ids, predict, target, latent, lengths_src, lengths_tgt, lengths_latent):
         """Remembers predictions, targets and any associated
         metrics for future reporting
         
@@ -676,13 +677,12 @@ class OutputEvaluator:
             latent representations - useful when using non-trivial
             decoding methods, such as a beam search over autoregressive
             models
-        src_lengths: torch.Tensor
+        lengths_src: torch.Tensor
             source sequence lengths
-        tgt_lengths: torch.Tensor:
+        lengths_tgt: torch.Tensor:
             target sequence lengths
-
-        lengths: torch.Tensor
-            the relative lengths of the ground truths
+        lengths_latent: torch.Tensor
+            latent lengths
         """
         raise NotImplementedError()
     
@@ -715,7 +715,7 @@ class TokenSequenceEvaluator(OutputEvaluator):
         will be removed from sequences
         
     """
-    def __init__(self, decoder=None, hyp=None, ignore_tokens=None):
+    def __init__(self, hyp, decoder=None, ignore_tokens=None):
         self.decoder = decoder
         if isinstance(self.decoder, TextEncoder):
             decoder_fn = self.decoder.decode_ndim
@@ -727,15 +727,13 @@ class TokenSequenceEvaluator(OutputEvaluator):
         self.error_stats = ErrorRateStats(
             mode="generic"
         )
-        if hyp is None:
-            hyp = hyp_argmax
-        elif isinstance(hyp, S2SBaseSearcher):
+        if isinstance(hyp, S2SBaseSearcher):
             hyp = partial(hyp_s2s_search, searcher=hyp)
 
         self.hyp = hyp
         self.ignore_tokens = set(ignore_tokens) if ignore_tokens else None
 
-    def append(self, ids, predict, target, latent, src_lengths, tgt_lengths):
+    def append(self, ids, predict, target, latent, lengths_src, lengths_tgt, lengths_latent):
         """Updates sequence metrics with the data samples provided
         
         Arguments
@@ -751,17 +749,16 @@ class TokenSequenceEvaluator(OutputEvaluator):
             latent representations - useful when using non-trivial
             decoding methods, such as a beam search over autoregressive
             models
-        src_lengths: torch.Tensor
+        lengths_src: torch.Tensor
             source sequence lengths
-        tgt_lengths: torch.Tensor:
+        lengths_tgt: torch.Tensor:
             target sequence lengths
-
-        lengths: torch.Tensor
-            the relative lengths of the ground truths
+        lengths_latent: torch.Tensor
+            latent sequence lengths
         """
-        hyps = self.hyp(predict, src_lengths, latent)
+        hyps = self.hyp(predict, lengths_src, latent, lengths_latent)
         hyps_clean = self._clean(hyps)
-        targets_list = undo_padding(target, tgt_lengths)
+        targets_list = undo_padding(target, lengths_tgt)
         targets_clean = self._clean(targets_list)
         self.error_stats.append(
             ids=ids,
@@ -868,7 +865,7 @@ class SpectrogramEvaluator(OutputEvaluator):
         self.spec_power = spec_power
         self.plt = _get_matplotlib()   
     
-    def append(self, ids, predict, target, latent, src_lengths, tgt_lengths):
+    def append(self, ids, predict, target, latent, lengths_src, lengths_tgt, lengths_latent):
         """Remembers raw outputs for spectrogram plotting
         
         Arguments
@@ -896,10 +893,10 @@ class SpectrogramEvaluator(OutputEvaluator):
         if self.device is None:
             self.device = predict.device
         self.predict.extend(
-            undo_padding_tensor(predict.detach().cpu(), tgt_lengths)
+            undo_padding_tensor(predict.detach().cpu(), lengths_tgt)
         )
         self.target.extend(
-            undo_padding_tensor(target.detach().cpu(), tgt_lengths)
+            undo_padding_tensor(target.detach().cpu(), lengths_tgt)
         )
 
     def report(self, path):
@@ -913,8 +910,8 @@ class SpectrogramEvaluator(OutputEvaluator):
         self.save_spectrograms_raw(path)
         if self.plt is not None:
             self.save_spectrograms_image(path)
-#        if self.vocoder_fn is not None:
-#            self.save_audio(path)
+        if self.vocoder_fn is not None:
+            self.save_audio(path)
     
 
     def save_spectrograms_image(self, path):
@@ -1075,37 +1072,8 @@ def _get_matplotlib():
         return None
 
 
-def hyp_argmax(probs, lengths=None, latent=None, eos_index=None):
-    """A simple hypothesis function selecting the most probable
-    token. It can be used for training or debugging but it is not
-    recommended for final use
 
-    Arguments
-    ---------
-    probs: torch.Tensor
-        a (batch x length x token) tensor of probabilities
-    lengths: torch.Tensor
-        relative lengths of inputs - not used for this method
-    latents: torch.Tensor
-        latent representations - not used for this method
-    eos_token: int
-        the index of the EOS token. If set to None, all sequences
-        will be expected to be complete
-
-    Returns
-    -------
-    hyps: list
-         nested list of decoded sequences
-    """
-    hyps = probs.argmax(-1)
-    if eos_index is None:
-        lengths = torch.ones(hyps.size(0)).float()
-    else:
-        lengths_abs = (hyps == eos_index).argmax(dim=-1)
-        lengths = lengths_abs / hyps.size(1)
-    return undo_padding(hyps, lengths)
-
-def hyp_s2s_search(probs, lengths, latent, searcher):
+def hyp_s2s_search(probs, lengths, latent, lengths_latent, searcher):
     """A hypothesis function that uses an S2S searcher, such
     as a beam search
     
@@ -1117,6 +1085,8 @@ def hyp_s2s_search(probs, lengths, latent, searcher):
         relative lengths of inputs - not used for this method
     latents: torch.Tensor
         latent representations - not used for this method
+    lengths_latent: torch.Tensor
+        latent lengths
     searcher: S2SBaseSearcher
         a sequence-to-sequence searcher
 
@@ -1126,7 +1096,7 @@ def hyp_s2s_search(probs, lengths, latent, searcher):
          nested list of decoded sequences
 
     """
-    hyps, _ = searcher(latent, lengths)
+    hyps, _ = searcher(latent, lengths_latent / latent.size(1))
     return hyps
 
 

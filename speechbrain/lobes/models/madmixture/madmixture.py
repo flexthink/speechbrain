@@ -359,6 +359,8 @@ class MadMixture(nn.Module):
             a str -> tensor dictinaries with reconstructions in all applicable modalities
         latents: dict
             latent representations
+        lengths_latent: dict
+            latent representation lengths
         alignments: dict
             attention alignments, for each modality
         enc_out: dict
@@ -376,14 +378,17 @@ class MadMixture(nn.Module):
         latents = self.mask_latents(latents, lengths_latent)
 
         # Reconstruct
-        decode_length = (
-            lengths_latent[self.anchor_name]
-            if self.anchor_name in lengths_latent
-            else lengths_latent[src]
-        )
-        rec, out_context = self.decode_single(latents[src], decode_length, tgt=tgt)
+        if self.anchor_name in lengths_latent:
+            length_dec = lengths_latent[self.anchor_name]
+        else:
+            pred = self.length_predictor(latents[src])
+            length_dec = self.length_predictor.to_lengths(pred)
+        
+        lengths_latent = {src: length_dec}
 
-        return rec, latents, alignments, enc_out, out_context
+        rec, out_context = self.decode_single(latents[src], length_dec, tgt=tgt)
+
+        return rec, latents, lengths_latent, alignments, enc_out, out_context
 
 
     def decode_multiple(self, latent, lengths, context=None):
