@@ -1380,8 +1380,12 @@ class LinearLengthPredictor(LengthPredictor):
     Arguments
     ---------
     latent_size: int
-        the latent space dimension"""
-    def __init__(self, latent_size):
+        the latent space dimension
+        
+    use_length_mask: bool
+        whether to mask out padded positions
+    """
+    def __init__(self, latent_size, use_length_mask=False):
         super().__init__()
         self.latent_size = latent_size
         self.lin = Linear(
@@ -1389,6 +1393,7 @@ class LinearLengthPredictor(LengthPredictor):
             n_neurons=1
         )
         self.act = nn.Softmax(dim=1)
+        self.use_length_mask = use_length_mask
 
     def forward(self, latent, length=None):
         """Computes the forward pass
@@ -1408,7 +1413,7 @@ class LinearLengthPredictor(LengthPredictor):
         x = latent
         x = self.lin(x)
         x = x.squeeze(-1)
-        if length is not None:
+        if self.use_length_mask and length is not None:
             max_len = latent.size(1)
             mask = length_to_mask(length * max_len, max_len)
             x *= mask

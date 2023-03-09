@@ -72,10 +72,10 @@ curriculum_num_samples_test: 1000
 bos_index: 1
 eos_index: 2
 char_min_decode_ratio: 0
-char_max_decode_ratio: 1.2
+char_max_decode_ratio: 2.0
 char_beam_size: 1
 phn_min_decode_ratio: 0
-phn_max_decode_ratio: 1.2
+phn_max_decode_ratio: 2.0
 phn_beam_size: 1
 
 
