@@ -26,6 +26,7 @@ train_log: !ref <output_folder>/train_log.txt
 reports_folder: !ref <output_folder>/reports
 latent_folder: !ref <output_folder>/latent
 curriculum_datasets_folder: !ref <output_folder>/curriculum_datasets
+curriculum_save_datasets: false
 use_tensorboard: True
 tensorboard_logs: !ref <output_folder>/logs
 enable_train_metrics: True

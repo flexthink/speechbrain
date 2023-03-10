@@ -485,7 +485,6 @@ class MadMixtureBrain(sb.Brain):
         if self.hparams.curriculum_enabled and not self.hparams.overfit_test:
             curriculum = self.hparams.curriculum[stage_key]
             step_id, step = curriculum.apply(epoch)
-            self.update_samples()
 
             logger.info(
                 "%s: Curriculum step %d, using sampling with %d-%d words, %d samples",
@@ -495,14 +494,16 @@ class MadMixtureBrain(sb.Brain):
                 step.get("max_words"),
                 step.get("num_samples")
             )
-            curriculum_dataset_path = os.path.join(
-                self.hparams.curriculum_datasets_folder,
-                stage_key
-            )
+            if self.hparams.curriculum_save_datasets: 
+                curriculum_dataset_path = os.path.join(
+                    self.hparams.curriculum_datasets_folder,
+                    stage_key
+                )
             curriculum.save_dataset(
-                path=curriculum_dataset_path,
+                path=os.path.join(curriculum_dataset_path, str(epoch)),
                 keys=LIBRISPEECH_OUTPUT_KEYS
             )
+        self.update_samples()
         self.hparams.loss_logger.trim(epoch=epoch)
 
     def _create_evaluator(self, stage):
