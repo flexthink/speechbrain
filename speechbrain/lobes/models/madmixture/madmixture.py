@@ -1303,7 +1303,7 @@ class PQAttentionalAligner(Aligner):
 
         if anchor is None:
             queries_max_len = mod_enc_out_scaled.size(1) * self.max_scale
-            anchor_length_queries_abs = torch.ones_like(mod_length)
+            anchor_length_queries_abs = torch.ones_like(mod_length) * queries_max_len
         else:
             queries_max_len = enc_out[anchor].size(1) + 1
             anchor_length_queries_abs = (
