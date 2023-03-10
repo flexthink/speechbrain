@@ -507,10 +507,10 @@ class MadMixtureBrain(sb.Brain):
                 curriculum_dataset_path = os.path.join(
                     self.hparams.curriculum_datasets_folder, stage_key
                 )
-            curriculum.save_dataset(
-                path=os.path.join(curriculum_dataset_path, str(epoch)),
-                keys=LIBRISPEECH_OUTPUT_KEYS,
-            )
+                curriculum.save_dataset(
+                    path=os.path.join(curriculum_dataset_path, str(epoch)),
+                    keys=LIBRISPEECH_OUTPUT_KEYS,
+                )
         self.update_samples()
         self.hparams.loss_logger.trim(epoch=epoch)
 
