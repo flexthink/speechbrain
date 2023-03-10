@@ -4,8 +4,14 @@ Utilities for curriculum learning
 Authors
 * Artem Ploujnikov 2022
 """
+import os
 import torch
 import speechbrain as sb
+import logging
+from speechbrain.utils import checkpoints
+
+logger = logging.getLogger(__name__)
+
 from speechbrain.dataio.dataset import (
     DynamicItemDataset,
     FilteredSortedDynamicItemDataset,
@@ -51,8 +57,8 @@ class CurriculumSpeechDataset(DynamicItemDataset):
     def __init__(
         self,
         from_dataset,
-        min_words=1,
-        max_words=3,
+        min_words=None,
+        max_words=None,
         num_samples=None,
         sample_rate=16000,
         generator=None,
@@ -69,11 +75,17 @@ class CurriculumSpeechDataset(DynamicItemDataset):
         self.data_id_indices = {
             data_id: idx for idx, data_id in enumerate(self.data_ids)
         }
-        self.sample_segments(self.base_dataset)
+        self._pipeline_is_setup = False
+        if (
+            min_words is not None
+            or max_words is not None
+            or num_samples is not None
+        ):
+            self.sample_segments()
         self.setup_pipeline()
         self.pipeline = PipelineWrapper(self.pipeline, SAMPLE_OUTPUTS)
-
-    def sample_segments(self, dataset):
+            
+    def sample_segments(self, dataset=None):
         """Samples parts of the audio file at specific word boundaries
 
         Arguments
@@ -83,6 +95,8 @@ class CurriculumSpeechDataset(DynamicItemDataset):
         """
         # Exclude samples than have fewer
         # words than the minimum
+        if dataset is None:
+            dataset = self.base_dataset
         dataset = dataset.filtered_sorted(
             key_min_value={"wrd_count": self.min_words}
         )
@@ -199,7 +213,7 @@ class CurriculumSpeechDataset(DynamicItemDataset):
             phn = phn[phn_from:phn_to]
             yield phn
 
-        self.add_dynamic_item(cut_sample)
+        self.pipeline.add_dynamic_item(cut_sample)
 
 
 def sample(base_dataset, num_samples, generator=None):
@@ -397,3 +411,198 @@ def cut_offsets_rel(offsets, ref_offsets, start, end):
     result -= result[0].item()
     idx = condition.nonzero()
     return result.tolist(), idx.min().item(), idx.max().item() + 1
+
+@checkpoints.register_checkpoint_hooks
+class CurriculumController:
+    """Provides control for the curriculum dataset from the training
+    process"""
+
+    def __init__(self):
+        self.dataset = None
+        self.generator = None
+
+    def bind(self, dataset):
+        """Binds this controller to a dataset
+        
+        Arguments
+        ---------
+        dataset: CurriculumSpeechDataset
+            a curriculum dataset
+        """
+        self.dataset = dataset
+        self.generator = dataset.generator
+
+    def resample(self, min_words=None, max_words=None, num_samples=None):
+        """Resamples the dataset
+        
+        Arguments
+        ---------
+        min_words: int
+            the minimum number of words. If omitted, the value is not changed
+        
+        max_words: int
+            the maximum number of words. If omitted, the value is not changed
+        
+        num_samples: int
+            the number of samples. If omitted, the value is not changed
+        """
+        if self.dataset is None:
+            raise ValueError("The curriculum controller is unbound")
+        if min_words is None:
+            min_words = self.dataset.min_words
+        if max_words is None:
+            max_words = self.dataset.max_words
+        if num_samples is None:
+            num_samples = self.dataset.num_samples
+        
+        self.dataset.min_words = min_words
+        self.dataset.max_words = max_words
+        self.dataset.num_samples = num_samples
+        self.dataset.sample_segments()
+
+    @checkpoints.mark_as_saver
+    def save(self, path):
+        """Saves the current metrics on the specified path."""
+        data = {"generator": self.generator.get_state()}
+        torch.save(data, path)
+
+    @checkpoints.mark_as_loader
+    def load(self, path, end_of_epoch=False, device=None):
+        """Loads the needed information."""
+        del end_of_epoch  # Unused in this class
+        del device  # Unused in here
+        state = torch.load(path)
+        self.generator.set_state(state["generator"])
+
+@checkpoints.register_checkpoint_hooks
+class Curriculum:
+    """A helper class to define a curriculum
+    
+    Arguments
+    ---------
+    steps: list
+        a list of dicts similar to the following
+        [
+            {"epoch": 1, "max_words": 3},
+            {"epoch": 5, "max_words": 5},
+            {"epoch": 10, "max_words": 5},
+        ]
+    controller: CurriculumController
+        a curriculum controller
+    """
+
+    def __init__(self, steps, controller=None):
+        self.steps = sorted(
+            [
+                {"epoch": 0, **step}
+                for step in steps
+            ],
+            key=lambda step: step["epoch"]
+        )
+        if controller is None:
+            controller = CurriculumController()
+        self.controller = controller
+        self.step_id = None
+
+    def apply(self, epoch):
+        """Finds the step corresponding to the specified
+        epoch
+        
+        Arguments
+        ---------
+        epoch: int
+            the epoch number
+            
+        Returns
+        -------
+        step_id: int
+            the step ID / number (starting at 1)
+        step: dict
+            the step configuration
+        """
+        step_id, step = self.find_step(epoch)
+        if step_id is None:
+            logging.warn(
+                "Unable to find a curriculum step epoch %d",
+                epoch
+            )
+            return None, None
+        kwargs = {**step}
+        del kwargs["epoch"]
+        self.controller.resample(**kwargs)
+        self.step_id = step_id
+        return step_id, step
+    
+    def find_step(self, epoch):
+        """Finds the step corresponding to the specified
+        epoch
+        
+        Arguments
+        ---------
+        epoch: int
+            the epoch number
+            
+        Returns
+        -------
+        step_id: int
+            the step ID / number (starting at 1)
+        step: dict
+            the step configuration
+        """
+        return next(
+            ((step_id, step) 
+             for step_id, step in reversed(
+                list(enumerate(self.steps, start=1))
+             )
+             if epoch >= step["epoch"]),
+            (None, None)
+        )
+    
+    def bind(self, dataset):
+        """Binds the underlying controller to a dataset
+        
+        Arguments
+        ---------
+        dataset: CurriculumSpeechDataset
+            a curriculum dataset
+        """
+        self.controller.bind(dataset)
+
+    def save_dataset(
+            self,
+            path=None,
+            keys=None
+        ):
+        """Saves the dataset contents for future reference, analysis
+        and debugging
+        
+        Arguments
+        ---------
+        dataset_key: str
+            a string key to identify the dataset
+        path: str
+            the filesystem path
+        keys: list
+            the data keys to output
+        """
+        dataset = self.controller.dataset
+        if path is None:
+            path = "."
+        os.makedirs(path, exist_ok=True)
+        file_name = os.path.join(path, f"data-{self.step_id}.json")
+        if not os.path.exists(file_name):
+            if keys is not None:
+                with dataset.output_keys_as(keys):
+                    dataset.to_json(file_name)
+            else:
+                dataset.to_json(file_name)
+
+    @checkpoints.mark_as_saver
+    def save(self, path):
+        """Saves the current metrics on the specified path."""        
+        self.controller.save(path)
+
+    @checkpoints.mark_as_loader
+    def load(self, path, end_of_epoch=False, device=None):
+        """Loads the needed information."""
+        self.controller.load(path, end_of_epoch, device)

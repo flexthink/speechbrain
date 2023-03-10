@@ -6,6 +6,7 @@ Authors
 import logging
 import ruamel.yaml
 import torch
+import csv
 import os
 import numpy as np
 
@@ -100,6 +101,218 @@ class FileTrainLogger(TrainLogger):
             print(string_summary, file=fout)
         if verbose:
             logger.info(string_summary)
+
+
+class CsvTrainLogger:
+    """A train logger that outputs details as CSV
+    
+    Arguments
+    ---------
+    path: str
+        the target path
+
+    prefix: str
+        the prefix prepended to the filename
+    """
+
+    def __init__(self, path, prefix=None):
+        self.path = path
+        if prefix is None:
+            prefix = ""
+        self.prefix = prefix
+        self.file_names = {
+            key: os.path.join(path, f"{prefix}{key}.csv")
+            for key in ["train", "valid", "test"]
+        }
+        self.files = {}
+        self.writers = {}
+
+    def log_stats(
+        self,
+        stats_meta,
+        train_stats=None,
+        valid_stats=None,
+        test_stats=None,
+        verbose=False,
+    ):
+        """Log the stats for one epoch.
+
+        Arguments
+        ---------
+        stats_meta : dict of str:scalar pairs
+            Meta information about the stats (e.g., epoch, learning-rate, etc.).
+        train_stats : dict of str:list pairs
+            Each loss type is represented with a str : list pair including
+            all the values for the training pass.
+        valid_stats : dict of str:list pairs
+            Each loss type is represented with a str : list pair including
+            all the values for the validation pass.
+        test_stats : dict of str:list pairs
+            Each loss type is represented with a str : list pair including
+            all the values for the test pass.
+        verbose : bool
+            Whether to also put logging information to the standard logger.
+        """
+        if train_stats is not None:
+            self._write_csv_stats("train", stats_meta, train_stats)
+            if verbose:
+                logger.info("Train Stats: %s - %s", stats_meta, train_stats)
+        if valid_stats is not None:
+            self._write_csv_stats("valid", stats_meta, valid_stats)
+            if verbose:
+                logger.info("Valid Stats: %s - %s", stats_meta, valid_stats)
+        if test_stats is not None:
+            self._write_csv_stats("test", stats_meta, test_stats)
+            if verbose:
+                logger.info("Test Stats: %s - %s", stats_meta, test_stats)
+                
+    def _write_csv_stats(self, key, stats_meta, stats):
+        """Outputs the stats for the specified key
+        
+        Arguments
+        ---------
+        key: str
+            the stats key ("train", "valid" or "test")
+        stats_meta: dict
+            statistics metadata
+        stats: dict
+            statistics details
+        """
+        writer = self._get_writer(key, stats_meta, stats)
+        full_stats = {**stats_meta, **stats}
+        writer.writerow(full_stats)
+        self.files[key].flush()
+
+    def _get_writer(self, key, stats_meta, stats):
+        """Gets a CSV writer for the specified key, creating
+        a new file if necessary        
+        
+        Arguments
+        ---------
+        key: str
+            the stats key ("train", "valid" or "test")
+        stats_meta: dict
+            statistics metadata
+        stats: dict
+            statistics details
+        
+        Returns
+        -------
+        writer: csv.DictWriter
+            a CSV writer
+        """
+        if key not in self.writers:
+            fields = [*stats_meta.keys(), *stats.keys()]
+            self._create_writer(key, fields)
+        return self.writers[key]
+    
+    def _create_writer(self, key, fields):
+        """Creates a new CSV writer
+        
+        Arguments
+        ---------
+        key: str
+            the stats key ("train", "valid" or "test")
+        
+        fields: list
+            a list of field names
+        """
+        file_name = self.file_names[key]
+        existing_file = os.path.exists(file_name)
+        if existing_file:
+            fields = self._read_fields(file_name)
+        csv_file = open(file_name, "a+")
+        self.files[key] = csv_file
+        writer = csv.DictWriter(
+            csv_file,
+            fieldnames=fields,
+            extrasaction="ignore"
+        )
+        self.writers[key] = writer
+        if not existing_file:
+            writer.writeheader()
+        return writer
+    
+    def _read_fields(self, file_name):
+        """Reads the list of fields from a CSV file
+        
+        Arguments
+        ---------
+        file_name: str
+            the name of the CSV file
+        
+        Returns
+        -------
+        fields: list
+            the list of fields
+        """
+        with open(file_name, "r") as csv_file:
+            reader = csv.reader(csv_file)
+            fields = next(reader)
+        return fields
+
+    def close(self):
+        """Closes all files"""
+        for csv_file in self.files.values():
+            csv_file.close()
+        self.files = {}
+        self.writers = {}
+
+    def trim(self, criteria=None, **kwargs):
+        """Remove entries matching the specified criteria. Useful
+        when restarting an epoch
+        
+        Arguments
+        ---------
+        criteria: dict|callable
+            a function or a dictionary to determine which
+            records to remove
+
+            Criteria can also be passed as keywords arguments
+        """
+        if criteria is None:
+            criteria = kwargs
+        if isinstance(criteria, dict):
+            criteria_ = criteria
+            criteria = lambda item: all(
+                item.get(key) == str(value)
+                for key, value in criteria_.items())
+        for key in self.file_names:
+            self._trim_file(key, criteria)
+
+    def _trim_file(self, key, criteria):
+        """Removes all lines matching the specified criteria
+        from the specified file
+        
+        Arguments
+        ---------
+        key: str
+            the stats stage key ("train", "valid" or "test")
+
+        """
+        file_name = self.file_names[key]
+        if not os.path.exists(file_name):
+            return
+        if key in self.files:
+            self.files[key].close()
+            del self.files[key]
+            del self.writers[key]
+        tmp_file_name = os.path.join(
+            self.path,
+            "_" + os.path.basename(file_name)
+        )
+        with (
+            open(file_name, "r") as src_file,
+            open(tmp_file_name, "w") as dest_file
+        ):
+            reader = csv.DictReader(src_file)
+            writer = csv.DictWriter(dest_file, fieldnames=reader.fieldnames)
+            writer.writeheader()
+            for row in reader:
+                if not criteria(row):
+                    writer.writerow(row)
+        os.unlink(file_name)
+        os.rename(tmp_file_name, file_name)
 
 
 class TensorboardLogger(TrainLogger):

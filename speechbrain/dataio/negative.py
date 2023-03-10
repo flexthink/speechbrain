@@ -94,6 +94,7 @@ class NegativeEnhancedDataSet(FilteredSortedDynamicItemDataset):
         if self.data_ids_negative is None:
             self.sample_negative()
 
+
 def negative_pipeline(data_id, dataset, keys):
     dataset.ensure_negative_sample()
     negative_data_id = dataset.negative_map[data_id]

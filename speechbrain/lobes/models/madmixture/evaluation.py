@@ -843,7 +843,8 @@ class SpectrogramEvaluator(OutputEvaluator):
             normalization=None,
             spec_db=True,
             spec_ref=10.,
-            spec_power=1.
+            spec_power=1.,
+            audio_samples_enabled=True,
         ):
         self.device = None
         self.predict = []
@@ -863,7 +864,8 @@ class SpectrogramEvaluator(OutputEvaluator):
         self.spec_db = spec_db
         self.spec_ref = spec_ref
         self.spec_power = spec_power
-        self.plt = _get_matplotlib()   
+        self.plt = _get_matplotlib()
+        self.audio_samples_enabled = audio_samples_enabled        
     
     def append(self, ids, predict, target, latent, lengths_src, lengths_tgt, lengths_latent):
         """Remembers raw outputs for spectrogram plotting
@@ -910,7 +912,7 @@ class SpectrogramEvaluator(OutputEvaluator):
         self.save_spectrograms_raw(path)
         if self.plt is not None:
             self.save_spectrograms_image(path)
-        if self.vocoder_fn is not None:
+        if self.vocoder_fn is not None and self.audio_samples_enabled:
             self.save_audio(path)
     
 

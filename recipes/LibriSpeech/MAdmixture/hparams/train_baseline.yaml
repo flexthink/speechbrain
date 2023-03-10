@@ -25,6 +25,7 @@ save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 reports_folder: !ref <output_folder>/reports
 latent_folder: !ref <output_folder>/latent
+curriculum_datasets_folder: !ref <output_folder>/curriculum_datasets
 use_tensorboard: True
 tensorboard_logs: !ref <output_folder>/logs
 enable_train_metrics: True
@@ -62,9 +63,6 @@ filter_spk_id: null
 
 # Training curriculum parameters
 curriculum_enabled: True
-curriculum_min_words: 1
-curriculum_max_words: 3
-curriculum_num_samples_train: 10000
 curriculum_num_samples_valid: 1000
 curriculum_num_samples_test: 1000
 
@@ -83,6 +81,10 @@ phn_beam_size: 1
 # The train logger writes training statistics to a file, as well as stdout.
 train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
     save_file: !ref <train_log>
+
+loss_logger: !new:speechbrain.utils.train_logger.CsvTrainLogger
+    path: !ref <output_folder>
+    prefix: loss_
 
 # Training parameters
 number_of_epochs: 15
@@ -167,6 +169,7 @@ audio_dec_p_attention_dropout: 0.1
 audio_dec_p_decoder_dropout: 0.1
 audio_dec_decoder_no_early_stopping: False
 audio_aligner_dropout: 0.1
+audio_samples_enabled: True
 
 # Character Encoder/Decoder Parameters
 char_enabled: True
@@ -513,6 +516,7 @@ evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
                     vocoder_pre: !ref <dynamic_range_compression>
                     sample_rate: !ref <sample_rate>
                     normalization: !ref <normalize>
+                    audio_samples_enabled: !ref <audio_samples_enabled>
 
                 char: !name:speechbrain.lobes.models.madmixture.TokenSequenceEvaluator
                     decoder: !ref <char_label_encoder>
@@ -558,6 +562,44 @@ opt_class: !name:torch.optim.Adam
      lr: !ref <lr>
      capturable: !ref <opt_capturable>
 
+# The training curriculum
+curriculum:
+    train: !new:speechbrain.dataio.curriculum.Curriculum
+        steps:
+        - epoch: 1
+          min_words: 1
+          max_words: 3
+          num_samples: 25000
+        - epoch: 20
+          min_words: 2
+          max_words: 10
+          num_samples: 50000
+        - epoch: 40
+          min_words: 2
+          max_words: 20
+          num_samples: 100000
+    valid: !new:speechbrain.dataio.curriculum.Curriculum
+        steps:
+        - epoch: 1
+          min_words: 1
+          max_words: 3
+          num_samples: !ref <curriculum_num_samples_valid>
+        - epoch: 20
+          min_words: 2
+          max_words: 10
+          num_samples: !ref <curriculum_num_samples_valid>
+        - epoch: 40
+          min_words: 2
+          max_words: 20
+          num_samples: !ref <curriculum_num_samples_valid>
+    test: !new:speechbrain.dataio.curriculum.Curriculum
+        steps:
+        - min_words: 2
+          max_words: 20
+          num_samples: !ref <curriculum_num_samples_test>
+
+
+
 
 # This object is used for saving the state of training both so that it
 # can be resumed if it gets interrupted, and also so that the best checkpoint
@@ -570,16 +612,8 @@ checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
         normalizer: !ref <normalize>
         counter: !ref <epoch_counter>
         negative_sampler: !ref <negative_sampler>
+        curriculum: !ref <curriculum>
 
-
-# The training curriculum
-curriculum:
-    min_words: !ref <curriculum_min_words>
-    max_words: !ref <curriculum_max_words>
-    num_samples: 
-        train: !ref <curriculum_num_samples_train>
-        valid: !ref <curriculum_num_samples_valid>
-        test: !ref <curriculum_num_samples_test>
 
 eval_sample_size:
     train: !ref <eval_train_sample_size>

@@ -186,7 +186,6 @@ class MadMixtureBrain(sb.Brain):
         result = super().fit_batch(batch)
         if (
             self.hparams.enable_train_metrics
-            and self.hparams.use_tensorboard
             and (
                 self.step == 1
                 or self.step % self.hparams.train_log_interval == 0
@@ -195,16 +194,20 @@ class MadMixtureBrain(sb.Brain):
             self.log_batch()
         return result
 
-    
-    
     def log_batch(self):
+        """Logs training stats for this batch"""
+        epoch = self.hparams.epoch_counter.current
         stats = {
             "lr": self.optimizer.param_groups[0]["lr"],
             **self.loss_metric.summarize(field="average")
         }
+        stats_meta = {"epoch": epoch, "step": self.step}
+        self.hparams.loss_logger.log_stats(
+            stats_meta=stats_meta, train_stats=stats
+        )
         if self.hparams.use_tensorboard:
             self.hparams.tensorboard_train_logger.log_stats(
-                stats_meta={"step": self.step}, train_stats=stats
+                stats_meta=stats_meta, train_stats=stats
             )
     
     def prepare_features(self, stage, batch):
@@ -356,8 +359,15 @@ class MadMixtureBrain(sb.Brain):
             details_log = {key: value.item() for key, value in details.items()}
             logger.warn("Details: %s", pformat(details_log))
             logger.warn("Lengths: %s", pformat(predictions.lengths))
-
-        if self.hparams.enable_train_metrics and self.step % self.hparams.train_metrics_interval == 0:
+        update_loss_metric = (
+            (stage != sb.Stage.TRAIN)
+            or
+            (
+                self.hparams.enable_train_metrics
+                and self.step % self.hparams.train_metrics_interval == 0
+            )
+        )
+        if update_loss_metric:
             self.loss_metric.append(
                 batch.snt_id,
                 targets=predictions.targets,
@@ -450,6 +460,8 @@ class MadMixtureBrain(sb.Brain):
             The currently-starting epoch. This is passed
             `None` during the test stage.
         """
+        if not epoch:
+            epoch = 1
         self.loss_metric = sb.utils.metric_stats.MultiMetricStats(
             metric=self.hparams.compute_cost.details,
             batch_eval=True
@@ -462,6 +474,27 @@ class MadMixtureBrain(sb.Brain):
                 key: self.create_latent_logger(key, epoch, stage)
                 for key in self.hparams.modalities
             }
+        stage_key = stage.name.lower()
+        if self.hparams.curriculum_enabled and not self.hparams.overfit_test:
+            curriculum = self.hparams.curriculum[stage_key]
+            step_id, step = curriculum.apply(epoch)
+
+            logger.info(
+                "%s: using curriculum sampling with %d-%d words, %d samples",
+                stage_key,
+                step.get("min_words"),
+                step.get("max_words"),
+                step.get("num_samples")
+            )
+            curriculum_dataset_path = os.path.join(
+                self.hparams.curriculum_datasets_folder,
+                stage_key
+            )
+            curriculum.save_dataset(
+                path=curriculum_dataset_path,
+                keys=LIBRISPEECH_OUTPUT_KEYS
+            )
+        self.hparams.loss_logger.trim(epoch=epoch)
 
     def _create_evaluator(self, stage):
         """Creates a latent space logger instance
@@ -543,7 +576,12 @@ class MadMixtureBrain(sb.Brain):
                 train_stats=self.train_stats,
                 valid_stats=stage_stats,
             )
-
+            loss_stats = self.loss_metric.summarize(field="average")
+            self.hparams.loss_logger.log_stats(
+                stats_meta={"epoch": epoch},
+                valid_stats=loss_stats
+            )
+            
             # Save the current checkpoint and delete previous checkpoints.
             # NOTE: Checkpoints can be skipped during debugging to avoid undue
             # stress on the SSD
@@ -561,6 +599,10 @@ class MadMixtureBrain(sb.Brain):
                 stats_meta={"Epoch loaded": self.hparams.epoch_counter.current},
                 test_stats=stage_stats,
             )
+
+
+        self.hparams.loss_logger.close()
+
 
     def evaluation_report(self, stage, is_sample=False):
         """Outputs the evaluation report
@@ -723,18 +765,12 @@ def dataio_prepare(hparams):
     phn_encoder = init_sequence_encoder(hparams, "phn")
     phn_pipeline = sequence_pipeline("phn", phn_encoder)
     dynamic_items = [audio_pipeline, char_pipeline, phn_pipeline]
-    curriculum = hparams.get("curriculum")
 
     for dataset in data_info:
         # Load the full LibriSpeech dataset
         key_max_value = {
             "unk_count": 0,
         }
-        key_min_value=None
-        if hparams["curriculum_enabled"]:            
-            key_min_value = {
-                "wrd_count": curriculum["max_words"]            
-            }
         key_test = {}
         if hparams["filter_spk_id"]:
             key_test["spk_id"] = hparams["filter_spk_id"]
@@ -743,7 +779,6 @@ def dataio_prepare(hparams):
             data_info[dataset],
             replacements={"data_root": data_folder},
         ).filtered_sorted(
-            key_min_value=key_min_value,
             key_max_value=key_max_value,
             key_test=key_test
         )
@@ -752,22 +787,16 @@ def dataio_prepare(hparams):
         # Use the curriculum sampler to reduce the dataset's complexity
         if hparams["curriculum_enabled"]:
             curriculum = hparams["curriculum"]
-            logger.info(
-                "Using curriculum sampling with %d-%d words, %d samples",
-                curriculum["min_words"],
-                curriculum["max_words"],
-                curriculum["num_samples"][dataset]
-            )
             curriculum_generator = torch.Generator()
             curriculum_generator.manual_seed(hparams["seed"])
             dynamic_dataset = sb.dataio.curriculum.CurriculumSpeechDataset(
                 from_dataset=dynamic_dataset,
-                min_words=curriculum["min_words"],
-                max_words=curriculum["max_words"],
-                num_samples=curriculum["num_samples"][dataset],
-                sample_rate=hparams["sample_rate"],
-                generator=curriculum_generator,
+                generator=curriculum_generator
             )
+            curriculum = hparams["curriculum"][dataset]
+            curriculum.bind(dynamic_dataset)
+            if hparams["overfit_test"]:
+                curriculum.apply(1)
         else:
             logger.info("Curriculum sampling is disabled, using the complete dataset")
         for dynamic_item in dynamic_items:
@@ -811,24 +840,6 @@ def dataio_prepare(hparams):
             "sorting must be random, ascending or descending"
         )
     return datasets, eval_samples, vis_samples
-
-
-def save_datasets(datasets, hparams):
-    """Saves the specified datasets as JSON
-    
-    Arguments
-    ---------
-    dataset: dict
-        a key -> dataset dictionary
-
-    hparams: dict
-        raw hyperparameters
-    """
-    for key, dataset in datasets.items():
-        file_name = os.path.join(hparams["output_folder"], f"curriculum_{key}.json")
-        with dataset.output_keys_as(LIBRISPEECH_OUTPUT_KEYS):
-            dataset.to_json(file_name)
-
 
 def select_sample(dataset, sample_size, seed):
     """Selects a sample of the specified size
@@ -1041,11 +1052,6 @@ if __name__ == "__main__":
 
     # We can now directly create the datasets for training, valid, and test
     datasets, eval_samples, vis_samples = dataio_prepare(hparams)
-
-    # Save datasets for future reference. Since the dataset is dynamically
-    # sampled depending on hyperparameter values, a snapshot of what was actually
-    # used for training can be useful for further analysis
-    save_datasets(datasets, hparams)
 
     # Trainer initialization
     madmixture_brain = MadMixtureBrain(
