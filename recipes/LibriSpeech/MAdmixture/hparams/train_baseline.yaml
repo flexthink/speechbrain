@@ -563,8 +563,7 @@ opt_class: !name:torch.optim.Adam
      capturable: !ref <opt_capturable>
 
 # The training curriculum
-curriculum:
-    train: !new:speechbrain.dataio.curriculum.Curriculum
+curriculum_train: !new:speechbrain.dataio.curriculum.Curriculum
         steps:
         - epoch: 1
           min_words: 1
@@ -578,7 +577,8 @@ curriculum:
           min_words: 2
           max_words: 20
           num_samples: 100000
-    valid: !new:speechbrain.dataio.curriculum.Curriculum
+
+curriculum_valid: !new:speechbrain.dataio.curriculum.Curriculum
         steps:
         - epoch: 1
           min_words: 1
@@ -592,11 +592,18 @@ curriculum:
           min_words: 2
           max_words: 20
           num_samples: !ref <curriculum_num_samples_valid>
-    test: !new:speechbrain.dataio.curriculum.Curriculum
+
+curriculum_test: !new:speechbrain.dataio.curriculum.Curriculum
         steps:
         - min_words: 2
           max_words: 20
           num_samples: !ref <curriculum_num_samples_test>
+
+
+curriculum:
+    train: !ref <curriculum_train>
+    valid: !ref <curriculum_valid>
+    test: !ref <curriculum_test>
 
 
 
@@ -612,9 +619,9 @@ checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
         normalizer: !ref <normalize>
         counter: !ref <epoch_counter>
         negative_sampler: !ref <negative_sampler>
-        curriculum_train: !ref <curriculum.train>
-        curriculum_valid: !ref <curriculum.valid>
-        curriculum_test: !ref <curriculum.test>
+        curriculum_train: !ref <curriculum_train>
+        curriculum_valid: !ref <curriculum_valid>
+        curriculum_test: !ref <curriculum_test>
 
 
 eval_sample_size:
