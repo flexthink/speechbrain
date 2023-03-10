@@ -1038,7 +1038,7 @@ def merge_jsons(data_folder, json_lst, merged_json):
         json.dump(content, f)
     logger.info(f"{write_path} is created.")
 
-    
+
 def split_word(sequences, space="_"):
     """Split word sequences into character sequences.
 

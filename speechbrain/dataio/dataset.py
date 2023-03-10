@@ -151,8 +151,7 @@ class DynamicItemDataset(Dataset):
     """
 
     def __init__(
-        self, data, dynamic_items=[], output_keys=[],
-        use_existing_id=False
+        self, data, dynamic_items=[], output_keys=[], use_existing_id=False
     ):
         self.data = data
         self.data_ids = list(self.data.keys())
@@ -417,7 +416,7 @@ class DynamicItemDataset(Dataset):
         overfit_samples = base_data_ids * num_repetitions
         overfit_samples = overfit_samples[:total_count]
         return FilteredSortedDynamicItemDataset(self, overfit_samples)
-    
+
     def to_json(self, json_file):
         """Exports this dataset to JSON. This is only usable if the dataset
         contains only JSON-serializable values.
@@ -445,7 +444,7 @@ class DynamicItemDataset(Dataset):
         """
         data = {data_id: item for data_id, item in zip(self.data_ids, self)}
         json.dump(data, fp)
-    
+
 
 class FilteredSortedDynamicItemDataset(DynamicItemDataset):
     """Possibly filtered, possibly sorted DynamicItemDataset.
@@ -482,6 +481,7 @@ def set_output_keys(datasets, output_keys):
     """Helper for setting the same item to multiple datasets."""
     for dataset in datasets:
         dataset.set_output_keys(output_keys)
+
 
 def apply_overfit_test(hparams, dataset):
     """Helper for applying an overfit test conditionally based
@@ -520,27 +520,28 @@ def apply_overfit_test(hparams, dataset):
     if hparams["overfit_test"]:
         if isinstance(dataset, tuple):
             dataset_train, _, _ = dataset
-            dataset_train = apply_overfit_test(
-                hparams, dataset_train)
+            dataset_train = apply_overfit_test(hparams, dataset_train)
             dataset_eval = dataset_train.filtered_sorted(
-                select_n=hparams["overfit_test_sample_count"])
+                select_n=hparams["overfit_test_sample_count"]
+            )
             result = dataset_train, dataset_eval, dataset_eval
         elif isinstance(dataset, dict):
-            dataset_train = apply_overfit_test(
-                hparams, dataset["train"])
+            dataset_train = apply_overfit_test(hparams, dataset["train"])
             dataset_eval = dataset_train.filtered_sorted(
-                select_n=hparams["overfit_test_sample_count"])
+                select_n=hparams["overfit_test_sample_count"]
+            )
             result = {
                 "train": dataset_train,
                 "valid": dataset_eval,
-                "test": dataset_eval
+                "test": dataset_eval,
             }
         else:
             shuffle = hparams.get("overfit_test_shuffle", True)
             result = dataset.overfit_test(
-                 hparams["overfit_test_sample_count"],
-                 hparams["overfit_test_epoch_data_count"],
-                 hparams.get("overfit_test_shuffle", shuffle))
+                hparams["overfit_test_sample_count"],
+                hparams["overfit_test_epoch_data_count"],
+                hparams.get("overfit_test_shuffle", shuffle),
+            )
     else:
         result = dataset
     return result

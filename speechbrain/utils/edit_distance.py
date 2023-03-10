@@ -380,7 +380,10 @@ def wer_details_for_batch(ids, refs, hyps, compute_alignments=False):
         refs, hyps, compute_alignments=compute_alignments, scoring_mode="strict"
     )
 
-def token_error_rate_details_for_batch(ids, refs, hyps, compute_alignments=False):
+
+def token_error_rate_details_for_batch(
+    ids, refs, hyps, compute_alignments=False
+):
     """Convenient batch interface for ``wer_details_by_utterance``.
 
     ``wer_details_by_utterance`` can handle missing hypotheses, but
@@ -422,7 +425,6 @@ def token_error_rate_details_for_batch(ids, refs, hyps, compute_alignments=False
     return token_error_rate_details_by_utterance(
         refs, hyps, compute_alignments=compute_alignments, scoring_mode="strict"
     )
-
 
 
 def wer_details_by_utterance(
@@ -484,13 +486,20 @@ def wer_details_by_utterance(
     """
 
     return token_error_rate_details_by_utterance(
-        ref_dict, hyp_dict, compute_alignments, scoring_mode, 
-        error_rate_key="WER"
+        ref_dict,
+        hyp_dict,
+        compute_alignments,
+        scoring_mode,
+        error_rate_key="WER",
     )
 
 
 def token_error_rate_details_by_utterance(
-    ref_dict, hyp_dict, compute_alignments=False, scoring_mode="strict", error_rate_key="token_error_rate"
+    ref_dict,
+    hyp_dict,
+    compute_alignments=False,
+    scoring_mode="strict",
+    error_rate_key="token_error_rate",
 ):
     """Computes a wealth WER info about each single utterance.
 
@@ -609,7 +618,6 @@ def token_error_rate_details_by_utterance(
         )
         details_by_utterance.append(utterance_details)
     return details_by_utterance
-
 
 
 def wer_summary(details_by_utterance):
@@ -735,7 +743,6 @@ def token_error_rate_summary(details_by_utterance):
         "substitutions": subs,
     }
     return wer_details
-
 
 
 def wer_details_by_speaker(details_by_utterance, utt2spk):

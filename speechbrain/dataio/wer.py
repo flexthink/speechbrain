@@ -52,7 +52,13 @@ def print_wer_summary(wer_details, file=sys.stdout):
         file=file,
     )
 
-def print_error_rate_summary(details, file=sys.stdout, token_error_rate_label="TER", sample_error_rate_label="SER"):
+
+def print_error_rate_summary(
+    details,
+    file=sys.stdout,
+    token_error_rate_label="TER",
+    sample_error_rate_label="SER",
+):
     """A generic equivalent of print_wer_summary useful for phoneme error rates, character error rates,
     etc
 
@@ -69,8 +75,7 @@ def print_error_rate_summary(details, file=sys.stdout, token_error_rate_label="T
     """
     print(
         "%{token_error_rate_label} {token_error_rate:.2f} [ {num_edits} / {num_scored_tokens}, {insertions} ins, {deletions} del, {substitutions} sub ]".format(  # noqa
-            token_error_rate_label=token_error_rate_label,
-            **details
+            token_error_rate_label=token_error_rate_label, **details
         ),
         file=file,
         end="",
@@ -83,8 +88,7 @@ def print_error_rate_summary(details, file=sys.stdout, token_error_rate_label="T
     )
     print(
         "%{sample_error_rate_label} {sample_error_rate:.2f} [ {num_err_samples} / {num_scored_samples} ]".format(
-            sample_error_rate_label=sample_error_rate_label,
-            **details
+            sample_error_rate_label=sample_error_rate_label, **details
         ),
         file=file,
     )
@@ -93,7 +97,7 @@ def print_error_rate_summary(details, file=sys.stdout, token_error_rate_label="T
             **details
         ),
         file=file,
-    )    
+    )
 
 
 def print_alignments(
@@ -106,8 +110,7 @@ def print_alignments(
     error_rate_key="WER",
     error_rate_label="WER",
     details_label="WER DETAILS",
-    sample_id_label="utterance-id"
-
+    sample_id_label="utterance-id",
 ):
     """Print token error rate (e.g. WER) summary and alignments.
 
@@ -131,16 +134,20 @@ def print_alignments(
     """
     if print_header:
         _print_alignments_global_header(
-            file=file, empty_symbol=empty_symbol, separator=separator,
-            details_label=details_label, sample_id_label=sample_id_label
+            file=file,
+            empty_symbol=empty_symbol,
+            separator=separator,
+            details_label=details_label,
+            sample_id_label=sample_id_label,
         )
     for dets in details_by_utterance:
         if dets["scored"]:
             if print_header:
                 _print_alignment_header(
-                    dets, file=file,
+                    dets,
+                    file=file,
                     error_rate_key=error_rate_key,
-                    error_rate_label=error_rate_label,                    
+                    error_rate_label=error_rate_label,
                 )
             _print_alignment(
                 dets["alignment"],
@@ -211,9 +218,11 @@ def _print_alignment(
 
 
 def _print_alignments_global_header(
-    empty_symbol="<eps>", separator=" ; ", file=sys.stdout,
+    empty_symbol="<eps>",
+    separator=" ; ",
+    file=sys.stdout,
     details_label="WER DETAILS",
-    sample_id_label="utterance-id"
+    sample_id_label="utterance-id",
 ):
     print("=" * 80, file=file)
     print("ALIGNMENTS", file=file)
@@ -242,13 +251,15 @@ def _print_alignments_global_header(
     )
 
 
-def _print_alignment_header(wer_details, file=sys.stdout, error_rate_label="WER", error_rate_key="WER"):
+def _print_alignment_header(
+    wer_details, file=sys.stdout, error_rate_label="WER", error_rate_key="WER"
+):
     error_rate = wer_details[error_rate_key]
     print(
         "{key}, %{error_rate_label} {error_rate:.2f} [ {num_edits} / {num_ref_tokens}, {insertions} ins, {deletions} del, {substitutions} sub ]".format(  # noqa
             error_rate_label=error_rate_label,
             error_rate=error_rate,
-            **wer_details
+            **wer_details,
         ),
         file=file,
     )

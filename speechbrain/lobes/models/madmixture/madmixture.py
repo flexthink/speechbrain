@@ -17,14 +17,14 @@ from speechbrain.nnet.normalization import LayerNorm
 from speechbrain.dataio.dataio import length_to_mask
 from speechbrain.utils.callchains import arg_exists
 from speechbrain.utils.data_utils import adjust_dim, concat_padded_features
-from speechbrain.lobes.models.transformer.Transformer import (
-    PositionalEncoding)
+from speechbrain.lobes.models.transformer.Transformer import PositionalEncoding
 from math import floor, ceil
 from enum import Enum
 
 # TODO: The current handling of decoder lengths does not
 # make a lot of sense - one would need to pass and predict
 # anchor lengths for each modality
+
 
 class MadMixture(nn.Module):
     """The MAdmixture (Modality Admixture) generic multimodal
@@ -48,7 +48,15 @@ class MadMixture(nn.Module):
         modalities using hparams switches
     
     """
-    def __init__(self, modalities, length_predictor, anchor_name=None, latent_size=32, modality_enabled=None):
+
+    def __init__(
+        self,
+        modalities,
+        length_predictor,
+        anchor_name=None,
+        latent_size=32,
+        modality_enabled=None,
+    ):
         super().__init__()
         self.modality_enabled = modality_enabled
         if isinstance(modalities, dict):
@@ -70,12 +78,10 @@ class MadMixture(nn.Module):
         self.anchor = self.modalities[anchor_name]
         self.latent_size = latent_size
         self.aligned_modalities = {
-            key
-            for key, modality in self.modalities.items()
-            if modality.aligner
+            key for key, modality in self.modalities.items() if modality.aligner
         }
         self.primary_modalities = {
-            key            
+            key
             for key, modality in self.modalities.items()
             if modality.mod_type == ModalityType.PRIMARY
         }
@@ -85,9 +91,7 @@ class MadMixture(nn.Module):
             for tgt in self.primary_modalities
         ]
         self.cross_transfers = [
-            (src, tgt)
-            for src, tgt in self.possible_transfers
-            if src != tgt
+            (src, tgt) for src, tgt in self.possible_transfers if src != tgt
         ]
         modalities = set(self.modalities.keys())
         self.unaligned_modalities = modalities - self.aligned_modalities
@@ -95,8 +99,11 @@ class MadMixture(nn.Module):
         self.eos_mark = EndOfSequenceMarker(feature_size=latent_size)
 
     def is_enabled(self, key):
-        return self.modality_enabled.get(key, False) if self.modality_enabled is not None else True
-
+        return (
+            self.modality_enabled.get(key, False)
+            if self.modality_enabled is not None
+            else True
+        )
 
     def forward(self, inputs, lengths=None, context=None):
         """Runs the forward pass (encodes inputs)
@@ -119,7 +126,7 @@ class MadMixture(nn.Module):
         -------
         outputs: dict
             A string->tensor dictionary with encoder outputs """
-        
+
         self.encode(inputs, lengths, context)
 
     def encode(self, inputs, lengths=None, context=None):
@@ -145,19 +152,17 @@ class MadMixture(nn.Module):
         -------
         outputs: dict
             A string->tensor dictionary with encoder outputs """
-        
+
         if lengths is None:
             lengths = full_lengths(inputs)
 
         return {
             key: self.modalities[key].encode(
-                input,
-                lengths=lengths.get(key),
-                context=context
+                input, lengths=lengths.get(key), context=context
             )
             for key, input in inputs.items()
         }
-    
+
     def latent(self, inputs, lengths=None, context=None):
         """Computes the latent representations for each modality
         by first running the encoders and then running the aligners,
@@ -198,7 +203,9 @@ class MadMixture(nn.Module):
         latents, alignments, lengths_latent, lengths_input = {}, {}, {}, {}
         for key in inputs:
             if key in self.aligned_modalities:
-                latent, alignment, length_latent, length_input = self.alignment(key, enc_out, lengths)
+                latent, alignment, length_latent, length_input = self.alignment(
+                    key, enc_out, lengths
+                )
                 latents[key] = latent
                 alignments[key] = alignment
                 lengths_latent[key] = length_latent
@@ -208,7 +215,7 @@ class MadMixture(nn.Module):
                 lengths_latent[key] = lengths[key]
                 lengths_input[key] = lengths[key]
         return latents, alignments, enc_out, lengths_latent, lengths_input
-    
+
     def alignment(self, key, enc_out, lengths):
         """Computes the alignment for the specified modality
 
@@ -240,11 +247,11 @@ class MadMixture(nn.Module):
             else:
                 anchor_name, anchor_scale = None, None
             result = self.modalities[key].aligner(
-                key, enc_out, lengths, anchor_name, anchor_scale, self.eos_mark)
+                key, enc_out, lengths, anchor_name, anchor_scale, self.eos_mark
+            )
         else:
             result = None, None, None
         return result
-
 
     def decode_single(self, latent, lengths, tgt=None, context=None):
         """Decodes a single latent-space representation to all modalities. This
@@ -270,7 +277,7 @@ class MadMixture(nn.Module):
         context: dict
             the context collected from each encoder    
         """
-        
+
         if tgt is None:
             targets = self.modalities.keys()
         elif isinstance(tgt, str):
@@ -279,7 +286,9 @@ class MadMixture(nn.Module):
             targets = tgt
 
         rec_with_context = {
-            key: self.modalities[key].decode(latent, lengths=lengths, context=context)
+            key: self.modalities[key].decode(
+                latent, lengths=lengths, context=context
+            )
             for key in targets
         }
         return self._extract_context(rec_with_context)
@@ -310,7 +319,7 @@ class MadMixture(nn.Module):
             }
             context.update(prefixed_mod_context)
         return rec, context
-    
+
     def _extract_context_cross(self, rec_with_context):
         """Extracts context information from a single
         dictionary with both reconstructions and context
@@ -337,7 +346,7 @@ class MadMixture(nn.Module):
             }
             context.update(prefixed_mod_context)
         return rec, context
-    
+
     def transfer(self, inputs, lengths, src, tgt=None):
         """Transfers representations from one modality to another (e.g. speech to text,
         text to speech, graphemes to phonemes, etc)
@@ -374,17 +383,18 @@ class MadMixture(nn.Module):
         src_inputs = {src: inputs[src]}
         src_lengths = {src: lengths[src]}
         # Find latents
-        latents, alignments, enc_out, lengths_latent, _ = self.latent(src_inputs, src_lengths)
+        latents, alignments, enc_out, lengths_latent, _ = self.latent(
+            src_inputs, src_lengths
+        )
         latents = self.mask_latents(latents, lengths_latent)
 
         # Reconstruct
-        length_dec = self.length_predictor.lengths(latents[src])        
+        length_dec = self.length_predictor.lengths(latents[src])
         lengths_latent = {src: length_dec}
 
         rec, out_context = self.decode_single(latents[src], length_dec, tgt=tgt)
 
         return rec, latents, lengths_latent, alignments, enc_out, out_context
-
 
     def decode_multiple(self, latent, lengths, context=None):
         """Decodes multiple latent-space representations using the decoder for
@@ -405,12 +415,15 @@ class MadMixture(nn.Module):
         rec_with_context = {
             key: self.modalities[key].decode(
                 modality_latent,
-                lengths=lengths.get(self.anchor_name) if lengths is not None else None,
-                context=context)
+                lengths=lengths.get(self.anchor_name)
+                if lengths is not None
+                else None,
+                context=context,
+            )
             for key, modality_latent in latent.items()
         }
         return self._extract_context(rec_with_context)
-    
+
     def train_step(self, inputs, lengths=None, context=None, transfer=False):
         """A convenience function for model training, 
         encoding inputs and then decoding them from
@@ -459,33 +472,37 @@ class MadMixture(nn.Module):
             During training, each is set to the anchor latent length
             During evaluation, each is set to the predicted length
         """
-        latents_raw, alignments, enc_out, lengths_latent, lengths_input = self.latent(
-            inputs,
-            lengths,
-            context
-        )
-        
+        (
+            latents_raw,
+            alignments,
+            enc_out,
+            lengths_latent,
+            lengths_input,
+        ) = self.latent(inputs, lengths, context)
+
         length_preds = self.train_lengths(latents_raw, lengths)
-        
-        if self.training:            
+
+        if self.training:
             lengths_dec = {
-                key: lengths_latent[self.anchor_name]
-                for key in lengths
+                key: lengths_latent[self.anchor_name] for key in lengths
             }
         else:
             lengths_dec = {
                 key: self.length_predictor.to_lengths(pred)
-                for key, pred in length_preds.items()}
+                for key, pred in length_preds.items()
+            }
 
         latents = self.mask_latents(latents_raw, lengths_dec)
-        
+
         rec, out_context = self.decode_multiple(latents, lengths_dec, context)
         if transfer:
-            transfer_rec, transfer_context = self.cross_decode(latents, lengths_dec, context)
+            transfer_rec, transfer_context = self.cross_decode(
+                latents, lengths_dec, context
+            )
             out_context.update(transfer_context)
         else:
             transfer_rec = None
-        
+
         return TrainStepOutput(
             latents=latents,
             alignments=alignments,
@@ -497,9 +514,9 @@ class MadMixture(nn.Module):
             length_preds=length_preds,
             lengths_input=lengths_input,
             lengths_latent=lengths_latent,
-            lengths_dec=lengths_dec
+            lengths_dec=lengths_dec,
         )
-    
+
     def cross_decode(self, latents, length, context=None):
         """Decodes multipe latents into multiple modalities, useful during
         training
@@ -528,11 +545,12 @@ class MadMixture(nn.Module):
         """
         rec_with_context = {
             (src, tgt): self.modalities[tgt].decode(
-                latents[src], length[self.anchor_name], context=context)
+                latents[src], length[self.anchor_name], context=context
+            )
             for src, tgt in self.cross_transfers
         }
         return self._extract_context_cross(rec_with_context)
-    
+
     def predict_lengths(self, latents):
         """Predicts relative lengths of latent representations
         
@@ -551,7 +569,7 @@ class MadMixture(nn.Module):
             key: self.length_predictor.lengths(latent)
             for key, latent in latents.items()
         }
-    
+
     def train_lengths(self, latents, lengths):
         """Runs the training pass for length prediction
 
@@ -575,14 +593,14 @@ class MadMixture(nn.Module):
             key: self.length_predictor(latent, anchor_length)
             for key, latent in latents.items()
         }
-    
+
     def mask_latents(self, latents, lengths=None):
         if lengths is not None and self.anchor in lengths:
             latents_masked = self._mask_latents_anchor(latents, lengths)
         else:
             latents_masked = self._mask_latents_predicted(latents)
-        return latents_masked            
-    
+        return latents_masked
+
     def _mask_latents_predicted(self, latents):
         """Masks out latent position using predictions
         
@@ -601,7 +619,7 @@ class MadMixture(nn.Module):
             key: mask_out(latent, lengths[key])
             for key, latent in latents.items()
         }
-    
+
     def _mask_latents_anchor(self, latents, lengths):
         """Masks out latent position using predictions
         
@@ -619,10 +637,9 @@ class MadMixture(nn.Module):
         """
         length = lengths[self.anchor_name]
         return {
-            key: mask_out(latent, length)
-            for key, latent in latents.items()
+            key: mask_out(latent, length) for key, latent in latents.items()
         }
-    
+
 
 TrainStepOutput = namedtuple(
     "TrainStepOutput",
@@ -637,9 +654,8 @@ TrainStepOutput = namedtuple(
         "length_preds",
         "lengths_input",
         "lengths_latent",
-        "lengths_dec"
-    ]
-    
+        "lengths_dec",
+    ],
 )
 
 
@@ -657,13 +673,13 @@ def mask_out(x, lengths):
     max_len = x.size(1)
     mask = length_to_mask(lengths, max_len)
     mask = mask.unsqueeze(-1)
-    return (mask * x)
+    return mask * x
 
 
 class ModalityType(Enum):
     PRIMARY = "primary"
     AUXILIARY = "auxiliary"
-    
+
 
 def full_lengths(inputs):
     """Returns a full relative length tesnor for every modality
@@ -697,6 +713,7 @@ class CallWrapper(nn.Module):
     module: torch.nn.Module 
         the module to be wrapped
     """
+
     def __init__(self, module):
         super().__init__()
         self.module = module
@@ -727,6 +744,7 @@ class CallWrapper(nn.Module):
 
 class LengthsCallWrapper(CallWrapper):
     """A wrapper for modules with a lengths argument"""
+
     def forward(self, x, lengths, context):
         """Invokes the module, discarding only the context
 
@@ -751,6 +769,7 @@ class LengthsCallWrapper(CallWrapper):
 
 class ContextCallWrapper(CallWrapper):
     """A wrapper for the full signature"""
+
     def forward(self, x, lengths, context):
         """Invokes the module, discarding the lengths and context
 
@@ -772,12 +791,14 @@ class ContextCallWrapper(CallWrapper):
         """
         return self.module(x, lengths, context)
 
+
 class OuputContextCallWrapper(nn.Module):
     """A wrapper that adds a empty context to the output. This is needed
     to ensure that scriptability is not compromised"""
+
     def __init__(self, module):
         self.module = module
-    
+
     def forward(self, x, lengths, context):
         """Invokes the module, discarding the lengths and context
 
@@ -798,9 +819,10 @@ class OuputContextCallWrapper(nn.Module):
             the encoder or decoder output
         context: dict
             an empty context
-        """        
+        """
         out = self.module(x, lengths, context)
         return out, {}
+
 
 def wrap_module(module, needs_context=False):
     """Wraps the module with a call wrapper with the appropriate signature
@@ -825,7 +847,6 @@ def wrap_module(module, needs_context=False):
     if needs_context and not outputs_context:
         module = OuputContextCallWrapper(module)
     return module
-    
 
 
 class Modality(nn.Module):
@@ -857,7 +878,16 @@ class Modality(nn.Module):
         
 
     """
-    def __init__(self, name, encoder, decoder, aligner=None, mod_type=ModalityType.PRIMARY, mod_family="token_sequence"):
+
+    def __init__(
+        self,
+        name,
+        encoder,
+        decoder,
+        aligner=None,
+        mod_type=ModalityType.PRIMARY,
+        mod_family="token_sequence",
+    ):
         super().__init__()
         self.name = name
         self.encoder = encoder
@@ -881,11 +911,11 @@ class Modality(nn.Module):
             relative lengths
         """
         return self.encode(input, lengths)
-    
+
     def encode(self, input, lengths=None, context=None):
         # type: (Tensor, Tensor, Dict[str, Tensor]) -> Tensor
         return self.encoder(input, lengths, context)
-    
+
     def decode(self, latent, lengths=None, context=None):
         # type: (Tensor, Tensor, Dict[str, Tensor]) -> Tuple[Tensor, Dict[str, Tensor]]
         return self.decoder(latent, lengths, context)
@@ -898,8 +928,16 @@ class Aligner(nn.Module):
     def __init__(self, eos_marker=None) -> None:
         super().__init__()
         self.eos_marker = eos_marker
-    
-    def forward(self, key, enc_out, lengths, anchor=None, anchor_scale=None, eos_mark=None):
+
+    def forward(
+        self,
+        key,
+        enc_out,
+        lengths,
+        anchor=None,
+        anchor_scale=None,
+        eos_mark=None,
+    ):
         """Computes alignments
 
         Arguments
@@ -932,7 +970,6 @@ class Aligner(nn.Module):
         raise NotImplementedError()
 
 
-
 class AttentionalAligner(nn.Module):
     """An aligner that uses an attention mechanism to align the raw encoder
     outputs to the target latent space
@@ -954,30 +991,24 @@ class AttentionalAligner(nn.Module):
     """
 
     def __init__(
-            self,
-            dim,
-            in_dim=None,
-            nhead=1,
-            dropout=0.,
-            scale=None,
-            kernel_size=None,
-            smoothener_kernel_size=5
-        ):
+        self,
+        dim,
+        in_dim=None,
+        nhead=1,
+        dropout=0.0,
+        scale=None,
+        kernel_size=None,
+        smoothener_kernel_size=5,
+    ):
         super().__init__()
         if in_dim is None:
             in_dim = dim
         self.in_dim = in_dim
         self.attn = MultiheadAttention(
-            nhead=nhead,
-            d_model=dim,
-            dropout=dropout
+            nhead=nhead, d_model=dim, dropout=dropout
         )
-        self.in_norm = LayerNorm(
-            input_shape=[None, None, dim]
-        )
-        self.out_norm = LayerNorm(
-            input_shape=[None, None, dim]
-        )
+        self.in_norm = LayerNorm(input_shape=[None, None, dim])
+        self.out_norm = LayerNorm(input_shape=[None, None, dim])
 
         if scale is None:
             scale = 1
@@ -986,7 +1017,7 @@ class AttentionalAligner(nn.Module):
             # No scaling
             self.scale = 1
             self.compressor = nn.Identity()
-        elif scale > 1.:
+        elif scale > 1.0:
             stride = ceil(scale)
             if kernel_size is None:
                 kernel_size = stride
@@ -996,7 +1027,7 @@ class AttentionalAligner(nn.Module):
                 out_channels=dim,
                 stride=stride,
                 kernel_size=kernel_size,
-                padding=padding
+                padding=padding,
             )
 
         else:
@@ -1008,27 +1039,29 @@ class AttentionalAligner(nn.Module):
                 out_channels=dim,
                 stride=stride,
                 kernel_size=kernel_size,
-                padding="same"
+                padding="same",
             )
         if self.scale != 1:
             self.smoothener = Conv1d(
                 in_channels=dim,
                 out_channels=dim,
                 kernel_size=smoothener_kernel_size,
-                padding="same"
+                padding="same",
             )
         else:
             self.smoothener = nn.Identity()
-        
+
         # Rescale the feature dimension only using a convolutional layer, if necessary
         if in_dim != dim:
             self.feature_scale = Conv1d(
-                in_channels=in_dim, out_channels=dim, padding="same", kernel_size=1)
+                in_channels=in_dim,
+                out_channels=dim,
+                padding="same",
+                kernel_size=1,
+            )
         else:
             self.feature_scale = nn.Identity()
-        self.pos_emb = PositionalEncoding(
-            input_size=dim
-        )
+        self.pos_emb = PositionalEncoding(input_size=dim)
 
     def get_queries(self, enc_out, length):
         """Upsamples or downsamples raw encoder outputs
@@ -1040,7 +1073,15 @@ class AttentionalAligner(nn.Module):
         enc_out_scaled = self.out_norm(enc_out_scaled)
         return adjust_dim(enc_out_scaled, 1, length)
 
-    def forward(self, key, enc_out, lengths, anchor=None, anchor_scale=None, eos_mark=None):
+    def forward(
+        self,
+        key,
+        enc_out,
+        lengths,
+        anchor=None,
+        anchor_scale=None,
+        eos_mark=None,
+    ):
         """Computes alignments using an attention module
 
         Arguments
@@ -1080,16 +1121,19 @@ class AttentionalAligner(nn.Module):
         mod_length = lengths[key]
         anchor_length = lengths[anchor]
         anchor_max_len = int(round(enc_out[anchor].size(1) * anchor_scale))
-        
+
         queries = self.get_queries(mod_enc_out, anchor_max_len)
         queries_max_len = queries.size(1)
 
-        anchor_length_queries_abs = (anchor_length * queries_max_len).round().int()
+        anchor_length_queries_abs = (
+            (anchor_length * queries_max_len).round().int()
+        )
 
         queries_mask = length_to_mask(
-            anchor_length_queries_abs, queries_max_len).unsqueeze(-1)
+            anchor_length_queries_abs, queries_max_len
+        ).unsqueeze(-1)
         masked_queries = queries * queries_mask
-        
+
         mod_enc_out_scaled = self.feature_scale(mod_enc_out)
         mod_enc_out_scaled = self.in_norm(mod_enc_out_scaled)
         pos_embs = self.pos_emb(mod_enc_out_scaled)
@@ -1097,17 +1141,20 @@ class AttentionalAligner(nn.Module):
 
         mod_enc_out_scaled_max_len = mod_enc_out_scaled.size(1)
         mod_enc_out_scaled_length_abs = (
-            mod_length * mod_enc_out_scaled_max_len).round().int()
+            (mod_length * mod_enc_out_scaled_max_len).round().int()
+        )
         if eos_mark is not None:
             mod_enc_out_scaled, mod_enc_out_scaled_length_abs = eos_mark(
-                mod_enc_out_scaled, mod_enc_out_scaled_length_abs)
+                mod_enc_out_scaled, mod_enc_out_scaled_length_abs
+            )
             mod_enc_out_scaled_max_len = mod_enc_out_scaled.size(1)
 
         out_mask = length_to_mask(
-            mod_enc_out_scaled_length_abs, mod_enc_out_scaled_max_len).unsqueeze(-1)
-        
+            mod_enc_out_scaled_length_abs, mod_enc_out_scaled_max_len
+        ).unsqueeze(-1)
+
         attn_mask = get_attention_mask(out_mask, queries_mask)
-        
+
         output, alignment = self.attn(
             query=masked_queries,
             key=mod_enc_out_scaled,
@@ -1115,8 +1162,13 @@ class AttentionalAligner(nn.Module):
             key_padding_mask=~(out_mask.bool().squeeze(-1)),
             attn_mask=attn_mask,
         )
-        return output, alignment, anchor_length_queries_abs, mod_enc_out_scaled_length_abs
-    
+        return (
+            output,
+            alignment,
+            anchor_length_queries_abs,
+            mod_enc_out_scaled_length_abs,
+        )
+
 
 class PQAttentionalAligner(Aligner):
     """An aligner that uses an attention mechanism to align the raw encoder
@@ -1139,38 +1191,30 @@ class PQAttentionalAligner(Aligner):
     interpolation_mode: str
         the interpolation mode to use (see torch.nn.functional.interpolate)
     """
-    def __init__(
-            self,
-            dim,
-            in_dim,
-            max_scale=2.,
-            nhead=1,
-            dropout=0.,
-            proj_layers=1,
-            proj_kernel_size=3,
-            use_content=True,
-            interpolation_mode="nearest"
 
-        ):
+    def __init__(
+        self,
+        dim,
+        in_dim,
+        max_scale=2.0,
+        nhead=1,
+        dropout=0.0,
+        proj_layers=1,
+        proj_kernel_size=3,
+        use_content=True,
+        interpolation_mode="nearest",
+    ):
         super().__init__()
         self.dim = dim
         self.feature_scale = Conv1d(
-            in_channels=in_dim, out_channels=dim, padding="same", kernel_size=1)
-        
-        self.pos_emb = PositionalEncoding(
-            input_size=dim
+            in_channels=in_dim, out_channels=dim, padding="same", kernel_size=1
         )
-        self.pos_emb_proj = Linear(
-            n_neurons=dim,
-            input_size=dim
-        )
-        self.in_norm = LayerNorm(
-            input_shape=[None, None, dim]
-        )
+
+        self.pos_emb = PositionalEncoding(input_size=dim)
+        self.pos_emb_proj = Linear(n_neurons=dim, input_size=dim)
+        self.in_norm = LayerNorm(input_shape=[None, None, dim])
         self.attn = MultiheadAttention(
-            nhead=nhead,
-            d_model=dim,
-            dropout=dropout
+            nhead=nhead, d_model=dim, dropout=dropout
         )
         if proj_layers is not None and proj_layers > 0:
             if isinstance(proj_kernel_size, int):
@@ -1180,8 +1224,8 @@ class PQAttentionalAligner(Aligner):
                     Conv1d(
                         in_channels=dim,
                         out_channels=dim,
-                        kernel_size=layer_kernel_size
-                    ) 
+                        kernel_size=layer_kernel_size,
+                    )
                     for layer_kernel_size in proj_kernel_size
                 ]
             )
@@ -1189,13 +1233,19 @@ class PQAttentionalAligner(Aligner):
             self.proj = nn.Identity()
         self.max_scale = max_scale
         self.scale = None
-        self.out_norm = LayerNorm(
-            input_shape=[None, None, dim]
-        )
+        self.out_norm = LayerNorm(input_shape=[None, None, dim])
         self.use_content = use_content
         self.interpolation_mode = interpolation_mode
 
-    def forward(self, key, enc_out, lengths, anchor=None, anchor_scale=None, eos_mark=None):
+    def forward(
+        self,
+        key,
+        enc_out,
+        lengths,
+        anchor=None,
+        anchor_scale=None,
+        eos_mark=None,
+    ):
         """Computes alignments using an attention module
 
         Arguments
@@ -1239,10 +1289,12 @@ class PQAttentionalAligner(Aligner):
 
         mod_enc_out_scaled_max_len = mod_enc_out_scaled.size(1)
         mod_enc_out_scaled_length_abs = (
-            mod_length * mod_enc_out_scaled_max_len).round().int()
+            (mod_length * mod_enc_out_scaled_max_len).round().int()
+        )
         if eos_mark is not None:
             mod_enc_out_scaled, mod_enc_out_scaled_length_abs = eos_mark(
-                mod_enc_out_scaled, mod_enc_out_scaled_length_abs)
+                mod_enc_out_scaled, mod_enc_out_scaled_length_abs
+            )
             mod_enc_out_scaled_max_len = mod_enc_out_scaled.size(1)
 
         pos_embs = self.pos_emb(mod_enc_out_scaled)
@@ -1255,13 +1307,20 @@ class PQAttentionalAligner(Aligner):
         else:
             queries_max_len = enc_out[anchor].size(1) + 1
             anchor_length_queries_abs = (
-                anchor_length * queries_max_len).round().int()
+                (anchor_length * queries_max_len).round().int()
+            )
 
         out_mask = length_to_mask(
-            mod_enc_out_scaled_length_abs, mod_enc_out_scaled_max_len).unsqueeze(-1)
-        
+            mod_enc_out_scaled_length_abs, mod_enc_out_scaled_max_len
+        ).unsqueeze(-1)
+
         pos_emb = self.pos_emb(
-            torch.zeros(batch_size, queries_max_len, self.dim, device=mod_enc_out_scaled.device)
+            torch.zeros(
+                batch_size,
+                queries_max_len,
+                self.dim,
+                device=mod_enc_out_scaled.device,
+            )
         )
 
         if self.use_content:
@@ -1269,17 +1328,18 @@ class PQAttentionalAligner(Aligner):
                 mod_enc_out_scaled,
                 mod_enc_out_scaled_length_abs,
                 anchor_length_queries_abs,
-                mode=self.interpolation_mode
+                mode=self.interpolation_mode,
             )
             queries = queries + pos_emb
         else:
-            queries = pos_emb        
-            
+            queries = pos_emb
+
         queries_mask = length_to_mask(
-            anchor_length_queries_abs, queries_max_len).unsqueeze(-1)
-        
+            anchor_length_queries_abs, queries_max_len
+        ).unsqueeze(-1)
+
         masked_queries = queries * queries_mask
-        
+
         attn_mask = get_attention_mask(out_mask, queries_mask)
         output, alignment = self.attn(
             query=masked_queries,
@@ -1290,7 +1350,12 @@ class PQAttentionalAligner(Aligner):
         )
         output_proj = self.proj(output)
         output_proj = self.out_norm(output)
-        return output_proj, alignment, anchor_length_queries_abs, mod_enc_out_scaled_length_abs    
+        return (
+            output_proj,
+            alignment,
+            anchor_length_queries_abs,
+            mod_enc_out_scaled_length_abs,
+        )
 
 
 def get_attention_mask(in_mask, out_mask):
@@ -1311,7 +1376,8 @@ def get_attention_mask(in_mask, out_mask):
     batch_size, in_max_len, _ = in_mask.shape
     _, out_max_len, _ = out_mask.shape
     attn_mask = torch.zeros(batch_size, out_max_len, in_max_len).to(
-        in_mask.device)
+        in_mask.device
+    )
     out_mask_attn = ~out_mask.squeeze().bool()
     in_mask_attn = ~in_mask.squeeze().bool()
     attn_mask[out_mask_attn.unsqueeze(-1).repeat(1, 1, in_max_len)] = 1
@@ -1324,6 +1390,7 @@ class LengthPredictor(nn.Module):
     modules that predict the length of a sequence
     given a raw latent space
     """
+
     def forward(self, latent):
         """Computes the forward pass
         Arguments
@@ -1338,7 +1405,7 @@ class LengthPredictor(nn.Module):
             for training, loss-dependent        
         """
         raise NotImplementedError()
-    
+
     def to_lengths(self, length_pred):
         """Predicts absolute latent lengths from raw output
         
@@ -1353,7 +1420,6 @@ class LengthPredictor(nn.Module):
             a 1-D tensor of predicted lengths
         """
         raise NotImplementedError()
-    
 
     def lengths(self, latent):
         """Predicts relative lengths from raw output
@@ -1372,7 +1438,6 @@ class LengthPredictor(nn.Module):
         return self.to_lengths(length_pred)
 
 
-
 class LinearLengthPredictor(LengthPredictor):
     """A sequence end detector implemented using
     a simple linear layer
@@ -1385,13 +1450,11 @@ class LinearLengthPredictor(LengthPredictor):
     use_length_mask: bool
         whether to mask out padded positions
     """
+
     def __init__(self, latent_size, use_length_mask=False):
         super().__init__()
         self.latent_size = latent_size
-        self.lin = Linear(
-            input_size=latent_size,
-            n_neurons=1
-        )
+        self.lin = Linear(input_size=latent_size, n_neurons=1)
         self.act = nn.Softmax(dim=1)
         self.use_length_mask = use_length_mask
 
@@ -1409,7 +1472,7 @@ class LinearLengthPredictor(LengthPredictor):
         result: torch.Tensor
             a raw representation of sequence ends,
             for training, loss-dependent        
-        """        
+        """
         x = latent
         x = self.lin(x)
         x = x.squeeze(-1)
@@ -1419,7 +1482,7 @@ class LinearLengthPredictor(LengthPredictor):
             x *= mask
         x = self.act(x)
         return x
-    
+
     def to_lengths(self, length_pred):
         """Predict absolute lengths
         
@@ -1433,7 +1496,8 @@ class LinearLengthPredictor(LengthPredictor):
         result: torch.Tensor
             a 1-D tensor of predicted lengths
         """
-        return length_pred.argmax(dim=-1).clamp(1.).round().int() + 1
+        return length_pred.argmax(dim=-1).clamp(1.0).round().int() + 1
+
 
 class GateLengthPredictor(LengthPredictor):
     """A sequence end detector implemented using
@@ -1444,13 +1508,11 @@ class GateLengthPredictor(LengthPredictor):
     ---------
     latent_size: int
         the latent space dimension"""
+
     def __init__(self, latent_size, threshold=0.5):
         super().__init__()
         self.latent_size = latent_size
-        self.lin = Linear(
-            input_size=latent_size,
-            n_neurons=1
-        )
+        self.lin = Linear(input_size=latent_size, n_neurons=1)
         self.act = nn.Sigmoid()
         self.threshold = threshold
 
@@ -1468,13 +1530,13 @@ class GateLengthPredictor(LengthPredictor):
         result: torch.Tensor
             a raw representation of sequence ends,
             for training, loss-dependent        
-        """        
+        """
         x = latent
         x = self.lin(x)
         x = x.squeeze(-1)
         x = self.act(x)
         return x
-    
+
     def to_lengths(self, length_pred):
         """Predict absolute lengths
         
@@ -1507,23 +1569,21 @@ class EndOfSequenceMarker(nn.Module):
         "absolute": absolute (integer) lengths
         "relative": relative lengths
     """
+
     def __init__(
-            self,
-            feature_size,
-            marker_type="fixed",
-            length_mode="absolute"
-        ):
+        self, feature_size, marker_type="fixed", length_mode="absolute"
+    ):
         super().__init__()
         self.feature_size = feature_size
         self.length_mode = length_mode
         if marker_type == "fixed":
-            marker = self._get_fixed_marker()  
+            marker = self._get_fixed_marker()
             self.register_buffer("marker", marker)
         elif marker_type == "learned":
             self.marker = nn.Parameter(torch.randn(feature_size))
         else:
             raise ValueError(f"Invalid marker type {marker_type}")
-    
+
     def _get_fixed_marker(self):
         """Initializes a fixed marker in a pattern of alternative
         ones and zeros
@@ -1533,7 +1593,7 @@ class EndOfSequenceMarker(nn.Module):
         marker: torch.Tensor
             the marker"""
         marker = torch.zeros(self.feature_size)
-        marker[::2] = 1.
+        marker[::2] = 1.0
         return marker
 
     def forward(self, x, length):
@@ -1554,14 +1614,15 @@ class EndOfSequenceMarker(nn.Module):
             the new lengths
         """
         batch_size = x.size(0)
-        marker = self.marker[None, None, ...].expand(batch_size, 1, self.feature_size)
+        marker = self.marker[None, None, ...].expand(
+            batch_size, 1, self.feature_size
+        )
         marker_length = torch.ones(batch_size, device=x.device)
         x_eos, length_eos = concat_padded_features(
-            [x, marker],
-            [length, marker_length],
-            length_mode=self.length_mode
+            [x, marker], [length, marker_length], length_mode=self.length_mode
         )
         return x_eos, length_eos
+
 
 def multiscale(src, src_lengths, tgt_lengths, mode="nearest"):
     """Scales a padded batch to the specified target lengths
@@ -1582,15 +1643,14 @@ def multiscale(src, src_lengths, tgt_lengths, mode="nearest"):
     tgt_max_length = tgt_lengths.max().int().item()
     src = src.transpose(1, 2)
     out = torch.zeros(
-        (batch_size, feature_size, tgt_max_length),
-        device=src.device)
+        (batch_size, feature_size, tgt_max_length), device=src.device
+    )
     for idx, (item, src_len, tgt_len) in enumerate(
-        zip(src, src_lengths.int(), tgt_lengths.int())):
-       src_scaled = F.interpolate(
-           item[None, :, :src_len],
-           size=tgt_len,
-           mode=mode
-       )
-       out[idx, :, :tgt_len] = src_scaled.squeeze(0)
+        zip(src, src_lengths.int(), tgt_lengths.int())
+    ):
+        src_scaled = F.interpolate(
+            item[None, :, :src_len], size=tgt_len, mode=mode
+        )
+        out[idx, :, :tgt_len] = src_scaled.squeeze(0)
     out = out.transpose(1, 2)
     return out

@@ -68,10 +68,7 @@ def undo_padding_tensor(batch, lengths):
     """
     batch_max_len = batch.shape[1]
     lengths_abs = (lengths * batch_max_len).round().int().tolist()
-    return [
-        seq.narrow(0, 0, length)
-        for seq, length in zip(batch, lengths_abs)
-    ]
+    return [seq.narrow(0, 0, length) for seq, length in zip(batch, lengths_abs)]
 
 
 def get_all_files(
@@ -634,9 +631,14 @@ def adjust_dim(x, dim, size):
         x, _ = pad_right_to(x, shape)
     return x
 
+
 def concat_padded_features(
-    feats, lengths, dim=1, feats_slice_start=None, feats_slice_end=None,
-    length_mode="relative"
+    feats,
+    lengths,
+    dim=1,
+    feats_slice_start=None,
+    feats_slice_end=None,
+    length_mode="relative",
 ):
     """Concatenates multiple padded feature tensors into a single
     padded tensor in a vectorized manner without including the 
@@ -680,7 +682,9 @@ def concat_padded_features(
     first_item = feats[0]
 
     if length_mode == "relative":
-        item_lengths = torch.tensor([item.size(dim) for item in feats]).to(first_item.device)
+        item_lengths = torch.tensor([item.size(dim) for item in feats]).to(
+            first_item.device
+        )
         lengths = torch.concat([len_rel.unsqueeze(0) for len_rel in lengths])
         lengths_abs = (lengths * item_lengths.unsqueeze(-1)).int()
     else:

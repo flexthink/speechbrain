@@ -22,6 +22,7 @@ class ReproducibleNegativeSampler:
     seed: int
         the random seed
     """
+
     def __init__(self, seed=42):
         self.generator = torch.Generator()
         self.generator.manual_seed(seed)
@@ -40,9 +41,8 @@ class ReproducibleNegativeSampler:
             the IDs of negative examples
         """
         negative_idx = torch.randperm(len(data_ids), generator=self.generator)
-        return [
-            data_ids[idx] for idx in negative_idx]
-    
+        return [data_ids[idx] for idx in negative_idx]
+
     @checkpoints.mark_as_saver
     def save(self, path):
         """Saves the current metrics on the specified path."""
@@ -55,7 +55,7 @@ class ReproducibleNegativeSampler:
         del end_of_epoch  # Unused in this class
         del device  # Unused in here
         state = torch.load(path)
-        self.generator.set_state(state)    
+        self.generator.set_state(state)
 
 
 class NegativeEnhancedDataSet(FilteredSortedDynamicItemDataset):
@@ -70,6 +70,7 @@ class NegativeEnhancedDataSet(FilteredSortedDynamicItemDataset):
         a sampler
     
     """
+
     def __init__(self, from_dataset, sampler=None):
         super().__init__(from_dataset, from_dataset.data_ids)
         self.pipeline_src = copy.deepcopy(from_dataset.pipeline)
@@ -99,7 +100,9 @@ def negative_pipeline(data_id, dataset, keys):
     dataset.ensure_negative_sample()
     negative_data_id = dataset.negative_map[data_id]
     data_point = dataset.data[negative_data_id]
-    data = dataset.pipeline_src.compute_outputs({"id": negative_data_id, **data_point})
+    data = dataset.pipeline_src.compute_outputs(
+        {"id": negative_data_id, **data_point}
+    )
     for key in keys:
         yield data[key]
 
@@ -124,10 +127,14 @@ def add_negative(dataset, keys, sampler=None):
     dataset_negative = NegativeEnhancedDataSet(dataset, sampler=sampler)
     negative_keys = [f"{key}_neg" for key in keys]
     dataset_negative.pipeline_src.set_output_keys(keys)
-    dataset_negative_pipeline = partial(negative_pipeline, dataset=dataset_negative, keys=keys)
-    dataset_negative_pipeline = sb.utils.data_pipeline.takes("id")(dataset_negative_pipeline)
-    dataset_negative_pipeline = sb.utils.data_pipeline.provides(*negative_keys)(dataset_negative_pipeline)
+    dataset_negative_pipeline = partial(
+        negative_pipeline, dataset=dataset_negative, keys=keys
+    )
+    dataset_negative_pipeline = sb.utils.data_pipeline.takes("id")(
+        dataset_negative_pipeline
+    )
+    dataset_negative_pipeline = sb.utils.data_pipeline.provides(*negative_keys)(
+        dataset_negative_pipeline
+    )
     dataset_negative.add_dynamic_item(dataset_negative_pipeline)
     return dataset_negative
-
-    

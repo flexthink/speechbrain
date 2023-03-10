@@ -63,8 +63,7 @@ class CurriculumSpeechDataset(DynamicItemDataset):
         sample_rate=16000,
         generator=None,
     ):
-        super().__init__(
-            data=from_dataset.data, use_existing_id=True)
+        super().__init__(data=from_dataset.data, use_existing_id=True)
         self.base_dataset = from_dataset
         self.data_ids = self.base_dataset.data_ids
         self._refresh_index_map()
@@ -81,13 +80,13 @@ class CurriculumSpeechDataset(DynamicItemDataset):
             self.sample_segments(generator)
         self.setup_pipeline()
         self.pipeline = PipelineWrapper(self.pipeline, SAMPLE_OUTPUTS)
-    
+
     def _refresh_index_map(self):
         """Refreshes the data ID to index map"""
         self.data_id_indices = {
             data_id: idx for idx, data_id in enumerate(self.data_ids)
         }
-            
+
     def sample_segments(self, dataset=None, generator=None):
         """Samples parts of the audio file at specific word boundaries
 
@@ -101,9 +100,8 @@ class CurriculumSpeechDataset(DynamicItemDataset):
         if not generator:
             generator = torch.default_generator
         if dataset is None:
-            dataset = self.base_dataset            
-        dataset = sample(
-            dataset, self.num_samples, generator)
+            dataset = self.base_dataset
+        dataset = sample(dataset, self.num_samples, generator)
         dataset = dataset.filtered_sorted(
             key_min_value={"wrd_count": self.min_words}
         )
@@ -123,10 +121,7 @@ class CurriculumSpeechDataset(DynamicItemDataset):
             size=(len(dataset),),
             generator=generator,
         )
-        sample_word_counts = torch.minimum(
-            sample_word_counts,
-            wrd_count
-        )
+        sample_word_counts = torch.minimum(sample_word_counts, wrd_count)
         self.sample_word_counts = sample_word_counts
 
         # Sample relative offsets, from 0.0 to 1.0.
@@ -137,9 +132,13 @@ class CurriculumSpeechDataset(DynamicItemDataset):
 
         # Determine the maximum possible offsets
         max_offset = wrd_count - self.sample_word_counts
-        self.wrd_offset_start = (sample_offsets_rel * max_offset).floor().int().clamp(0)
-        self.wrd_offset_end = (self.wrd_offset_start + self.sample_word_counts)
-        self.wrd_offset_end = torch.maximum(self.wrd_offset_end, self.wrd_offset_start + 1)
+        self.wrd_offset_start = (
+            (sample_offsets_rel * max_offset).floor().int().clamp(0)
+        )
+        self.wrd_offset_end = self.wrd_offset_start + self.sample_word_counts
+        self.wrd_offset_end = torch.maximum(
+            self.wrd_offset_end, self.wrd_offset_start + 1
+        )
         self.wrd_offset_end = torch.minimum(self.wrd_offset_end, wrd_count - 1)
         sample_start = torch.tensor(
             [item[idx] for item, idx in zip(wrd_start, self.wrd_offset_start)]
@@ -212,7 +211,7 @@ class CurriculumSpeechDataset(DynamicItemDataset):
             yield cut_offsets(wrd_end, wrd_offset_start, wrd_offset_end)
             # phn_start
             phn_start, phn_from, phn_to = cut_offsets_rel(
-                phn_start, wrd_start,  wrd_offset_start, wrd_offset_end
+                phn_start, wrd_start, wrd_offset_start, wrd_offset_end
             )
             yield phn_start
             # phn_end
@@ -253,21 +252,19 @@ def sample(base_dataset, num_samples, generator=None):
             torch.ones(len(dataset)) / len(dataset),
             num_samples=num_samples,
             replacement=num_samples > len(base_dataset),
-            generator=generator
+            generator=generator,
         )
-        sample_data_ids = [
-            dataset.data_ids[idx]
-            for idx in sample_indexes
-        ]
-    
+        sample_data_ids = [dataset.data_ids[idx] for idx in sample_indexes]
+
         dataset = FilteredSortedDynamicItemDataset(
-            from_dataset=dataset,
-            data_ids=sample_data_ids
+            from_dataset=dataset, data_ids=sample_data_ids
         )
 
     return dataset
 
+
 PIPELINE_WRAPPER_ATTRS = {"pipeline", "key_map"}
+
 
 class PipelineWrapper:
     """A pipeline wrapper that makes it possible to replace
@@ -421,16 +418,14 @@ def cut_offsets_rel(offsets, ref_offsets, start, end):
     if not torch.is_tensor(ref_offsets):
         ref_offsets = torch.tensor(ref_offsets)
     start_value = ref_offsets[start].item()
-    end_value = (
-        ref_offsets[end].item() if end < len(ref_offsets)
-        else torch.inf
-    )
+    end_value = ref_offsets[end].item() if end < len(ref_offsets) else torch.inf
     condition = (offsets >= start_value) & (offsets < end_value)
     result = offsets[condition]
     result -= result[0].item()
     idx = condition.nonzero()
 
     return result.tolist(), idx.min().item(), idx.max().item() + 1
+
 
 @checkpoints.register_checkpoint_hooks
 class CurriculumController:
@@ -455,7 +450,6 @@ class CurriculumController:
             dataset.generator = self.generator
         else:
             self.generator = dataset.generator
-            
 
     def resample(self, min_words=None, max_words=None, num_samples=None):
         """Resamples the dataset
@@ -479,7 +473,7 @@ class CurriculumController:
             max_words = self.dataset.max_words
         if num_samples is None:
             num_samples = self.dataset.num_samples
-        
+
         self.dataset.min_words = min_words
         self.dataset.max_words = max_words
         self.dataset.num_samples = num_samples
@@ -504,6 +498,7 @@ class CurriculumController:
         if generator_state is not None:
             self.generator.set_state(generator_state)
 
+
 @checkpoints.register_checkpoint_hooks
 class Curriculum:
     """A helper class to define a curriculum
@@ -523,11 +518,8 @@ class Curriculum:
 
     def __init__(self, steps, controller=None):
         self.steps = sorted(
-            [
-                {"epoch": 0, **step}
-                for step in steps
-            ],
-            key=lambda step: step["epoch"]
+            [{"epoch": 0, **step} for step in steps],
+            key=lambda step: step["epoch"],
         )
         if controller is None:
             controller = CurriculumController()
@@ -552,17 +544,14 @@ class Curriculum:
         """
         step_id, step = self.find_step(epoch)
         if step_id is None:
-            logging.warn(
-                "Unable to find a curriculum step epoch %d",
-                epoch
-            )
+            logging.warn("Unable to find a curriculum step epoch %d", epoch)
             return None, None
         kwargs = {**step}
         del kwargs["epoch"]
         self.controller.resample(**kwargs)
         self.step_id = step_id
         return step_id, step
-    
+
     def find_step(self, epoch):
         """Finds the step corresponding to the specified
         epoch
@@ -580,14 +569,16 @@ class Curriculum:
             the step configuration
         """
         return next(
-            ((step_id, step) 
-             for step_id, step in reversed(
-                list(enumerate(self.steps, start=1))
-             )
-             if epoch >= step["epoch"]),
-            (None, None)
+            (
+                (step_id, step)
+                for step_id, step in reversed(
+                    list(enumerate(self.steps, start=1))
+                )
+                if epoch >= step["epoch"]
+            ),
+            (None, None),
         )
-    
+
     def bind(self, dataset):
         """Binds the underlying controller to a dataset
         
@@ -598,11 +589,7 @@ class Curriculum:
         """
         self.controller.bind(dataset)
 
-    def save_dataset(
-            self,
-            path=None,
-            keys=None
-        ):
+    def save_dataset(self, path=None, keys=None):
         """Saves the dataset contents for future reference, analysis
         and debugging
         
@@ -629,7 +616,7 @@ class Curriculum:
 
     @checkpoints.mark_as_saver
     def save(self, path):
-        """Saves the current metrics on the specified path."""        
+        """Saves the current metrics on the specified path."""
         self.controller.save(path)
 
     @checkpoints.mark_as_loader

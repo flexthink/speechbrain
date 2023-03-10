@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_OUTPUT = "./output"
 
+
 @dataclass
 class EvalBatch:
     """
@@ -59,6 +60,7 @@ class EvalBatch:
         the lengths to be passed to the decoder, predicted latent
         lengths
     """
+
     ids: list
     inputs: dict
     latents: dict
@@ -69,7 +71,6 @@ class EvalBatch:
     latents_raw: dict
     lengths_latent: dict
     lengths_dec: dict
-
 
 
 # TODO: Work in progress. The interfaces will change - this will
@@ -88,6 +89,7 @@ class MadMixtureEvaluator:
     vis_sample: set
         s selection of IDs to be used for visualization samples
     """
+
     def __init__(self, model, tasks, vis_sample=None):
         self.model = model
         self.tasks = {key: task() for key, task in tasks.items()}
@@ -133,6 +135,7 @@ class MadMixtureEvaluator:
         for task in self.tasks.values():
             task.use_vis_sample(data_ids)
 
+
 class EvaluationTask:
     """A superclass for evaluation tasks
     
@@ -141,6 +144,7 @@ class EvaluationTask:
     model: speechbrain.lobes.models.madmixture.MadMixture
         a MadMixture model
     """
+
     def __init__(self, model=None):
         if model is not None:
             self.bind(model)
@@ -172,9 +176,9 @@ class EvaluationTask:
         ---------
         path: str
             the report path
-        """        
+        """
         raise NotImplementedError()
-    
+
     def use_vis_sample(self, data_ids):
         """Uses the specified selection of IDs as a visualization sample
         
@@ -193,13 +197,14 @@ class ModalityTransferTask(EvaluationTask):
     of the available modalities and evaluates the outputs using
     available techniques
     """
+
     def __init__(self, evaluators, model=None):
         self.evaluator_fn = evaluators
         super().__init__(model)
 
     def bind(self, model):
         super().bind(model)
-        
+
         # Possible transfers consist of all available pairs
         # of modalities.
         # Supported transfers refer to transfers for which
@@ -210,16 +215,13 @@ class ModalityTransferTask(EvaluationTask):
             if tgt in self.evaluator_fn
         ]
         self.targets = [
-            key 
-            for key in self.evaluator_fn.keys()
-            if model.is_enabled(key)
+            key for key in self.evaluator_fn.keys() if model.is_enabled(key)
         ]
 
         self.evaluators = {
             (src, tgt): self.evaluator_fn[tgt]()
             for src, tgt in self.supported_transfers
         }
-
 
     def append(self, batch):
         """Adds a data sample to the evaluation
@@ -235,8 +237,8 @@ class ModalityTransferTask(EvaluationTask):
                 ids=batch.ids,
                 inputs=batch.inputs,
                 lengths=batch.lengths,
-                targets=batch.targets, 
-                src=src
+                targets=batch.targets,
+                src=src,
             )
 
     def append_modality(self, ids, inputs, lengths, targets, src):
@@ -265,11 +267,15 @@ class ModalityTransferTask(EvaluationTask):
         # A single transfer can produce latents from one modality
         # (running an encoder once with its aligner) and then
         # decode to all available targets
-        rec, latents, lengths_latent, alignments, enc_out, out_context = self.model.transfer(
-            inputs=inputs,
-            lengths=lengths,
-            src=src,
-            tgt=self.targets
+        (
+            rec,
+            latents,
+            lengths_latent,
+            alignments,
+            enc_out,
+            out_context,
+        ) = self.model.transfer(
+            inputs=inputs, lengths=lengths, src=src, tgt=self.targets
         )
         # Run evaluators for all items decoded, comparing to ground
         # truths and producing metrics
@@ -284,14 +290,14 @@ class ModalityTransferTask(EvaluationTask):
                     eval_tgt_rec,
                     eval_tgt_targets,
                     eval_src_lengths,
-                    eval_src_latents
+                    eval_src_latents,
                 ) = filter_sample_ids(
                     ids,
                     self.vis_sample,
                     tgt_rec,
                     tgt_targets,
                     src_lengths,
-                    src_latents
+                    src_latents,
                 )
             else:
 
@@ -300,14 +306,8 @@ class ModalityTransferTask(EvaluationTask):
                     eval_tgt_rec,
                     eval_tgt_targets,
                     eval_src_lengths,
-                    eval_src_latents
-                ) = (
-                    ids,
-                    tgt_rec,
-                    tgt_targets,
-                    src_lengths,
-                    src_latents
-                )
+                    eval_src_latents,
+                ) = (ids, tgt_rec, tgt_targets, src_lengths, src_latents)
             evaluator.append(
                 ids=eval_ids,
                 predict=eval_tgt_rec,
@@ -315,7 +315,7 @@ class ModalityTransferTask(EvaluationTask):
                 latent=eval_src_latents,
                 lengths_src=eval_src_lengths,
                 lengths_tgt=tgt_lengths,
-                lengths_latent=lengths_latent[src]
+                lengths_latent=lengths_latent[src],
             )
 
     def report(self, path):
@@ -340,22 +340,27 @@ class LatentSpaceAnalysisTask(EvaluationTask):
     """A task that performs latent space analysis. Currently it will
     output latent spaces and alignments for each modality"""
 
-    FORMAT_LENGTH = "{sample_id:20} {length_pred:12} {length_actual:12} {score:8.2f}"
-    FORMAT_LENGTH_HEADER = "{sample_id:20} {length_pred:>12} {length_actual:>12} {score:>8}"
+    FORMAT_LENGTH = (
+        "{sample_id:20} {length_pred:12} {length_actual:12} {score:8.2f}"
+    )
+    FORMAT_LENGTH_HEADER = (
+        "{sample_id:20} {length_pred:>12} {length_actual:>12} {score:>8}"
+    )
     LENGTH_LABELS = {
         "sample_id": "ID",
         "length_pred": "Predicted",
         "length_actual": "Actual",
-        "score": "Diff"
+        "score": "Diff",
     }
+
     def __init__(
-            self,
-            model=None,
-            context_alignment_keys=None,
-            figsize_latent=LATENT_DEFAULT_FIGSIZE,
-            figsize_aligment=ALGNMENT_DEFAULT_FIGSIZE,
-            columns_alignment=3,
-        ):
+        self,
+        model=None,
+        context_alignment_keys=None,
+        figsize_latent=LATENT_DEFAULT_FIGSIZE,
+        figsize_aligment=ALGNMENT_DEFAULT_FIGSIZE,
+        columns_alignment=3,
+    ):
         super().__init__(model)
         self.ids = []
         self.latents = {}
@@ -364,7 +369,7 @@ class LatentSpaceAnalysisTask(EvaluationTask):
         self.context_alignments = {}
         self.lengths_latent = {}
         self.lengths_dec = {}
-        
+
         self.full_ids = []
         self.full_lengths_latent = {}
         self.full_lengths_dec = {}
@@ -388,12 +393,11 @@ class LatentSpaceAnalysisTask(EvaluationTask):
         """
         super().bind(model)
         self.length_diff_metrics = {
-            key: MetricStats(length_diff)
-            for key in self.model.modalities
+            key: MetricStats(length_diff) for key in self.model.modalities
         }
-                
 
     """Computes and outputs latent representations for analysis"""
+
     def append(self, batch):
         """Adds a data sample to the evaluation
         
@@ -402,7 +406,15 @@ class LatentSpaceAnalysisTask(EvaluationTask):
         batch: EvalBatch
             an evaluation batch
         """
-        ids, lengths, latents, alignments, out_context, lengths_latent, lengths_dec = filter_sample_ids(
+        (
+            ids,
+            lengths,
+            latents,
+            alignments,
+            out_context,
+            lengths_latent,
+            lengths_dec,
+        ) = filter_sample_ids(
             batch.ids,
             self.vis_sample,
             batch.lengths,
@@ -410,31 +422,31 @@ class LatentSpaceAnalysisTask(EvaluationTask):
             batch.alignments,
             batch.out_context,
             batch.lengths_latent,
-            batch.lengths_dec
+            batch.lengths_dec,
         )
         if ids:
             self.ids.extend(ids)
             self.lengths.extend(lengths)
             self._extend_dict(self.latents, latents)
             self._extend_dict(self.alignments, alignments)
-            self._extend_dict(self.lengths_latent, lengths_latent)            
-            self._extend_dict(self.lengths_dec, lengths_dec)            
+            self._extend_dict(self.lengths_latent, lengths_latent)
+            self._extend_dict(self.lengths_dec, lengths_dec)
             context_alignments = {
-                key: value for key, value in out_context.items()
+                key: value
+                for key, value in out_context.items()
                 if key in self.context_alignment_keys
             }
-            self._extend_dict(
-                self.context_alignments, context_alignments)
-            
+            self._extend_dict(self.context_alignments, context_alignments)
+
         self.full_ids.extend(batch.ids)
         self._extend_dict(self.full_lengths_latent, batch.lengths_latent)
         self._extend_dict(self.full_lengths_dec, batch.lengths_dec)
-        
+
         for key, metric in self.length_diff_metrics.items():
             metric.append(
                 ids=batch.ids,
                 predict=batch.lengths_dec[key],
-                target=batch.lengths_latent[key]
+                target=batch.lengths_latent[key],
             )
 
     def _extend_dict(self, target, values):
@@ -450,9 +462,7 @@ class LatentSpaceAnalysisTask(EvaluationTask):
         for key, modality_values in values.items():
             if key not in target:
                 target[key] = []
-            target[key].extend(
-                modality_values.detach().cpu()
-            )
+            target[key].extend(modality_values.detach().cpu())
 
     def report(self, path):
         """Outputs reports for the modality transfer task
@@ -466,7 +476,7 @@ class LatentSpaceAnalysisTask(EvaluationTask):
         self.save_raw(path)
         self.save_lengths_stats(path)
         if self.plt is not None:
-            self.save_images(path)        
+            self.save_images(path)
 
     def save_lengths_stats(self, path):
         for key, metric in self.length_diff_metrics.items():
@@ -481,15 +491,19 @@ class LatentSpaceAnalysisTask(EvaluationTask):
         print(header, file=stats_file)
         print("=" * len(header), file=stats_file)
 
-        for sample_id, length_dec, length_latent, score in zip(self.full_ids, self.full_lengths_dec[key], self.full_lengths_latent[key], metric.scores):
+        for sample_id, length_dec, length_latent, score in zip(
+            self.full_ids,
+            self.full_lengths_dec[key],
+            self.full_lengths_latent[key],
+            metric.scores,
+        ):
             line = self.FORMAT_LENGTH.format(
                 sample_id=sample_id,
                 length_pred=length_dec,
                 length_actual=length_latent,
-                score=score
+                score=score,
             )
             print(line, file=stats_file)
-        
 
     def save_raw(self, path):
         """Saves raw tensors"""
@@ -504,7 +518,7 @@ class LatentSpaceAnalysisTask(EvaluationTask):
         }
         file_name = os.path.join(path, "raw.pt")
         torch.save(data, file_name)
-    
+
     def save_images(self, path):
         for idx, sample_id in enumerate(self.ids):
             (
@@ -518,7 +532,7 @@ class LatentSpaceAnalysisTask(EvaluationTask):
                     self.latents,
                     self.alignments,
                     self.lengths_latent,
-                    self.lengths_dec
+                    self.lengths_dec,
                 ]
             ]
             file_name = os.path.join(path, f"{sample_id}.png")
@@ -527,13 +541,13 @@ class LatentSpaceAnalysisTask(EvaluationTask):
                 sample_latents=sample_latents,
                 sample_alignments=sample_alignments,
                 sample_lengths_latent=sample_lengths_latent,
-                sample_lengths_dec=sample_lengths_dec
+                sample_lengths_dec=sample_lengths_dec,
             )
             try:
                 fig.savefig(file_name)
             finally:
                 self.plt.close(fig)
-            
+
             sample_context_alignments = {
                 key: context_alignments[idx]
                 for key, context_alignments in self.context_alignments.items()
@@ -544,22 +558,18 @@ class LatentSpaceAnalysisTask(EvaluationTask):
                 fig.savefig(file_name)
             finally:
                 self.plt.close(fig)
-    
-    def _extract_idx(self, record, idx):
-        return {
-            key: mod_values[idx]
-            for key, mod_values in record.items()
-        }
 
+    def _extract_idx(self, record, idx):
+        return {key: mod_values[idx] for key, mod_values in record.items()}
 
     def plot_latent(
-            self,
-            sample_id,
-            sample_latents,
-            sample_alignments,
-            sample_lengths_latent,
-            sample_lengths_dec
-        ):
+        self,
+        sample_id,
+        sample_latents,
+        sample_alignments,
+        sample_lengths_latent,
+        sample_lengths_dec,
+    ):
         """Plots a latent space with the corresponding alignments
         
         Arguments
@@ -586,19 +596,35 @@ class LatentSpaceAnalysisTask(EvaluationTask):
                 ax.set_title(key)
                 ax.set_xlabel("Time")
                 ax.set_ylabel("Features")
-                im = ax.imshow(sample_latent.t(), aspect="auto", origin="lower")                
+                im = ax.imshow(sample_latent.t(), aspect="auto", origin="lower")
                 self._plot_length_bar(
-                    ax=ax, length=sample_lengths_latent[key], dim=dim, color="red", marker="o")
+                    ax=ax,
+                    length=sample_lengths_latent[key],
+                    dim=dim,
+                    color="red",
+                    marker="o",
+                )
                 self._plot_length_bar(
-                    ax=ax, length=sample_lengths_dec[key], dim=dim, color="blue", marker="x")
+                    ax=ax,
+                    length=sample_lengths_dec[key],
+                    dim=dim,
+                    color="blue",
+                    marker="x",
+                )
                 fig.colorbar(im, orientation="vertical")
-            for idx, (key, sample_alignment) in enumerate(sample_alignments.items()):
-                ax = fig.add_subplot(2, modality_count, modality_count + idx + 1)
+            for idx, (key, sample_alignment) in enumerate(
+                sample_alignments.items()
+            ):
+                ax = fig.add_subplot(
+                    2, modality_count, modality_count + idx + 1
+                )
                 ax.set_title(f"align: {key}")
                 ax.set_xlabel("Outputs")
                 ax.set_ylabel("Inputs")
-                im = ax.imshow(sample_alignment.t(), aspect="auto", origin="lower")
-                fig.colorbar(im, orientation="vertical")                   
+                im = ax.imshow(
+                    sample_alignment.t(), aspect="auto", origin="lower"
+                )
+                fig.colorbar(im, orientation="vertical")
             fig.tight_layout()
             return fig
         except:
@@ -607,7 +633,7 @@ class LatentSpaceAnalysisTask(EvaluationTask):
 
     def _plot_length_bar(self, ax, length, dim, color, marker):
         x = [length, length]
-        y = [0, dim-1]
+        y = [0, dim - 1]
         ax.plot(x, y, color=color, marker=marker)
 
     def plot_alignment(self, sample_id, alignments):
@@ -647,9 +673,10 @@ def length_diff(predict, target):
         a tensor of ground truth lengths"""
     return (predict - target).abs() / target
 
-    
+
 TOKEN_SEQUENCE_SUMMARY_REPORT = "summary.json"
 TOKEN_SEQUENCE_ALIGNMENT_REPORT = "alignment.txt"
+
 
 class OutputEvaluator:
     """A superclass for output evaluators. Each output
@@ -658,9 +685,19 @@ class OutputEvaluator:
     In the case of modalities that are difficult to evaluate
     automatically, it may be sufficient to record
     samples."""
+
     vis_samples_only = False
 
-    def append(self, ids, predict, target, latent, lengths_src, lengths_tgt, lengths_latent):
+    def append(
+        self,
+        ids,
+        predict,
+        target,
+        latent,
+        lengths_src,
+        lengths_tgt,
+        lengths_latent,
+    ):
         """Remembers predictions, targets and any associated
         metrics for future reporting
         
@@ -685,7 +722,7 @@ class OutputEvaluator:
             latent lengths
         """
         raise NotImplementedError()
-    
+
     def report(self, path):
         """Outputs the relevant reports
         
@@ -694,7 +731,8 @@ class OutputEvaluator:
         path: str
             the path to output reports, samples, etc
         """
-        raise NotImplementedError()    
+        raise NotImplementedError()
+
 
 class TokenSequenceEvaluator(OutputEvaluator):
     """An evaluator for targets that can be interpreted
@@ -715,6 +753,7 @@ class TokenSequenceEvaluator(OutputEvaluator):
         will be removed from sequences
         
     """
+
     def __init__(self, hyp, decoder=None, ignore_tokens=None):
         self.decoder = decoder
         if isinstance(self.decoder, TextEncoder):
@@ -724,16 +763,23 @@ class TokenSequenceEvaluator(OutputEvaluator):
         else:
             raise ValueError(f"Invalid decoder {decoder_fn}")
         self.decoder_fn = decoder_fn
-        self.error_stats = ErrorRateStats(
-            mode="generic"
-        )
+        self.error_stats = ErrorRateStats(mode="generic")
         if isinstance(hyp, S2SBaseSearcher):
             hyp = partial(hyp_s2s_search, searcher=hyp)
 
         self.hyp = hyp
         self.ignore_tokens = set(ignore_tokens) if ignore_tokens else None
 
-    def append(self, ids, predict, target, latent, lengths_src, lengths_tgt, lengths_latent):
+    def append(
+        self,
+        ids,
+        predict,
+        target,
+        latent,
+        lengths_src,
+        lengths_tgt,
+        lengths_latent,
+    ):
         """Updates sequence metrics with the data samples provided
         
         Arguments
@@ -764,16 +810,19 @@ class TokenSequenceEvaluator(OutputEvaluator):
             ids=ids,
             predict=hyps_clean,
             target=targets_clean,
-            ind2lab=self.decoder_fn
+            ind2lab=self.decoder_fn,
         )
 
     def _clean(self, hyps):
         """Removes any ignored tokens from the hypothesis list"""
-        return [
-            [item  for item in batch
-             if item not in self.ignore_tokens]
-            for batch in hyps
-        ] if self.ignore_tokens else hyps
+        return (
+            [
+                [item for item in batch if item not in self.ignore_tokens]
+                for batch in hyps
+            ]
+            if self.ignore_tokens
+            else hyps
+        )
 
     def report(self, path):
         """Outputs the relevant reports
@@ -793,12 +842,12 @@ class TokenSequenceEvaluator(OutputEvaluator):
         ---------
         path: str
             the path to output reports, samples, etc
-        """        
+        """
         summary = self.error_stats.summarize()
         file_name = os.path.join(path, TOKEN_SEQUENCE_SUMMARY_REPORT)
         with open(file_name, "w") as report_file:
             json.dump(summary, report_file)
-    
+
     def report_detail(self, path):
         """Outputs a detail report
         
@@ -813,6 +862,8 @@ class TokenSequenceEvaluator(OutputEvaluator):
 
 
 SPECTROGRAM_DEFAULT_FIGURE_SIZE = (16, 10)
+
+
 class SpectrogramEvaluator(OutputEvaluator):
     """An evaluator that outputs audio spectrogram samples
 
@@ -832,20 +883,22 @@ class SpectrogramEvaluator(OutputEvaluator):
         in reverse order
 
     """
+
     vis_samples_only = True
+
     def __init__(
-            self,
-            figsize=None,
-            vocoder=None,
-            vocoder_pre=None,
-            vocoder_batch_size=16,
-            sample_rate=16000,
-            normalization=None,
-            spec_db=True,
-            spec_ref=10.,
-            spec_power=1.,
-            audio_samples_enabled=True,
-        ):
+        self,
+        figsize=None,
+        vocoder=None,
+        vocoder_pre=None,
+        vocoder_batch_size=16,
+        sample_rate=16000,
+        normalization=None,
+        spec_db=True,
+        spec_ref=10.0,
+        spec_power=1.0,
+        audio_samples_enabled=True,
+    ):
         self.device = None
         self.predict = []
         self.target = []
@@ -865,9 +918,18 @@ class SpectrogramEvaluator(OutputEvaluator):
         self.spec_ref = spec_ref
         self.spec_power = spec_power
         self.plt = _get_matplotlib()
-        self.audio_samples_enabled = audio_samples_enabled        
-    
-    def append(self, ids, predict, target, latent, lengths_src, lengths_tgt, lengths_latent):
+        self.audio_samples_enabled = audio_samples_enabled
+
+    def append(
+        self,
+        ids,
+        predict,
+        target,
+        latent,
+        lengths_src,
+        lengths_tgt,
+        lengths_latent,
+    ):
         """Remembers raw outputs for spectrogram plotting
         
         Arguments
@@ -914,7 +976,6 @@ class SpectrogramEvaluator(OutputEvaluator):
             self.save_spectrograms_image(path)
         if self.vocoder_fn is not None and self.audio_samples_enabled:
             self.save_audio(path)
-    
 
     def save_spectrograms_image(self, path):
         """Saves all spectrograms as images, using Matplotlib
@@ -925,9 +986,13 @@ class SpectrogramEvaluator(OutputEvaluator):
             the target path            
         
         """
-        for sample_id, predict_sample, target_sample in zip(self.ids, self.predict, self.target):
-            self.save_spectrogram_image(path, sample_id, predict_sample, target_sample)
-    
+        for sample_id, predict_sample, target_sample in zip(
+            self.ids, self.predict, self.target
+        ):
+            self.save_spectrogram_image(
+                path, sample_id, predict_sample, target_sample
+            )
+
     def save_spectrograms_raw(self, path):
         """Saves all spectrograms as a raw PyTorch file
         
@@ -940,11 +1005,13 @@ class SpectrogramEvaluator(OutputEvaluator):
         data = {
             "ids": self.ids,
             "predict": self.predict,
-            "target": self.target,        
+            "target": self.target,
         }
         torch.save(data, file_name)
 
-    def save_spectrogram_image(self, path, sample_id, predict_sample, target_sample):
+    def save_spectrogram_image(
+        self, path, sample_id, predict_sample, target_sample
+    ):
         """Saves a single spectrogram image
         
         Arguments
@@ -981,7 +1048,7 @@ class SpectrogramEvaluator(OutputEvaluator):
             a Matplotlib figure
         """
         fig = self.plt.figure()
-        predict_plot = predict[:target.size(0), :].t()
+        predict_plot = predict[: target.size(0), :].t()
         target_plot = target.t()
         try:
             ax = fig.add_subplot(1, 2, 1)
@@ -1001,6 +1068,7 @@ class SpectrogramEvaluator(OutputEvaluator):
         except:
             self.plt.close(fig)
             raise
+
     @property
     def vocoder(self):
         if self._vocoder is None:
@@ -1012,14 +1080,15 @@ class SpectrogramEvaluator(OutputEvaluator):
         using the provided vocoder"""
         batches = batchify(
             sample_ids=self.ids,
-            predict=self.predict, target=self.target,
-            batch_size=self.vocoder_batch_size
+            predict=self.predict,
+            target=self.target,
+            batch_size=self.vocoder_batch_size,
         )
         for batch in batches:
             batch = batch.to(self.device)
             spec_target = batch.target.data.transpose(-1, -2)
             spec_predict = batch.predict.data.transpose(-1, -2)
-            spec_predict = spec_predict[:, :, :spec_target.size(-1)]
+            spec_predict = spec_predict[:, :, : spec_target.size(-1)]
             wav_target = self.generate_audio(spec_target)
             wav_predict = self.generate_audio(spec_predict)
             self.save_audio_batch(
@@ -1027,14 +1096,14 @@ class SpectrogramEvaluator(OutputEvaluator):
                 wav=wav_predict,
                 lengths=batch.predict.lengths,
                 prefix="predict",
-                path=path
+                path=path,
             )
             self.save_audio_batch(
                 sample_ids=batch.sample_ids,
                 wav=wav_target,
                 lengths=batch.target.lengths,
                 prefix="target",
-                path=path
+                path=path,
             )
 
     def generate_audio(self, spec):
@@ -1044,35 +1113,36 @@ class SpectrogramEvaluator(OutputEvaluator):
                     spec = norm.denormalize(spec)
             if self.spec_db:
                 spec = AF.DB_to_amplitude(
-                    spec,
-                    ref=self.spec_ref,
-                    power=self.spec_power
+                    spec, ref=self.spec_ref, power=self.spec_power
                 )
             spec = self.vocoder_pre(spec)
             return self.vocoder(spec)
-    
+
     def save_audio_batch(self, path, sample_ids, wav, lengths, prefix):
         lengths_abs = (wav.size(-1) * lengths).int()
         wav = wav.squeeze(1)
-        for sample_id, wav_item, wav_length in zip(sample_ids, wav, lengths_abs):
+        for sample_id, wav_item, wav_length in zip(
+            sample_ids, wav, lengths_abs
+        ):
             file_name = os.path.join(path, f"{prefix}_{sample_id}.wav")
             write_audio(
                 file_name,
                 wav_item[:wav_length].cpu(),
-                samplerate=self.sample_rate
+                samplerate=self.sample_rate,
             )
 
 
 def _get_matplotlib():
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+
         return plt
     except ImportError:
         logger.warn("matplotlib is not available - cannot log figures")
         return None
-
 
 
 def hyp_s2s_search(probs, lengths, latent, lengths_latent, searcher):
@@ -1115,15 +1185,15 @@ def filter_sample_ids(ids, sample_ids, *args):
     args: list
         tensors ordered by id"""
     if sample_ids is None:
-        return ids, *args
+        return (ids, *args)
     filtered = [
-        (item_id, idx) for idx, item_id in enumerate(ids)
+        (item_id, idx)
+        for idx, item_id in enumerate(ids)
         if item_id in sample_ids
     ]
     filtered_ids = [item_id for item_id, _ in filtered]
     indexes = [idx for _, idx in filtered]
-    return filtered_ids, *(
-        _filter_by_index(item, indexes) for item in args)
+    return (filtered_ids, *(_filter_by_index(item, indexes) for item in args))
 
 
 def _filter_by_index(items, indexes):
@@ -1156,9 +1226,8 @@ def batchify(batch_size, **kwargs):
     total_length = len(kwargs[first_key])
     for idx in range(0, total_length, batch_size):
         batch_data_items = [
-            {key: value[idx + batch_idx]
-             for key, value in kwargs.items()}
-             for batch_idx in range(batch_size)
+            {key: value[idx + batch_idx] for key, value in kwargs.items()}
+            for batch_idx in range(batch_size)
             if idx + batch_idx < total_length
         ]
         batch = PaddedBatch(batch_data_items)

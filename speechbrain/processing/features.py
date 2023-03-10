@@ -1232,6 +1232,7 @@ class InputNormalization(torch.nn.Module):
         stats = torch.load(path, map_location=device)
         self._load_statistics_dict(stats)
 
+
 class GlobalNorm(torch.nn.Module):
     """
     A global normalization module - computes a single mean and standard deviation
@@ -1432,7 +1433,6 @@ class MinLevelNorm(torch.nn.Module):
         x *= -self.min_level_db
         x += self.min_level_db
         return x
-
 
 
 class DynamicRangeCompression(torch.nn.Module):

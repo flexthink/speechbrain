@@ -12,6 +12,7 @@ def lengths_arg_exists(func):
     """
     return arg_exists(func, "lengths")
 
+
 def arg_exists(func, name):
     """Determines whether the specified argument exists in a function specification
     
@@ -25,6 +26,7 @@ def arg_exists(func, name):
     """
     spec = inspect.getfullargspec(func)
     return name in spec.args + spec.kwonlyargs
+
 
 class LengthsCapableChain:
     """Chain together callables. Can handle relative lengths.

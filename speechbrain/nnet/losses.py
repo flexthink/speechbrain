@@ -382,13 +382,19 @@ def cosine_similarity_loss(
 
     predictions, targets = truncate(predictions, targets, allowed_len_diff)
     return -compute_masked_loss(
-        _cosine_similairty, predictions, targets, length, reduction=reduction,
-        mask_shape="loss"
+        _cosine_similairty,
+        predictions,
+        targets,
+        length,
+        reduction=reduction,
+        mask_shape="loss",
     )
 
-def _cosine_similairty(predictions, targets):
-    return torch.nn.functional.cosine_similarity(predictions, targets, dim=-1).unsqueeze(-1)
 
+def _cosine_similairty(predictions, targets):
+    return torch.nn.functional.cosine_similarity(
+        predictions, targets, dim=-1
+    ).unsqueeze(-1)
 
 
 def classification_error(
@@ -1355,7 +1361,7 @@ def distance_diff_loss(
     beta=0.25,
     max_weight=100.0,
     use_masked_penalty=False,
-    masked_penalty=10.,
+    masked_penalty=10.0,
     reduction="mean",
 ):
     """A loss function that can be used in cases where a model outputs
@@ -1403,9 +1409,11 @@ def distance_diff_loss(
         mask_length = length
     return compute_masked_loss(
         functools.partial(
-            _distance_diff_loss, beta=beta, max_weight=max_weight,
+            _distance_diff_loss,
+            beta=beta,
+            max_weight=max_weight,
             masked_penalty=loss_masked_penalty,
-            length=loss_length
+            length=loss_length,
         ),
         predictions=predictions,
         targets=targets,
@@ -1415,7 +1423,9 @@ def distance_diff_loss(
     )
 
 
-def _distance_diff_loss(predictions, targets, beta, max_weight, masked_penalty=0., length=None):
+def _distance_diff_loss(
+    predictions, targets, beta, max_weight, masked_penalty=0.0, length=None
+):
     """Computes the raw (unreduced) distance difference loss
     
     Arguments
@@ -1444,13 +1454,15 @@ def _distance_diff_loss(predictions, targets, beta, max_weight, masked_penalty=0
     loss_weights = ((beta * diff_range).exp() - 1.0).clamp(max=max_weight)
     if length is not None:
         length_abs = length * max_len
-        loss_weights = torch.where(pos_range > length_abs[..., None], masked_penalty, loss_weights)
+        loss_weights = torch.where(
+            pos_range > length_abs[..., None], masked_penalty, loss_weights
+        )
     return (loss_weights * predictions).unsqueeze(-1)
 
 
 def _distance_l2_squared(x, y):
     """Computes the L2-squared distance between two vectors"""
-    elementwise_distance = (x - y)**2
+    elementwise_distance = (x - y) ** 2
     return elementwise_distance.sum(dim=-1)
 
 
@@ -1461,7 +1473,7 @@ def triplet_loss(
     length,
     margin=1.0,
     distance=None,
-    reduction="mean"
+    reduction="mean",
 ):
     """Computes a triplet loss - useful when attempting to "tie down" embeddings from  multiple
     modalities (e.g. https://arxiv.org/pdf/2011.09044v2.pdf), also useful for learning difference
@@ -1491,8 +1503,8 @@ def triplet_loss(
     if not distance:
         distance = _distance_l2_squared
     loss = torch.maximum(
-        torch.tensor(0., device=anchor.device),
-        margin + distance(anchor, positive) - distance(anchor, negative)
+        torch.tensor(0.0, device=anchor.device),
+        margin + distance(anchor, positive) - distance(anchor, negative),
     )
     mask = compute_length_mask(loss, length)
     loss_reduced = reduce_loss(loss * mask, mask=mask, reduction=reduction)
@@ -1501,7 +1513,7 @@ def triplet_loss(
 
 def _distance_l2_squared(x, y):
     """Computes the L2-squared distance between two vectors"""
-    elementwise_distance = (x - y)**2
+    elementwise_distance = (x - y) ** 2
     return elementwise_distance.mean(dim=-1)
 
 
@@ -1513,7 +1525,7 @@ def distance_triplet_loss(
     margin=1.0,
     triplet_loss_weight=1.0,
     distance=None,
-    reduction="mean"
+    reduction="mean",
 ):
     """Computes a combination of a distance loss and a triplet loss - useful when attempting to "tie down" embeddings from  multiple
     modalities (e.g. https://arxiv.org/pdf/2011.09044v2.pdf), also useful for learning difference functions
@@ -1543,12 +1555,12 @@ def distance_triplet_loss(
     """
     if not distance:
         distance = _distance_l2_squared
-    
+
     anchor_pos_distance = distance(anchor, positive)
     anchor_neg_distance = distance(anchor, negative)
     triplet_loss = torch.maximum(
-        torch.tensor(0., device=anchor.device),
-        margin + anchor_pos_distance - anchor_neg_distance
+        torch.tensor(0.0, device=anchor.device),
+        margin + anchor_pos_distance - anchor_neg_distance,
     )
     loss = anchor_pos_distance + triplet_loss_weight * triplet_loss
     mask = compute_length_mask(loss, length)

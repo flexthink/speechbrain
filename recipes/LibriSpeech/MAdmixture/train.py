@@ -16,7 +16,10 @@ from functools import partial
 from hyperpyyaml import load_hyperpyyaml
 from librispeech_prepare import prepare_librispeech, LibriSpeechMode
 from collections import namedtuple
-from speechbrain.dataio.dataset import apply_overfit_test, FilteredSortedDynamicItemDataset
+from speechbrain.dataio.dataset import (
+    apply_overfit_test,
+    FilteredSortedDynamicItemDataset,
+)
 from speechbrain.lobes.models.madmixture.evaluation import EvalBatch
 from speechbrain.utils.train_logger import TensorLogger
 from speechbrain.dataio.negative import add_negative
@@ -59,15 +62,27 @@ class MadMixtureBrain(sb.Brain):
         """
         # We first move the batch to the appropriate device.
         batch = batch.to(self.device)
-        feats, targets, lengths, context, feats_neg, lengths_neg = self.prepare_features(stage, batch)
+        (
+            feats,
+            targets,
+            lengths,
+            context,
+            feats_neg,
+            lengths_neg,
+        ) = self.prepare_features(stage, batch)
         out = self.modules.model.train_step(
-            feats, lengths, context, transfer=self.hparams.transfer_loss_enabled)
+            feats, lengths, context, transfer=self.hparams.transfer_loss_enabled
+        )
         latents_neg, lengths_latent_neg = None, None
         if self.hparams.negative_samples_enabled:
-            latents_neg, _, _, lengths_latent_neg, _ = self.modules.model.latent(
-                inputs=feats_neg,
-                lengths=lengths_neg,
-                context=context
+            (
+                latents_neg,
+                _,
+                _,
+                lengths_latent_neg,
+                _,
+            ) = self.modules.model.latent(
+                inputs=feats_neg, lengths=lengths_neg, context=context
             )
         if self.hparams.enable_latent_log:
             for key, mod_latent in out.latents.items():
@@ -89,9 +104,9 @@ class MadMixtureBrain(sb.Brain):
             lengths_latent=out.lengths_latent,
             lengths_dec=out.lengths_dec,
             latents_neg=latents_neg,
-            lengths_latent_neg=lengths_latent_neg
+            lengths_latent_neg=lengths_latent_neg,
         )
-    
+
     def fit(
         self,
         epoch_counter,
@@ -152,14 +167,13 @@ class MadMixtureBrain(sb.Brain):
             valid_loader_kwargs,
         )
 
-    
     def _fit_train(self, train_set, epoch, enable):
         super()._fit_train(train_set, epoch, enable)
         if hasattr(self, "eval_sample") and sb.Stage.TRAIN in self.eval_sample:
             self.evaluate_sample(
                 sample_dataset=self.eval_sample[sb.Stage.TRAIN],
                 stage=sb.Stage.TRAIN,
-                dataloader_kwargs=self._train_loader_kwargs
+                dataloader_kwargs=self._train_loader_kwargs,
             )
 
     def fit_batch(self, batch):
@@ -185,12 +199,8 @@ class MadMixtureBrain(sb.Brain):
         """
 
         result = super().fit_batch(batch)
-        if (
-            self.hparams.enable_train_metrics
-            and (
-                self.step == 1
-                or self.step % self.hparams.train_log_interval == 0
-            )
+        if self.hparams.enable_train_metrics and (
+            self.step == 1 or self.step % self.hparams.train_log_interval == 0
         ):
             self.log_batch()
         return result
@@ -200,7 +210,7 @@ class MadMixtureBrain(sb.Brain):
         epoch = self.hparams.epoch_counter.current
         stats = {
             "lr": self.optimizer.param_groups[0]["lr"],
-            **self.loss_metric.summarize(field="average")
+            **self.loss_metric.summarize(field="average"),
         }
         stats_meta = {"epoch": epoch, "step": self.step}
         self.hparams.loss_logger.log_stats(
@@ -210,7 +220,7 @@ class MadMixtureBrain(sb.Brain):
             self.hparams.tensorboard_train_logger.log_stats(
                 stats_meta=stats_meta, train_stats=stats
             )
-    
+
     def prepare_features(self, stage, batch):
         """Prepare features for computation on-the-fly
 
@@ -237,7 +247,7 @@ class MadMixtureBrain(sb.Brain):
             Lengths from negative examples
         """
 
-        #TODO: This can be made more modular
+        # TODO: This can be made more modular
         # Feature computation and normalization
         feats = {}
         targets = {}
@@ -251,11 +261,10 @@ class MadMixtureBrain(sb.Brain):
             if self.hparams.compute_features_transpose:
                 feats_audio = feats_audio.transpose(-1, -2)
             for norm in self.modules.normalize:
-                feats_audio = norm(feats_audio, wav_lens)        
+                feats_audio = norm(feats_audio, wav_lens)
             feats["audio"] = feats_audio
             targets["audio"] = feats_audio
             lengths["audio"] = wav_lens
-
 
         # TODO: Embeddings are computed twice, avoid this
         feats_char_emb = None
@@ -280,9 +289,8 @@ class MadMixtureBrain(sb.Brain):
             "phn_emb": feats_phn_emb,
         }
 
-
         return feats, targets, lengths, context, feats_neg, lengths_neg
-    
+
     def prepare_features_negative(self, batch):
         feats_neg = {}
         lengths_neg = {}
@@ -293,20 +301,19 @@ class MadMixtureBrain(sb.Brain):
             if self.hparams.compute_features_transpose:
                 feats_audio = feats_audio.transpose(-1, -2)
             for norm in self.modules.normalize:
-                feats_audio = norm(feats_audio, wav_lens)        
+                feats_audio = norm(feats_audio, wav_lens)
             feats_neg["audio"] = feats_audio
             lengths_neg["audio"] = wav_lens
 
         if self.hparams.char_enabled:
             feats_neg["char"] = batch.char_encoded_neg.data
             lengths_neg["char"] = batch.char_encoded_neg.lengths
-        
+
         if self.hparams.phn_enabled:
             feats_neg["phn"] = batch.char_encoded_neg.data
             lengths_neg["phn"] = batch.char_encoded_neg.lengths
 
         return feats_neg, lengths_neg
-
 
     def compute_objectives(self, predictions, batch, stage):
         """Computes the loss given the predicted and targeted outputs. We here
@@ -360,13 +367,9 @@ class MadMixtureBrain(sb.Brain):
             details_log = {key: value.item() for key, value in details.items()}
             logger.warn("Details: %s", pformat(details_log))
             logger.warn("Lengths: %s", pformat(predictions.lengths))
-        update_loss_metric = (
-            (stage != sb.Stage.TRAIN)
-            or
-            (
-                self.hparams.enable_train_metrics
-                and self.step % self.hparams.train_metrics_interval == 0
-            )
+        update_loss_metric = (stage != sb.Stage.TRAIN) or (
+            self.hparams.enable_train_metrics
+            and self.step % self.hparams.train_metrics_interval == 0
         )
         if update_loss_metric:
             self.loss_metric.append(
@@ -386,7 +389,7 @@ class MadMixtureBrain(sb.Brain):
                 reduction="batch",
             )
         return loss
-    
+
     def evaluate_sample(self, sample_dataset, stage, dataloader_kwargs):
         """Runs evaluation on a sample
         
@@ -403,13 +406,15 @@ class MadMixtureBrain(sb.Brain):
         logger.info("%s: evaluating on a sample", stage.name.lower())
         self._create_evaluator(stage)
         sample_loader = self.make_dataloader(
-            sample_dataset, stage=stage, **dataloader_kwargs)
+            sample_dataset, stage=stage, **dataloader_kwargs
+        )
         with tqdm(sample_loader, dynamic_ncols=True) as t:
             for step, batch in enumerate(t, start=1):
                 tst_id = "1034-121119-0081"
                 if tst_id in batch.snt_id:
                     idx = batch.snt_id.index(tst_id)
                     from icecream import ic
+
                     ic(batch.phn[idx])
                     ic(batch.wrd[idx])
                 self.evaluate_batch(batch, stage)
@@ -438,7 +443,7 @@ class MadMixtureBrain(sb.Brain):
 
         out = self.compute_forward(batch, stage=stage)
         loss = self.compute_objectives(out, batch, stage=stage)
-        
+
         if self.hparams.eval_enabled:
             eval_batch = EvalBatch(
                 ids=batch.snt_id,
@@ -450,12 +455,12 @@ class MadMixtureBrain(sb.Brain):
                 out_context=out.out_context,
                 latents_raw=out.latents_raw,
                 lengths_latent=out.lengths_latent,
-                lengths_dec=out.lengths_dec
+                lengths_dec=out.lengths_dec,
             )
 
-            self.evaluator.append(eval_batch)        
+            self.evaluator.append(eval_batch)
         return loss.detach().cpu()
-    
+
     def on_stage_start(self, stage, epoch):
         """Gets called at the beginning of each epoch.
 
@@ -470,12 +475,16 @@ class MadMixtureBrain(sb.Brain):
         if not epoch:
             epoch = 1
         self.loss_metric = sb.utils.metric_stats.MultiMetricStats(
-            metric=self.hparams.compute_cost.details,
-            batch_eval=True
+            metric=self.hparams.compute_cost.details, batch_eval=True
         )
         self._create_evaluator(stage)
-        align_attention_loss_weight, _ = self.hparams.guided_attention_scheduler(epoch - 1)
-        self.hparams.compute_cost.align_attention_loss_weight = align_attention_loss_weight
+        (
+            align_attention_loss_weight,
+            _,
+        ) = self.hparams.guided_attention_scheduler(epoch - 1)
+        self.hparams.compute_cost.align_attention_loss_weight = (
+            align_attention_loss_weight
+        )
         if self.hparams.enable_latent_log:
             self.latent_logger = {
                 key: self.create_latent_logger(key, epoch, stage)
@@ -492,16 +501,15 @@ class MadMixtureBrain(sb.Brain):
                 step_id,
                 step.get("min_words"),
                 step.get("max_words"),
-                step.get("num_samples")
+                step.get("num_samples"),
             )
-            if self.hparams.curriculum_save_datasets: 
+            if self.hparams.curriculum_save_datasets:
                 curriculum_dataset_path = os.path.join(
-                    self.hparams.curriculum_datasets_folder,
-                    stage_key
+                    self.hparams.curriculum_datasets_folder, stage_key
                 )
             curriculum.save_dataset(
                 path=os.path.join(curriculum_dataset_path, str(epoch)),
-                keys=LIBRISPEECH_OUTPUT_KEYS
+                keys=LIBRISPEECH_OUTPUT_KEYS,
             )
         self.update_samples()
         self.hparams.loss_logger.trim(epoch=epoch)
@@ -516,14 +524,11 @@ class MadMixtureBrain(sb.Brain):
 
         """
         self.stage_vis_sample = (
-            self.vis_sample[stage]
-            if hasattr(self, "vis_sample")
-            else None
+            self.vis_sample[stage] if hasattr(self, "vis_sample") else None
         )
         if self.hparams.eval_enabled:
             self.evaluator = self.hparams.evaluator()
             self.evaluator.use_vis_sample(self.stage_vis_sample)
-        
 
     def create_latent_logger(self, key, epoch, stage):
         """Creates a latent space logger instance
@@ -537,13 +542,12 @@ class MadMixtureBrain(sb.Brain):
         stage: speechbrain.Stage
             The stage of the experiment: Stage.TRAIN, Stage.VALID, Stage.TEST
         """
-        target_folder = os.path.join(
-            self.hparams.latent_folder,
-            str(epoch)
-        )
+        target_folder = os.path.join(self.hparams.latent_folder, str(epoch))
         os.makedirs(target_folder, exist_ok=True)
         stage_suffix = str(stage).lower()
-        file_name = os.path.join(target_folder, f"latent_{key}_{stage_suffix}.np")
+        file_name = os.path.join(
+            target_folder, f"latent_{key}_{stage_suffix}.np"
+        )
         return TensorLogger(file_name)
 
     def on_stage_end(self, stage, stage_loss, epoch):
@@ -588,10 +592,9 @@ class MadMixtureBrain(sb.Brain):
             )
             loss_stats = self.loss_metric.summarize(field="average")
             self.hparams.loss_logger.log_stats(
-                stats_meta={"epoch": epoch},
-                valid_stats=loss_stats
+                stats_meta={"epoch": epoch}, valid_stats=loss_stats
             )
-            
+
             # Save the current checkpoint and delete previous checkpoints.
             # NOTE: Checkpoints can be skipped during debugging to avoid undue
             # stress on the SSD
@@ -610,9 +613,7 @@ class MadMixtureBrain(sb.Brain):
                 test_stats=stage_stats,
             )
 
-
         self.hparams.loss_logger.close()
-
 
     def evaluation_report(self, stage, is_sample=False):
         """Outputs the evaluation report
@@ -647,7 +648,7 @@ class MadMixtureBrain(sb.Brain):
         """Updates sample selection. This needs to be called after curriculum sampling"""
         if self.eval_sampler is None:
             return
-        
+
         eval_sample, vis_sample = self.eval_sampler()
         self.eval_sample = {
             sb.Stage[key.upper()]: stage_dataset
@@ -657,6 +658,7 @@ class MadMixtureBrain(sb.Brain):
             sb.Stage[key.upper()]: stage_data_ids
             for key, stage_data_ids in vis_sample.items()
         }
+
 
 MadMixturePredictions = namedtuple(
     "MadMixturePredictions",
@@ -676,8 +678,8 @@ MadMixturePredictions = namedtuple(
         "lengths_latent",
         "lengths_dec",
         "latents_neg",
-        "lengths_latent_neg"
-    ]
+        "lengths_latent_neg",
+    ],
 )
 
 LIBRISPEECH_OUTPUT_KEYS = [
@@ -690,7 +692,7 @@ LIBRISPEECH_OUTPUT_KEYS = [
     "wrd",
     "char",
     "phn",
-    "unk_count"
+    "unk_count",
 ]
 
 LIBRISPEECH_OUTPUT_KEYS_DYNAMIC = LIBRISPEECH_OUTPUT_KEYS + [
@@ -700,17 +702,15 @@ LIBRISPEECH_OUTPUT_KEYS_DYNAMIC = LIBRISPEECH_OUTPUT_KEYS + [
     "phn_encoded_eos",
     "char_encoded",
     "char_encoded_bos",
-    "char_encoded_eos"
+    "char_encoded_eos",
 ]
 
-LIBRISPEECH_OUTPUT_KEYS_NEGATIVE_SRC = [
-    "sig",
-    "phn_encoded",
-    "char_encoded"
-]
+LIBRISPEECH_OUTPUT_KEYS_NEGATIVE_SRC = ["sig", "phn_encoded", "char_encoded"]
 
 LIBRISPEECH_OUTPUT_KEYS_NEGATIVE = [
-    f"{key}_neg" for key in LIBRISPEECH_OUTPUT_KEYS_NEGATIVE_SRC]
+    f"{key}_neg" for key in LIBRISPEECH_OUTPUT_KEYS_NEGATIVE_SRC
+]
+
 
 def dataio_prepare(hparams):
     """This function prepares the datasets to be used in the brain class.
@@ -756,15 +756,14 @@ def dataio_prepare(hparams):
             yield tokens_bos
             tokens_eos = label_encoder.append_eos_index(tokens_list)
             yield tokens_eos
-        return pipeline_fn
 
-        
+        return pipeline_fn
 
     # Define text processing pipeline. We start from the raw text and then
     # encode it using the tokenizer. The tokens with BOS are used for feeding
     # decoder during training, the tokens with EOS for computing the cost function.
     # The tokens without BOS or EOS is for computing CTC loss.
-  
+
     # Define datasets from json data manifest file
     # Define datasets sorted by ascending lengths for efficiency
     datasets = {}
@@ -774,10 +773,12 @@ def dataio_prepare(hparams):
         "train": hparams["train_annotation"],
     }
     if not hparams["overfit_test"]:
-        data_info.update({
-            "valid": hparams["valid_annotation"],
-            "test": hparams["test_annotation"],
-        })
+        data_info.update(
+            {
+                "valid": hparams["valid_annotation"],
+                "test": hparams["test_annotation"],
+            }
+        )
 
     char_encoder = init_sequence_encoder(hparams, "char")
     char_pipeline = sequence_pipeline("char", char_encoder)
@@ -795,12 +796,8 @@ def dataio_prepare(hparams):
             key_test["spk_id"] = hparams["filter_spk_id"]
 
         dynamic_dataset = sb.dataio.dataset.DynamicItemDataset.from_json(
-            data_info[dataset],
-            replacements={"data_root": data_folder},
-        ).filtered_sorted(
-            key_max_value=key_max_value,
-            key_test=key_test
-        )
+            data_info[dataset], replacements={"data_root": data_folder},
+        ).filtered_sorted(key_max_value=key_max_value, key_test=key_test)
         dynamic_dataset.set_output_keys(LIBRISPEECH_OUTPUT_KEYS)
 
         # Use the curriculum sampler to reduce the dataset's complexity
@@ -809,25 +806,23 @@ def dataio_prepare(hparams):
             curriculum_generator = torch.Generator()
             curriculum_generator.manual_seed(hparams["seed"])
             dynamic_dataset = sb.dataio.curriculum.CurriculumSpeechDataset(
-                from_dataset=dynamic_dataset,
-                generator=curriculum_generator
+                from_dataset=dynamic_dataset, generator=curriculum_generator
             )
             curriculum = hparams["curriculum"][dataset]
             curriculum.bind(dynamic_dataset)
             if hparams["overfit_test"]:
                 curriculum.apply(1)
         else:
-            logger.info("Curriculum sampling is disabled, using the complete dataset")
+            logger.info(
+                "Curriculum sampling is disabled, using the complete dataset"
+            )
         for dynamic_item in dynamic_items:
             dynamic_dataset.add_dynamic_item(dynamic_item)
         dynamic_dataset.set_output_keys(LIBRISPEECH_OUTPUT_KEYS_DYNAMIC)
         datasets[dataset] = dynamic_dataset
         hparams[f"{dataset}_dataloader_opts"]["shuffle"] = False
-    datasets = apply_overfit_test(
-        hparams, datasets)
-    datasets = apply_negative(
-        hparams, datasets)
-
+    datasets = apply_overfit_test(hparams, datasets)
+    datasets = apply_negative(hparams, datasets)
 
     # Apply the sort order. Sorting by duration can help reduce
     # zero-padding. Such sorting is not applicable for overfit
@@ -837,10 +832,12 @@ def dataio_prepare(hparams):
             "Performing an overfit test with %d samples used, %d per epoch "
             "- sorting will be ignored",
             hparams["overfit_test_sample_count"],
-            hparams["overfit_test_epoch_data_count"]
+            hparams["overfit_test_epoch_data_count"],
         )
     elif hparams["sorting"] == "ascending":
-        datasets["train"] = datasets["train"].filtered_sorted(sort_key="duration")
+        datasets["train"] = datasets["train"].filtered_sorted(
+            sort_key="duration"
+        )
         hparams["train_dataloader_opts"]["shuffle"] = False
 
     elif hparams["sorting"] == "descending":
@@ -859,6 +856,7 @@ def dataio_prepare(hparams):
         )
     return datasets
 
+
 def select_sample(dataset, sample_size, seed):
     """Selects a sample of the specified size
     
@@ -871,7 +869,9 @@ def select_sample(dataset, sample_size, seed):
     """
     generator = torch.Generator()
     generator.manual_seed(seed)
-    indexes = torch.randperm(len(dataset.data_ids), generator=generator)[:sample_size]
+    indexes = torch.randperm(len(dataset.data_ids), generator=generator)[
+        :sample_size
+    ]
     return [dataset.data_ids[idx] for idx in indexes]
 
 
@@ -900,7 +900,7 @@ def select_samples(datasets, hparams):
             key: select_sample(
                 dataset,
                 sample_size=hparams["eval_sample_size"][key],
-                seed=hparams["seed"]
+                seed=hparams["seed"],
             )
             for key, dataset in datasets.items()
             if (
@@ -910,8 +910,7 @@ def select_samples(datasets, hparams):
         }
         eval_samples = {
             key: FilteredSortedDynamicItemDataset(
-                from_dataset=datasets[key],
-                data_ids=data_ids
+                from_dataset=datasets[key], data_ids=data_ids
             )
             for key, data_ids in eval_sample_ids.items()
         }
@@ -919,7 +918,7 @@ def select_samples(datasets, hparams):
         key: select_sample(
             eval_samples.get(key, datasets[key]),
             sample_size=hparams["eval_vis_sample_size"],
-            seed=hparams["seed"]            
+            seed=hparams["seed"],
         )
         for key in datasets
     }
@@ -944,7 +943,7 @@ def read_token_list(file_name):
         raise ValueError(f"Token file {file_name} not found")
     with open(file_name) as token_file:
         return [line.strip("\r\n") for line in token_file if line]
-    
+
 
 def apply_negative(hparams, datasets):
     """Adds negative samples, if enabled"""
@@ -955,9 +954,11 @@ def apply_negative(hparams, datasets):
         }
         for dataset in datasets.values():
             dataset.set_output_keys(
-                LIBRISPEECH_OUTPUT_KEYS_DYNAMIC + LIBRISPEECH_OUTPUT_KEYS_NEGATIVE)
+                LIBRISPEECH_OUTPUT_KEYS_DYNAMIC
+                + LIBRISPEECH_OUTPUT_KEYS_NEGATIVE
+            )
     return datasets
-    
+
 
 def init_sequence_encoder(hparams, prefix):
     """Initialize a sequence encoder
@@ -984,6 +985,7 @@ def init_sequence_encoder(hparams, prefix):
     encoder.add_bos_eos()
     encoder.update_from_iterable(tokens, sequence_input=False)
     return encoder
+
 
 def check_tensorboard(hparams):
     """Checks whether Tensorboard is enabled and initializes the logger if it is
@@ -1027,19 +1029,15 @@ if __name__ == "__main__":
     else:
         multiprocessing_enabled = False
         logger.warning(
-            "Fork multiprocessing is not supported, in-process dataloading will be used")
+            "Fork multiprocessing is not supported, in-process dataloading will be used"
+        )
 
     for key in ["train", "valid", "test"]:
         if not multiprocessing_enabled:
             opts["num_workers"] = 0
         opts = hparams[f"{key}_dataloader_opts"]
-        if (
-            opts["num_workers"] == 0
-            and
-            "prefetch_factor" in opts
-        ):
+        if opts["num_workers"] == 0 and "prefetch_factor" in opts:
             del opts["prefetch_factor"]
-
 
     # Check whether Tensorboard is available and enabled
     check_tensorboard(hparams)
@@ -1064,7 +1062,7 @@ if __name__ == "__main__":
             "merge_lst": hparams["train_splits"],
             "merge_name": "train.json",
             "skip_prep": hparams["skip_prep"],
-            "mode": LibriSpeechMode.ALIGNMENT
+            "mode": LibriSpeechMode.ALIGNMENT,
         },
     )
 
@@ -1081,11 +1079,7 @@ if __name__ == "__main__":
     )
     # The curriculum sample will resample the datasets at each epoch. Evaluation
     # datasets must be updated/resampled accordingly
-    dataset_select_samples = partial(
-        select_samples,
-        datasets,
-        hparams
-    )
+    dataset_select_samples = partial(select_samples, datasets, hparams)
     madmixture_brain.use_samples(dataset_select_samples)
 
     # The `fit()` method iterates the training loop, calling the methods
@@ -1099,7 +1093,7 @@ if __name__ == "__main__":
         train_loader_kwargs=hparams["train_dataloader_opts"],
         valid_loader_kwargs=hparams["valid_dataloader_opts"],
     )
-    
+
     if not hparams["overfit_test"]:
         # Load best checkpoint for evaluation
         test_stats = madmixture_brain.evaluate(

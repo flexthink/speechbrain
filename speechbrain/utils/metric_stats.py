@@ -10,13 +10,16 @@ from joblib import Parallel, delayed
 from speechbrain.utils.data_utils import undo_padding
 from speechbrain.utils.edit_distance import (
     wer_details_for_batch,
-    wer_summary, 
+    wer_summary,
     token_error_rate_details_for_batch,
-    token_error_rate_summary
+    token_error_rate_summary,
 )
 from speechbrain.dataio.dataio import merge_char, split_word
 from speechbrain.dataio.wer import (
-    print_wer_summary, print_alignments, print_error_rate_summary)
+    print_wer_summary,
+    print_alignments,
+    print_error_rate_summary,
+)
 from functools import partial
 
 
@@ -192,7 +195,9 @@ def sequence_evaluation(metric, predict, target, lengths=None):
         scores.append(score)
     return scores
 
+
 DETAILS_LABEL_GENERIC = "DETAILS"
+
 
 class ErrorRateStats(MetricStats):
     """A class for tracking error rates (e.g., WER, PER).
@@ -248,15 +253,15 @@ class ErrorRateStats(MetricStats):
     """
 
     def __init__(
-            self,
-            merge_tokens=False,
-            split_tokens=False,
-            space_token="_",
-            mode="wer",
-            token_error_rate_label="TER",
-            sample_error_rate_label="SER",
-            sample_id_label="sample-id",
-        ):
+        self,
+        merge_tokens=False,
+        split_tokens=False,
+        space_token="_",
+        mode="wer",
+        token_error_rate_label="TER",
+        sample_error_rate_label="SER",
+        sample_id_label="sample-id",
+    ):
         self.clear()
         self.merge_tokens = merge_tokens
         self.split_tokens = split_tokens
@@ -269,7 +274,7 @@ class ErrorRateStats(MetricStats):
             self.print_summary_fn = partial(
                 print_error_rate_summary,
                 token_error_rate_label=token_error_rate_label,
-                sample_error_rate_label=sample_error_rate_label
+                sample_error_rate_label=sample_error_rate_label,
             )
             self.details_for_batch_fn = token_error_rate_details_for_batch
             self.print_alignments_fn = partial(
@@ -277,7 +282,7 @@ class ErrorRateStats(MetricStats):
                 error_rate_key="token_error_rate",
                 error_rate_label=token_error_rate_label,
                 details_label=DETAILS_LABEL_GENERIC,
-                sample_id_label=sample_id_label
+                sample_id_label=sample_id_label,
             )
         elif mode == "wer":
             self.summary_fn = wer_summary
@@ -350,8 +355,8 @@ class ErrorRateStats(MetricStats):
         self.summary = self.summary_fn(self.scores)
 
         # Add additional, more generic key
-       
-        error_rate_key = "WER"  if self.mode == "wer" else "token_error_rate"
+
+        error_rate_key = "WER" if self.mode == "wer" else "token_error_rate"
         self.summary["error_rate"] = self.summary[error_rate_key]
 
         if field is not None:

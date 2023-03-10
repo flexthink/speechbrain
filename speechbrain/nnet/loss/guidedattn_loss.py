@@ -78,7 +78,7 @@ class GuidedAttentionLoss(nn.Module):
         target_lengths,
         max_input_len=None,
         max_target_len=None,
-        reduction="mean"
+        reduction="mean",
     ):
         """
         Computes the guided attention loss for a single batch
@@ -112,7 +112,7 @@ class GuidedAttentionLoss(nn.Module):
         soft_mask = self.guided_attentions(
             input_lengths, target_lengths, max_input_len, max_target_len
         )
-        result = (attention * soft_mask.transpose(-1, -2))
+        result = attention * soft_mask.transpose(-1, -2)
         if reduction == "mean":
             result = result.mean()
         elif reduction == "batch":
@@ -162,7 +162,7 @@ class GuidedAttentionLoss(nn.Module):
         input_mesh, target_mesh = torch.meshgrid(
             torch.arange(max_input_len).to(input_lengths.device),
             torch.arange(max_target_len).to(target_lengths.device),
-            indexing="ij"
+            indexing="ij",
         )
         input_mesh, target_mesh = (
             input_mesh.unsqueeze(0),
