@@ -467,7 +467,10 @@ class CurriculumController:
     @checkpoints.mark_as_saver
     def save(self, path):
         """Saves the current metrics on the specified path."""
-        data = {"generator": self.generator.get_state()}
+        if self.generator is not None:
+            data = {"generator": self.generator.get_state()}
+        else:
+            data = {}
         torch.save(data, path)
 
     @checkpoints.mark_as_loader
@@ -476,9 +479,9 @@ class CurriculumController:
         del end_of_epoch  # Unused in this class
         del device  # Unused in here
         state = torch.load(path)
-        if self.generator is None:
-            self.generator = torch.Generator()
-        self.generator.set_state(state["generator"])
+        generator_state = state.get("generator")
+        if generator_state is not None:
+            self.generator.set_state(generator_state)
 
 @checkpoints.register_checkpoint_hooks
 class Curriculum:
