@@ -155,7 +155,7 @@ class MadMixtureBrain(sb.Brain):
     
     def _fit_train(self, train_set, epoch, enable):
         super()._fit_train(train_set, epoch, enable)
-        if sb.Stage.TRAIN in self.eval_sample:
+        if hasattr(self, "eval_sample") and sb.Stage.TRAIN in self.eval_sample:
             self.evaluate_sample(
                 sample_dataset=self.eval_sample[sb.Stage.TRAIN],
                 stage=sb.Stage.TRAIN,
