@@ -12,6 +12,7 @@ import logging
 import multiprocessing
 import speechbrain as sb
 import os
+from functools import partial
 from hyperpyyaml import load_hyperpyyaml
 from librispeech_prepare import prepare_librispeech, LibriSpeechMode
 from collections import namedtuple
@@ -405,6 +406,12 @@ class MadMixtureBrain(sb.Brain):
             sample_dataset, stage=stage, **dataloader_kwargs)
         with tqdm(sample_loader, dynamic_ncols=True) as t:
             for step, batch in enumerate(t, start=1):
+                tst_id = "1034-121119-0081"
+                if tst_id in batch.snt_id:
+                    idx = batch.snt_id.index(tst_id)
+                    from icecream import ic
+                    ic(batch.phn[idx])
+                    ic(batch.wrd[idx])
                 self.evaluate_batch(batch, stage)
                 if self.debug and step == self.debug_batches:
                     break
@@ -478,10 +485,12 @@ class MadMixtureBrain(sb.Brain):
         if self.hparams.curriculum_enabled and not self.hparams.overfit_test:
             curriculum = self.hparams.curriculum[stage_key]
             step_id, step = curriculum.apply(epoch)
+            self.update_samples()
 
             logger.info(
-                "%s: using curriculum sampling with %d-%d words, %d samples",
+                "%s: Curriculum step %d, using sampling with %d-%d words, %d samples",
                 stage_key,
+                step_id,
                 step.get("min_words"),
                 step.get("max_words"),
                 step.get("num_samples")
@@ -623,13 +632,22 @@ class MadMixtureBrain(sb.Brain):
         if self.hparams.eval_enabled:
             self.evaluator.report(report_path)
 
-    def use_samples(self, eval_sample, vis_sample):
-        """
+    def use_samples(self, eval_sampler):
+        """Sets the function to be used to select samples for evaluation
+        
         Arguments
         ---------
-        data_ids: dict
-            a key -> enumerable dictionary
+        eval_sampler: callable
+            a sampler functiion return (eval_sample, vis_sample)
         """
+        self.eval_sampler = eval_sampler
+
+    def update_samples(self):
+        """Updates sample selection. This needs to be called after curriculum sampling"""
+        if self.eval_sampler is None:
+            return
+        
+        eval_sample, vis_sample = self.eval_sampler()
         self.eval_sample = {
             sb.Stage[key.upper()]: stage_dataset
             for key, stage_dataset in eval_sample.items()
@@ -809,7 +827,6 @@ def dataio_prepare(hparams):
     datasets = apply_negative(
         hparams, datasets)
 
-    eval_samples, vis_samples = select_samples(datasets, hparams)
 
     # Apply the sort order. Sorting by duration can help reduce
     # zero-padding. Such sorting is not applicable for overfit
@@ -839,7 +856,7 @@ def dataio_prepare(hparams):
         raise NotImplementedError(
             "sorting must be random, ascending or descending"
         )
-    return datasets, eval_samples, vis_samples
+    return datasets
 
 def select_sample(dataset, sample_size, seed):
     """Selects a sample of the specified size
@@ -901,7 +918,7 @@ def select_samples(datasets, hparams):
         key: select_sample(
             eval_samples.get(key, datasets[key]),
             sample_size=hparams["eval_vis_sample_size"],
-            seed=hparams["seed"]
+            seed=hparams["seed"]            
         )
         for key in datasets
     }
@@ -1051,7 +1068,7 @@ if __name__ == "__main__":
     )
 
     # We can now directly create the datasets for training, valid, and test
-    datasets, eval_samples, vis_samples = dataio_prepare(hparams)
+    datasets = dataio_prepare(hparams)
 
     # Trainer initialization
     madmixture_brain = MadMixtureBrain(
@@ -1061,10 +1078,14 @@ if __name__ == "__main__":
         run_opts=run_opts,
         checkpointer=hparams["checkpointer"],
     )
-    madmixture_brain.use_samples(
-        eval_samples,
-        vis_samples
+    # The curriculum sample will resample the datasets at each epoch. Evaluation
+    # datasets must be updated/resampled accordingly
+    dataset_select_samples = partial(
+        select_samples,
+        datasets,
+        hparams
     )
+    madmixture_brain.use_samples(dataset_select_samples)
 
     # The `fit()` method iterates the training loop, calling the methods
     # necessary to update the parameters of the model. Since all objects

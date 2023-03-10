@@ -65,27 +65,30 @@ class CurriculumSpeechDataset(DynamicItemDataset):
     ):
         super().__init__(
             data=from_dataset.data, use_existing_id=True)
-        self.generator = generator
-        self.base_dataset = sample(from_dataset, num_samples, generator)
+        self.base_dataset = from_dataset
         self.data_ids = self.base_dataset.data_ids
+        self._refresh_index_map()
         self.min_words = min_words
         self.max_words = max_words
         self.num_samples = num_samples
         self.sample_rate = sample_rate
-        self.data_id_indices = {
-            data_id: idx for idx, data_id in enumerate(self.data_ids)
-        }
         self._pipeline_is_setup = False
         if (
             min_words is not None
             or max_words is not None
             or num_samples is not None
         ):
-            self.sample_segments()
+            self.sample_segments(generator)
         self.setup_pipeline()
         self.pipeline = PipelineWrapper(self.pipeline, SAMPLE_OUTPUTS)
+    
+    def _refresh_index_map(self):
+        """Refreshes the data ID to index map"""
+        self.data_id_indices = {
+            data_id: idx for idx, data_id in enumerate(self.data_ids)
+        }
             
-    def sample_segments(self, dataset=None):
+    def sample_segments(self, dataset=None, generator=None):
         """Samples parts of the audio file at specific word boundaries
 
         Arguments
@@ -95,11 +98,17 @@ class CurriculumSpeechDataset(DynamicItemDataset):
         """
         # Exclude samples than have fewer
         # words than the minimum
+        if not generator:
+            generator = torch.default_generator
         if dataset is None:
-            dataset = self.base_dataset
+            dataset = self.base_dataset            
+        dataset = sample(
+            dataset, self.num_samples, generator)
         dataset = dataset.filtered_sorted(
             key_min_value={"wrd_count": self.min_words}
         )
+        self.data_ids = dataset.data_ids
+        self._refresh_index_map()
         keys = ["wrd_count", "wrd_start", "wrd_end"]
         with dataset.output_keys_as(keys):
             wrd_count = torch.tensor(self._pluck("wrd_count"))
@@ -108,18 +117,23 @@ class CurriculumSpeechDataset(DynamicItemDataset):
 
         # Randomly sample word counts in the
         # range form num_words to last_words
-        self.sample_word_counts = torch.randint(
+        sample_word_counts = torch.randint(
             low=self.min_words,
             high=self.max_words + 1,
             size=(len(dataset),),
-            generator=self.generator,
+            generator=generator,
         )
+        sample_word_counts = torch.minimum(
+            sample_word_counts,
+            wrd_count
+        )
+        self.sample_word_counts = sample_word_counts
 
         # Sample relative offsets, from 0.0 to 1.0.
         # 0.0 corresponds to the beginning of the
         # utterance, where as 1.0 represents wrd_count - n
         # where n is the sampled word count
-        sample_offsets_rel = torch.rand(len(dataset), generator=self.generator)
+        sample_offsets_rel = torch.rand(len(dataset), generator=generator)
 
         # Determine the maximum possible offsets
         max_offset = wrd_count - self.sample_word_counts
@@ -160,10 +174,10 @@ class CurriculumSpeechDataset(DynamicItemDataset):
         @sb.utils.data_pipeline.takes(
             "id",
             "wav",
-            "phn_start",
-            "phn_end",
             "wrd_start",
             "wrd_end",
+            "phn_start",
+            "phn_end",
             "wrd",
             "phn",
         )
@@ -198,12 +212,12 @@ class CurriculumSpeechDataset(DynamicItemDataset):
             yield cut_offsets(wrd_end, wrd_offset_start, wrd_offset_end)
             # phn_start
             phn_start, phn_from, phn_to = cut_offsets_rel(
-                wrd_start, phn_start, wrd_offset_start, wrd_offset_end
+                phn_start, wrd_start,  wrd_offset_start, wrd_offset_end
             )
             yield phn_start
             # phn_end
             phn_end, _, _ = cut_offsets_rel(
-                wrd_end, phn_end, wrd_offset_start, wrd_offset_end
+                phn_end, wrd_end, wrd_offset_start, wrd_offset_end
             )
             yield phn_end
             # wrd
@@ -372,6 +386,8 @@ def cut_offsets(offsets, start, end):
         the re-calculated offset list
     """
     segment = offsets[start:end]
+    if not segment:
+        breakpoint()
     if not torch.is_tensor(segment):
         segment = torch.tensor(segment)
     return (segment - segment[0]).tolist()
@@ -405,11 +421,15 @@ def cut_offsets_rel(offsets, ref_offsets, start, end):
     if not torch.is_tensor(ref_offsets):
         ref_offsets = torch.tensor(ref_offsets)
     start_value = ref_offsets[start].item()
-    end_value = ref_offsets[end].item()
+    end_value = (
+        ref_offsets[end].item() if end < len(ref_offsets)
+        else torch.inf
+    )
     condition = (offsets >= start_value) & (offsets < end_value)
     result = offsets[condition]
     result -= result[0].item()
     idx = condition.nonzero()
+
     return result.tolist(), idx.min().item(), idx.max().item() + 1
 
 @checkpoints.register_checkpoint_hooks
@@ -417,9 +437,10 @@ class CurriculumController:
     """Provides control for the curriculum dataset from the training
     process"""
 
-    def __init__(self):
+    def __init__(self, seed=42):
         self.dataset = None
-        self.generator = None
+        self.generator = torch.Generator()
+        self.generator.manual_seed(seed)
 
     def bind(self, dataset):
         """Binds this controller to a dataset
@@ -462,7 +483,7 @@ class CurriculumController:
         self.dataset.min_words = min_words
         self.dataset.max_words = max_words
         self.dataset.num_samples = num_samples
-        self.dataset.sample_segments()
+        self.dataset.sample_segments(generator=self.generator)
 
     @checkpoints.mark_as_saver
     def save(self, path):

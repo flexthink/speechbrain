@@ -224,7 +224,7 @@ madmixture_char_weight: 1.0
 madmixture_triplet_loss_margin: 0.5
 madmixture_triplet_loss_weight: 0.5
 madmixture_context_loss_weight: 1.0
-madmixture_align_use_content: True
+madmixture_align_use_content: False
 madmixture_align_interpolation_mode: nearest
 
 # The first object passed to the Brain class is this "Epoch Counter"
@@ -566,7 +566,7 @@ opt_class: !name:torch.optim.Adam
 curriculum_train: !new:speechbrain.dataio.curriculum.Curriculum
         steps:
         - epoch: 1
-          min_words: 1
+          min_words: 2
           max_words: 3
           num_samples: 25000
         - epoch: 20
