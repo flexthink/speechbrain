@@ -612,7 +612,9 @@ checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
         normalizer: !ref <normalize>
         counter: !ref <epoch_counter>
         negative_sampler: !ref <negative_sampler>
-        curriculum: !ref <curriculum>
+        curriculum_train: !ref <curriculum.train>
+        curriculum_valid: !ref <curriculum.valid>
+        curriculum_test: !ref <curriculum.test>
 
 
 eval_sample_size:
