@@ -430,7 +430,11 @@ class CurriculumController:
             a curriculum dataset
         """
         self.dataset = dataset
-        self.generator = dataset.generator
+        if self.generator is not None:
+            dataset.generator = self.generator
+        else:
+            self.generator = dataset.generator
+            
 
     def resample(self, min_words=None, max_words=None, num_samples=None):
         """Resamples the dataset
@@ -472,6 +476,8 @@ class CurriculumController:
         del end_of_epoch  # Unused in this class
         del device  # Unused in here
         state = torch.load(path)
+        if self.generator is None:
+            self.generator = torch.Generator()
         self.generator.set_state(state["generator"])
 
 @checkpoints.register_checkpoint_hooks
