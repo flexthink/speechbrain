@@ -165,7 +165,7 @@ class CsvTrainLogger:
             self._write_csv_stats("test", stats_meta, test_stats)
             if verbose:
                 logger.info("Test Stats: %s - %s", stats_meta, test_stats)
-                
+
     def _write_csv_stats(self, key, stats_meta, stats):
         """Outputs the stats for the specified key
         
@@ -205,7 +205,7 @@ class CsvTrainLogger:
             fields = [*stats_meta.keys(), *stats.keys()]
             self._create_writer(key, fields)
         return self.writers[key]
-    
+
     def _create_writer(self, key, fields):
         """Creates a new CSV writer
         
@@ -224,15 +224,13 @@ class CsvTrainLogger:
         csv_file = open(file_name, "a+")
         self.files[key] = csv_file
         writer = csv.DictWriter(
-            csv_file,
-            fieldnames=fields,
-            extrasaction="ignore"
+            csv_file, fieldnames=fields, extrasaction="ignore"
         )
         self.writers[key] = writer
         if not existing_file:
             writer.writeheader()
         return writer
-    
+
     def _read_fields(self, file_name):
         """Reads the list of fields from a CSV file
         
@@ -275,8 +273,8 @@ class CsvTrainLogger:
         if isinstance(criteria, dict):
             criteria_ = criteria
             criteria = lambda item: all(
-                item.get(key) == str(value)
-                for key, value in criteria_.items())
+                item.get(key) == str(value) for key, value in criteria_.items()
+            )
         for key in self.file_names:
             self._trim_file(key, criteria)
 
@@ -298,13 +296,11 @@ class CsvTrainLogger:
             del self.files[key]
             del self.writers[key]
         tmp_file_name = os.path.join(
-            self.path,
-            "_" + os.path.basename(file_name)
+            self.path, "_" + os.path.basename(file_name)
         )
-        with (
-            open(file_name, "r") as src_file,
-            open(tmp_file_name, "w") as dest_file
-        ):
+        with open(file_name, "r") as src_file, open(
+            tmp_file_name, "w"
+        ) as dest_file:
             reader = csv.DictReader(src_file)
             writer = csv.DictWriter(dest_file, fieldnames=reader.fieldnames)
             writer.writeheader()
@@ -664,14 +660,15 @@ class TensorLogger:
     file_name: str
         the file name
     """
+
     def __init__(self, file_name):
         self.file_name = file_name
         self.tensor_file = None
-    
+
     def open(self):
         """Opens the file"""
         self.tensor_file = open(self.file_name, "ab+")
-    
+
     def ensure_open(self):
         """Opens the file if it is not already open"""
         if self.tensor_file is None:
@@ -694,5 +691,3 @@ class TensorLogger:
         if self.tensor_file is not None:
             self.tensor_file.close()
             self.tensor_file = None
-
-    
