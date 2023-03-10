@@ -446,10 +446,6 @@ class CurriculumController:
             a curriculum dataset
         """
         self.dataset = dataset
-        if self.generator is not None:
-            dataset.generator = self.generator
-        else:
-            self.generator = dataset.generator
 
     def resample(self, min_words=None, max_words=None, num_samples=None):
         """Resamples the dataset
