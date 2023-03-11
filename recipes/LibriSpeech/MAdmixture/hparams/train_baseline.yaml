@@ -210,6 +210,8 @@ modalities:
 madmixture_rec_loss_weight: 1.0
 madmixture_transfer_loss_weight: 2.0
 madmixture_latent_dim: 128
+madmixture_latent_length_mode: variable
+madmixture_latent_length: 256 # Used only when the mode is fixed
 madmixture_latent_distance_loss_weight: 1.0
 madmixture_align_attention_loss_weight: 5.0
 madmixture_length_loss_beta: 0.25
@@ -374,6 +376,8 @@ audio_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
     in_dim: !ref <audio_enc_dnn_neurons>
     dropout: !ref <audio_aligner_dropout>
     use_content: !ref <madmixture_align_use_content>
+    latent_length_mode: !ref <madmixture_latent_length_mode>
+    latent_length: !ref <madmixture_latent_length>
     interpolation_mode: !ref <madmixture_align_interpolation_mode>
 
 char_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
@@ -381,6 +385,8 @@ char_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
     in_dim: !ref <char_enc_neurons>
     dropout: !ref <char_aligner_dropout>
     use_content: !ref <madmixture_align_use_content>
+    latent_length_mode: !ref <madmixture_latent_length_mode>
+    latent_length: !ref <madmixture_latent_length>
     interpolation_mode: !ref <madmixture_align_interpolation_mode>
 
 phn_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
@@ -388,6 +394,8 @@ phn_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
     in_dim: !ref <char_enc_neurons>
     dropout: !ref <phn_aligner_dropout>
     use_content: !ref <madmixture_align_use_content>
+    latent_length_mode: !ref <madmixture_latent_length_mode>
+    latent_length: !ref <madmixture_latent_length>
     interpolation_mode: !ref <madmixture_align_interpolation_mode>
 
 vocoder: !name:speechbrain.pretrained.interfaces.HIFIGAN.from_hparams
@@ -415,10 +423,11 @@ model: !new:speechbrain.lobes.models.madmixture.MadMixture
         char: !ref <char_enabled>
         phn: !ref <phn_enabled>
     length_predictor: !ref <length_predictor>
-
-
     anchor_name: !ref <anchor>
     latent_size: !ref <madmixture_latent_dim>
+    latent_length_mode: !ref <madmixture_latent_length_mode>
+    latent_length: !ref <madmixture_latent_length>
+
 
 compute_cost_rec_audio: !name:speechbrain.nnet.losses.mse_loss
 compute_cost_rec_char: !name:speechbrain.nnet.losses.nll_loss
@@ -477,6 +486,7 @@ compute_cost: !new:speechbrain.nnet.loss.madmixture_loss.MadMixtureLoss
     eos_loss_weight: !ref <madmixture_eos_loss_weight>
     eos_loss_fn: !ref <compute_cost_eos>
     anchor: !ref <anchor>
+    latent_length_mode: !ref <madmixture_latent_length_mode>
 
 char_beam_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
     embedding: !ref <char_emb>
