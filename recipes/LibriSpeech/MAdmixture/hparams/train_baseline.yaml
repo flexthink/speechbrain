@@ -582,7 +582,7 @@ curriculum_train: !new:speechbrain.dataio.curriculum.Curriculum
 curriculum_valid: !new:speechbrain.dataio.curriculum.Curriculum
         steps:
         - epoch: 1
-          min_words: 1
+          min_words: 2
           max_words: 3
           num_samples: !ref <curriculum_num_samples_valid>
         - epoch: 20
