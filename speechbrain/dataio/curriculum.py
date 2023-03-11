@@ -194,37 +194,55 @@ class CurriculumSpeechDataset(DynamicItemDataset):
         def cut_sample(
             data_id, wav, wrd_start, wrd_end, phn_start, phn_end, wrd, phn
         ):
-            idx = self.data_id_indices[data_id]
-            # wrd_count
-            yield self.sample_word_counts[idx].item()
-            sample_start_idx = self.sample_start_idx[idx]
-            sample_end_idx = self.sample_end_idx[idx]
-            sig = sb.dataio.dataio.read_audio(wav)
-            sig = sig[sample_start_idx:sample_end_idx]
-            # sig
-            yield sig
-            wrd_offset_start = self.wrd_offset_start[idx]
-            wrd_offset_end = self.wrd_offset_end[idx]
-            # wrd_start
-            yield cut_offsets(wrd_start, wrd_offset_start, wrd_offset_end)
-            # wrd_end
-            yield cut_offsets(wrd_end, wrd_offset_start, wrd_offset_end)
-            # phn_start
-            phn_start, phn_from, phn_to = cut_offsets_rel(
-                phn_start, wrd_start, wrd_offset_start, wrd_offset_end
-            )
-            yield phn_start
-            # phn_end
-            phn_end, _, _ = cut_offsets_rel(
-                phn_end, wrd_end, wrd_offset_start, wrd_offset_end
-            )
-            yield phn_end
-            # wrd
-            wrd_sample = wrd[wrd_offset_start:wrd_offset_end]
-            yield wrd_sample
-            yield " ".join(wrd_sample).upper()
-            phn = phn[phn_from:phn_to]
-            yield phn
+            try:
+                idx = self.data_id_indices[data_id]
+                # wrd_count
+                yield self.sample_word_counts[idx].item()
+                sample_start_idx = self.sample_start_idx[idx]
+                sample_end_idx = self.sample_end_idx[idx]
+                sig = sb.dataio.dataio.read_audio(wav)
+                sig = sig[sample_start_idx:sample_end_idx]
+                # sig
+                yield sig
+                wrd_offset_start = self.wrd_offset_start[idx]
+                wrd_offset_end = self.wrd_offset_end[idx]
+                # wrd_start
+                yield cut_offsets(wrd_start, wrd_offset_start, wrd_offset_end)
+                # wrd_end
+                yield cut_offsets(wrd_end, wrd_offset_start, wrd_offset_end)
+                # phn_start
+                phn_start, phn_from, phn_to = cut_offsets_rel(
+                    phn_start, wrd_start, wrd_offset_start, wrd_offset_end
+                )
+                yield phn_start
+                # phn_end
+                phn_end, _, _ = cut_offsets_rel(
+                    phn_end, wrd_end, wrd_offset_start, wrd_offset_end
+                )
+                yield phn_end
+                # wrd
+                wrd_sample = wrd[wrd_offset_start:wrd_offset_end]
+                yield wrd_sample
+                yield " ".join(wrd_sample).upper()
+                phn = phn[phn_from:phn_to]
+                yield phn
+            except Exception as e:
+                # TODO: Remove this - this is only for debugging
+                print("-" * 10)
+                print("CUT SAMPLE EXCEPTION")
+                print("-" * 10)
+                print(e)
+                print("DATA ID", data_id)
+                print("WORD COUNT: ", len(wrd))
+                print("wrd_offset_start", wrd_offset_start)
+                print("wrd_offset_end", wrd_offset_end)
+                print("wrd", wrd)
+                print("wrd_start: ", wrd_start)
+                print("wrd_end: ", wrd_end)
+                print("phn", phn)
+                print("phn_start: ", phn_start)
+                print("phn_end: ", phn_end)
+                raise                
 
         self.pipeline.add_dynamic_item(cut_sample)
 
@@ -383,8 +401,6 @@ def cut_offsets(offsets, start, end):
         the re-calculated offset list
     """
     segment = offsets[start:end]
-    if not segment:
-        breakpoint()
     if not torch.is_tensor(segment):
         segment = torch.tensor(segment)
     return (segment - segment[0]).tolist()
