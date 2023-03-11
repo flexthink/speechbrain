@@ -26,6 +26,23 @@ from enum import Enum
 # anchor lengths for each modality
 
 
+class LatentLengthMode(Enum):
+    """The approach to be used to the calculation of signal
+    length in the latent space
+    """
+    VARIABLE = "variable"
+    FIXED = "fixed"
+
+    @classmethod
+    def get_value(cls, value):
+        if isinstance(value, str):
+            value = cls(value)
+        elif not isinstance(value, cls):
+            raise ValueError("Invalid latent length mode {value}")
+        return value
+
+
+
 class MadMixture(nn.Module):
     """The MAdmixture (Modality Admixture) generic multimodal
     model framework
@@ -46,6 +63,23 @@ class MadMixture(nn.Module):
         a dictionary with on-off switch setting which modalities will be enabled
         or disabled. This is a convenience parameter to be able to enable/disable
         modalities using hparams switches
+
+    latent_length_mode: LatentLengthMode
+        how the latent space length will be treated
+        
+        LatentLengthMode.VARIABLE: during training, lengths will be aligned
+        to the anchor modality.
+
+        During inference, the length will need to be predicted
+
+        LatentLengthMode.FIXED: the latent space is always of the same
+        fixed length. This can be a useful simplification when samples
+        are not expected to vary very widely in length
+
+    latent_length: int
+        the length of the latent space. Ignored if latent_length_mode is set
+        to LatentLengthMode.VARIABLE
+
     
     """
 
@@ -56,6 +90,8 @@ class MadMixture(nn.Module):
         anchor_name=None,
         latent_size=32,
         modality_enabled=None,
+        latent_length_mode=LatentLengthMode.VARIABLE,
+        latent_length=256,
     ):
         super().__init__()
         self.modality_enabled = modality_enabled
@@ -96,8 +132,14 @@ class MadMixture(nn.Module):
         modalities = set(self.modalities.keys())
         self.unaligned_modalities = modalities - self.aligned_modalities
         self.length_predictor = length_predictor
-        self.eos_mark = EndOfSequenceMarker(feature_size=latent_size)
-
+        self.latent_length_mode = LatentLengthMode.get_value(latent_length_mode)
+        self.latent_length = latent_length
+        if self.latent_length_mode == LatentLengthMode.FIXED:
+            self.length_predictor = FixedLengthPredictor(latent_length=self.latent_length)
+            self.eos_mark = None
+        else:
+            self.eos_mark = EndOfSequenceMarker(feature_size=latent_size)
+        
     def is_enabled(self, key):
         return (
             self.modality_enabled.get(key, False)
@@ -925,9 +967,8 @@ class Aligner(nn.Module):
     """A base class for auxiliary modules that align encoded outputs in
     a given modality to the latent space"""
 
-    def __init__(self, eos_marker=None) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.eos_marker = eos_marker
 
     def forward(
         self,
@@ -1188,6 +1229,23 @@ class PQAttentionalAligner(Aligner):
     use_content: bool
         if set to True, the aligner will use a scaled-up interpolated
         batch
+    latent_length_mode: LatentLengthMode
+        how the latent space length will be treated
+        
+        LatentLengthMode.VARIABLE: during training, lengths will be aligned
+        to the anchor modality.
+
+        During inference, the length will need to be predicted
+
+        LatentLengthMode.FIXED: the latent space is always of the same
+        fixed length. This can be a useful simplification when samples
+        are not expected to vary very widely in length
+
+    latent_length: int
+        the length of the latent space. Ignored if latent_length_mode is set
+        to LatentLengthMode.VARIABLE
+
+
     interpolation_mode: str
         the interpolation mode to use (see torch.nn.functional.interpolate)
     """
@@ -1202,6 +1260,8 @@ class PQAttentionalAligner(Aligner):
         proj_layers=1,
         proj_kernel_size=3,
         use_content=True,
+        latent_length_mode=LatentLengthMode.VARIABLE,
+        latent_length=256,
         interpolation_mode="nearest",
     ):
         super().__init__()
@@ -1236,6 +1296,9 @@ class PQAttentionalAligner(Aligner):
         self.out_norm = LayerNorm(input_shape=[None, None, dim])
         self.use_content = use_content
         self.interpolation_mode = interpolation_mode
+        self.latent_length_mode = LatentLengthMode.get_value(latent_length_mode)
+        self.latent_length = latent_length
+        
 
     def forward(
         self,
@@ -1301,9 +1364,12 @@ class PQAttentionalAligner(Aligner):
         pos_embs = self.pos_emb_proj(pos_embs)
         mod_enc_out_scaled[:, :-1, :] += pos_embs[:, :-1, :]
 
-        if anchor is None:
+        if self.latent_length_mode == LatentLengthMode.FIXED:
+            queries_max_len = self.latent_length
+            anchor_length_queries_abs = torch.ones_like(mod_length, dtype=torch.int) * self.latent_length
+        elif anchor is None:
             queries_max_len = mod_enc_out_scaled.size(1) * self.max_scale
-            anchor_length_queries_abs = torch.ones_like(mod_length) * queries_max_len
+            anchor_length_queries_abs = torch.ones_like(mod_length, dtype=torch.int) * queries_max_len
         else:
             queries_max_len = enc_out[anchor].size(1) + 1
             anchor_length_queries_abs = (
@@ -1417,7 +1483,7 @@ class LengthPredictor(nn.Module):
         Returns
         -------
         result: torch.Tensor
-            a 1-D tensor of predicted lengths
+            a tensor of length predictions (model-dependent)
         """
         raise NotImplementedError()
 
@@ -1497,6 +1563,62 @@ class LinearLengthPredictor(LengthPredictor):
             a 1-D tensor of predicted lengths
         """
         return length_pred.argmax(dim=-1).clamp(1.0).round().int() + 1
+    
+class FixedLengthPredictor(LengthPredictor):
+    def __init__(self, latent_length):
+        super().__init__()
+        self.latent_length = latent_length
+    
+    def to_lengths(self, length_pred):
+        """Predicts absolute latent lengths from raw output
+        
+        Arguments
+        ---------
+        latent: torch.Tensor
+            the latent space
+
+        Returns
+        -------
+        result: torch.Tensor
+            a 1-D tensor of predicted lengths
+        """
+        return length_pred
+    
+    def forward(self, latent, length=None):
+        """Computes the forward pass
+        Arguments
+        ---------
+        latent: torch.Tensor
+            the latent space
+        length: torch.Tensor
+            the relative length (for masking)
+
+        Returns
+        -------
+        result: torch.Tensor
+            a raw representation of sequence ends,
+            for training, loss-dependent        
+        """
+        del length # Not used
+        return self.lengths(latent)
+
+
+    def lengths(self, latent):
+        """Predicts relative lengths from raw output
+        
+        Arguments
+        ---------
+        latent: torch.Tensor
+            the latent space
+
+        Returns
+        -------
+        result: torch.Tensor
+            a 1-D tensor of predicted lengths
+        """
+        return torch.ones(latent.size(0), device=latent.device) * self.latent_length
+        
+    
 
 
 class GateLengthPredictor(LengthPredictor):
@@ -1622,7 +1744,7 @@ class EndOfSequenceMarker(nn.Module):
             [x, marker], [length, marker_length], length_mode=self.length_mode
         )
         return x_eos, length_eos
-
+    
 
 def multiscale(src, src_lengths, tgt_lengths, mode="nearest"):
     """Scales a padded batch to the specified target lengths

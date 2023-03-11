@@ -43,7 +43,7 @@ class TacotronDecoder(nn.Module):
             a context dictionary (from MadMixture)
 
         """
-        max_len = lengths.max().item()
+        max_len = int(lengths.max().item())
         mel_lengths = None
         latent_cut = latent[:, :max_len, :]
         if context is not None and self.decoder_input_key in context:
@@ -202,7 +202,6 @@ class RNNDecoder(nn.Module):
             )
         if self.use_latent_bos:
             latent, latent_length = self._add_latent_bos(latent, latent_length)
-        # TODO: Add support for the default dummy value
         output, alignments = self.rnn(
             input_value, latent, wav_len=latent_length
         )

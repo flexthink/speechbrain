@@ -25,6 +25,7 @@ from speechbrain.nnet.losses import truncate, distance_diff_loss, reduce_loss
 from speechbrain.utils.data_utils import concat_padded_features
 from speechbrain.dataio.dataio import length_to_mask
 from speechbrain.nnet.loss.guidedattn_loss import GuidedAttentionLoss
+from speechbrain.lobes.models.madmixture.madmixture import LatentLengthMode
 
 
 class MadMixtureLoss(nn.Module):
@@ -89,6 +90,7 @@ class MadMixtureLoss(nn.Module):
         eos_loss_fn=None,
         eos_loss_weight=1.0,
         modality_enabled=None,
+        latent_length_mode=LatentLengthMode.VARIABLE
     ):
         super().__init__()
         self.modalities = modalities
@@ -114,6 +116,12 @@ class MadMixtureLoss(nn.Module):
         self.length_loss_fn = length_loss_fn
         self.eos_loss_fn = eos_loss_fn
         self.eos_loss_weight = eos_loss_weight
+        self.latent_length_mode = LatentLengthMode.get_value(latent_length_mode)
+        if self.latent_length_mode == LatentLengthMode.FIXED:
+            self.length_loss_weight = 0.
+            self.length_loss_fn = None
+            self.eos_loss_weight = 0.
+            self.eos_loss_fn = None
 
     def forward(
         self,
