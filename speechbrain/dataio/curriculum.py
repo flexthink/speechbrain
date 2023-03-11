@@ -194,38 +194,20 @@ class CurriculumSpeechDataset(DynamicItemDataset):
         def cut_sample(
             data_id, wav, wrd_start, wrd_end, phn_start, phn_end, wrd, phn
         ):
+            idx = self.data_id_indices[data_id]
+            # wrd_count
+            yield self.sample_word_counts[idx].item()
+            sample_start_idx = self.sample_start_idx[idx]
+            sample_end_idx = self.sample_end_idx[idx]
+            sig = sb.dataio.dataio.read_audio(wav)
+            sig = sig[sample_start_idx:sample_end_idx]
+            # sig
+            yield sig
+            wrd_offset_start = self.wrd_offset_start[idx]
+            wrd_offset_end = self.wrd_offset_end[idx]
+            # wrd_start
             try:
-                idx = self.data_id_indices[data_id]
-                # wrd_count
-                yield self.sample_word_counts[idx].item()
-                sample_start_idx = self.sample_start_idx[idx]
-                sample_end_idx = self.sample_end_idx[idx]
-                sig = sb.dataio.dataio.read_audio(wav)
-                sig = sig[sample_start_idx:sample_end_idx]
-                # sig
-                yield sig
-                wrd_offset_start = self.wrd_offset_start[idx]
-                wrd_offset_end = self.wrd_offset_end[idx]
-                # wrd_start
-                yield cut_offsets(wrd_start, wrd_offset_start, wrd_offset_end)
-                # wrd_end
-                yield cut_offsets(wrd_end, wrd_offset_start, wrd_offset_end)
-                # phn_start
-                phn_start, phn_from, phn_to = cut_offsets_rel(
-                    phn_start, wrd_start, wrd_offset_start, wrd_offset_end
-                )
-                yield phn_start
-                # phn_end
-                phn_end, _, _ = cut_offsets_rel(
-                    phn_end, wrd_end, wrd_offset_start, wrd_offset_end
-                )
-                yield phn_end
-                # wrd
-                wrd_sample = wrd[wrd_offset_start:wrd_offset_end]
-                yield wrd_sample
-                yield " ".join(wrd_sample).upper()
-                phn = phn[phn_from:phn_to]
-                yield phn
+                result = cut_offsets(wrd_start, wrd_offset_start, wrd_offset_end)
             except Exception as e:
                 # TODO: Remove this - this is only for debugging
                 print("-" * 10)
@@ -243,6 +225,27 @@ class CurriculumSpeechDataset(DynamicItemDataset):
                 print("phn_start: ", phn_start)
                 print("phn_end: ", phn_end)
                 raise                
+
+            yield result
+
+            # wrd_end
+            yield cut_offsets(wrd_end, wrd_offset_start, wrd_offset_end)
+            # phn_start
+            phn_start, phn_from, phn_to = cut_offsets_rel(
+                phn_start, wrd_start, wrd_offset_start, wrd_offset_end
+            )
+            yield phn_start
+            # phn_end
+            phn_end, _, _ = cut_offsets_rel(
+                phn_end, wrd_end, wrd_offset_start, wrd_offset_end
+            )
+            yield phn_end
+            # wrd
+            wrd_sample = wrd[wrd_offset_start:wrd_offset_end]
+            yield wrd_sample
+            yield " ".join(wrd_sample).upper()
+            phn = phn[phn_from:phn_to]
+            yield phn
 
         self.pipeline.add_dynamic_item(cut_sample)
 
