@@ -23,15 +23,13 @@ from speechbrain.dataio.dataio import (
     load_pkl,
     save_pkl,
     merge_csvs,
-    merge_jsons
+    merge_jsons,
 )
 
 logger = logging.getLogger(__name__)
 OPT_FILE = "opt_librispeech_prepare.pkl"
 SAMPLERATE = 16000
-RE_STRESS_MARK = re.compile(
-    r"\d$"
-)
+RE_STRESS_MARK = re.compile(r"\d$")
 
 
 class LibriSpeechMode(Enum):
@@ -145,14 +143,15 @@ def prepare_librispeech(
             os.path.join(data_folder, split), match_and=["trans.txt"]
         )
 
-        alignments_dict = {
-            file_name: get_alignment_path(
-                data_folder=data_folder,
-                alignments_folder=alignments_folder,
-                file_name=file_name,
-            )
-            for file_name in wav_lst
-        }
+        if alignments_folder is not None:
+            alignments_dict = {
+                file_name: get_alignment_path(
+                    data_folder=data_folder,
+                    alignments_folder=alignments_folder,
+                    file_name=file_name,
+                )
+                for file_name in wav_lst
+            }
 
         text_dict = text_to_dict(text_lst)
         all_texts.update(text_dict)
@@ -181,12 +180,16 @@ def prepare_librispeech(
         merge_files = [split_libri + ".json" for split_libri in merge_lst]
         if mode == LibriSpeechMode.ALIGNMENT:
             merge_jsons(
-                data_folder=save_folder, json_lst=merge_files, merged_json=merge_name,
+                data_folder=save_folder,
+                json_lst=merge_files,
+                merged_json=merge_name,
             )
         else:
             merge_files = [split_libri + ".csv" for split_libri in merge_lst]
             merge_csvs(
-                data_folder=save_folder, csv_lst=merge_files, merged_csv=merge_name,
+                data_folder=save_folder,
+                csv_lst=merge_files,
+                merged_csv=merge_name,
             )
 
     # Create lexicon.csv and oov.csv
@@ -604,7 +607,7 @@ def parse_alignments(file_name):
     text_grid = textgrids.TextGrid()
     text_grid.read(file_name)
     word_intervals = [
-        {**word, "label": word["label"].upper()} 
+        {**word, "label": word["label"].upper()}
         for word in text_grid.interval_tier_to_array("words")
     ]
     phn_intervals = text_grid.interval_tier_to_array("phones")
@@ -616,11 +619,10 @@ def parse_alignments(file_name):
     phn["phn"] = phn_nostress
     phn["phn_stress"] = phn_stress
     details.update(phn)
-    details["unk_count"] = sum(
-        wrd == "<UNK>" for wrd in details["wrd"]
-    )
+    details["unk_count"] = sum(wrd == "<UNK>" for wrd in details["wrd"])
 
     return details
+
 
 def remove_stress_marks(phn):
     """Removes stress marks from a phoneme annotation
@@ -640,6 +642,7 @@ def remove_stress_marks(phn):
 
 INTERVAL_MAP = [("label", ""), ("begin", "_start"), ("end", "_end")]
 INTERVAL_EMPTY_LABELS = {"", "sil", "sp", "spn"}
+
 
 def intervals_to_dict(intervals, prefix):
     """
@@ -668,8 +671,10 @@ def intervals_to_dict(intervals, prefix):
     """
     # Remove meaningless labels
     intervals_clean = [
-        interval for interval in intervals
-        if interval["label"] not in INTERVAL_EMPTY_LABELS]
+        interval
+        for interval in intervals
+        if interval["label"] not in INTERVAL_EMPTY_LABELS
+    ]
     result = {
         f"{prefix}{suffix}": [interval[key] for interval in intervals_clean]
         for key, suffix in INTERVAL_MAP
