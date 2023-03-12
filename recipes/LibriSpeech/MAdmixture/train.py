@@ -208,14 +208,16 @@ class MadMixtureBrain(sb.Brain):
     def log_batch(self):
         """Logs training stats for this batch"""
         epoch = self.hparams.epoch_counter.current
+        loss_stats = self.loss_metric.summarize(field="average")
         stats = {
             "lr": self.optimizer.param_groups[0]["lr"],
-            **self.loss_metric.summarize(field="average"),
+            **loss_stats,
         }
         stats_meta = {"epoch": epoch, "step": self.step}
-        self.hparams.loss_logger.log_stats(
-            stats_meta=stats_meta, train_stats=stats
-        )
+        if loss_stats:
+            self.hparams.loss_logger.log_stats(
+                stats_meta=stats_meta, train_stats=stats
+            )
         if self.hparams.use_tensorboard:
             self.hparams.tensorboard_train_logger.log_stats(
                 stats_meta=stats_meta, train_stats=stats
@@ -410,13 +412,6 @@ class MadMixtureBrain(sb.Brain):
         )
         with tqdm(sample_loader, dynamic_ncols=True) as t:
             for step, batch in enumerate(t, start=1):
-                tst_id = "1034-121119-0081"
-                if tst_id in batch.snt_id:
-                    idx = batch.snt_id.index(tst_id)
-                    from icecream import ic
-
-                    ic(batch.phn[idx])
-                    ic(batch.wrd[idx])
                 self.evaluate_batch(batch, stage)
                 if self.debug and step == self.debug_batches:
                     break
@@ -457,8 +452,8 @@ class MadMixtureBrain(sb.Brain):
                 lengths_latent=out.lengths_latent,
                 lengths_dec=out.lengths_dec,
             )
-
-            self.evaluator.append(eval_batch)
+            with torch.no_grad():
+                self.evaluator.append(eval_batch)
         return loss.detach().cpu()
 
     def on_stage_start(self, stage, epoch):
@@ -632,7 +627,8 @@ class MadMixtureBrain(sb.Brain):
             stage_folder,
         )
         if self.hparams.eval_enabled:
-            self.evaluator.report(report_path)
+            with torch.no_grad():
+                self.evaluator.report(report_path)
 
     def use_samples(self, eval_sampler):
         """Sets the function to be used to select samples for evaluation
