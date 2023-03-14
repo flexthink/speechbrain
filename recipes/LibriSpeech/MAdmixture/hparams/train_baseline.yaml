@@ -27,12 +27,13 @@ reports_folder: !ref <output_folder>/reports
 latent_folder: !ref <output_folder>/latent
 curriculum_datasets_folder: !ref <output_folder>/curriculum_datasets
 curriculum_save_datasets: false
+curriculum_type: gradual
 use_tensorboard: True
 tensorboard_logs: !ref <output_folder>/logs
 enable_train_metrics: True
 enable_latent_log: False
 train_metrics_interval: 10
-train_log_interval: 1
+train_log_interval: !ref <train_metrics_interval>
 skip_checkpoint: False
 negative_samples_enabled: False
 
@@ -574,35 +575,50 @@ opt_class: !name:torch.optim.Adam
      capturable: !ref <opt_capturable>
 
 # The training curriculum
-curriculum_train: !new:speechbrain.dataio.curriculum.Curriculum
-        steps:
-        - epoch: 1
-          min_words: 2
-          max_words: 3
-          num_samples: 25000
-        - epoch: 20
-          min_words: 2
-          max_words: 10
-          num_samples: 50000
-        - epoch: 40
-          min_words: 2
-          max_words: 20
-          num_samples: 100000
+#TODO: Clean-up, use separate files
+curriculum_train_gradual: !new:speechbrain.dataio.curriculum.Curriculum
+    steps:
+    - epoch: 1
+      min_words: 2
+      max_words: 3
+      num_samples: 25000
+    - epoch: 20
+      min_words: 2
+      max_words: 10
+      num_samples: 50000
+    - epoch: 40
+      min_words: 2
+      max_words: 20
+      num_samples: 100000
 
-curriculum_valid: !new:speechbrain.dataio.curriculum.Curriculum
-        steps:
-        - epoch: 1
-          min_words: 2
-          max_words: 3
-          num_samples: !ref <curriculum_num_samples_valid>
-        - epoch: 20
-          min_words: 2
-          max_words: 10
-          num_samples: !ref <curriculum_num_samples_valid>
-        - epoch: 40
-          min_words: 2
-          max_words: 20
-          num_samples: !ref <curriculum_num_samples_valid>
+curriculum_train_mid: !new:speechbrain.dataio.curriculum.Curriculum
+    steps:
+    - min_words: 2
+      max_words: 10
+      num_samples: 50000
+
+
+curriculum_valid_gradual: !new:speechbrain.dataio.curriculum.Curriculum
+    steps:
+    - epoch: 1
+      min_words: 2
+      max_words: 3
+      num_samples: !ref <curriculum_num_samples_valid>
+    - epoch: 20
+      min_words: 2
+      max_words: 10
+      num_samples: !ref <curriculum_num_samples_valid>
+    - epoch: 40
+      min_words: 2
+      max_words: 20
+      num_samples: !ref <curriculum_num_samples_valid>
+
+curriculum_valid_mid: !new:speechbrain.dataio.curriculum.Curriculum
+    steps:
+    - min_words: 2
+      max_words: 10
+      num_samples: !ref <curriculum_num_samples_valid>
+        
 
 curriculum_test: !new:speechbrain.dataio.curriculum.Curriculum
         steps:
@@ -612,8 +628,16 @@ curriculum_test: !new:speechbrain.dataio.curriculum.Curriculum
 
 
 curriculum:
-    train: !ref <curriculum_train>
-    valid: !ref <curriculum_valid>
+    train: !apply:speechbrain.utils.hparams.choice
+        value: !ref <curriculum_type>
+        choices:
+            gradual: !ref <curriculum_train_gradual>
+            mid: !ref <curriculum_train_mid>
+    valid: !apply:speechbrain.utils.hparams.choice
+        value: !ref <curriculum_type>
+        choices:
+            gradual: !ref <curriculum_valid_gradual>
+            mid: !ref <curriculum_valid_mid>
     test: !ref <curriculum_test>
 
 
@@ -630,8 +654,10 @@ checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
         normalizer: !ref <normalize>
         counter: !ref <epoch_counter>
         negative_sampler: !ref <negative_sampler>
-        curriculum_train: !ref <curriculum_train>
-        curriculum_valid: !ref <curriculum_valid>
+        curriculum_train_gradual: !ref <curriculum_train_gradual>
+        curriculum_train_mid: !ref <curriculum_train_mid>
+        curriculum_valid_gradual: !ref <curriculum_valid_gradual>
+        curriculum_valid_mid: !ref <curriculum_valid_mid>
         curriculum_test: !ref <curriculum_test>
 
 
