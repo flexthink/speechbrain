@@ -26,6 +26,7 @@ from speechbrain.utils.data_utils import concat_padded_features
 from speechbrain.dataio.dataio import length_to_mask
 from speechbrain.nnet.loss.guidedattn_loss import GuidedAttentionLoss
 from speechbrain.lobes.models.madmixture.madmixture import LatentLengthMode
+from speechbrain.nnet.losses import nll_loss, ctc_loss
 
 
 class MadMixtureLoss(nn.Module):
@@ -100,7 +101,14 @@ class MadMixtureLoss(nn.Module):
                 mod for mod in self.modalities if modality_enabled[mod]
             ]
         self.rec_loss_weight = rec_loss_weight
-        self.rec_loss_fn = rec_loss_fn
+        self.rec_loss_fn = {
+            key: (
+                loss_fn 
+                if isinstance(loss_fn, SequenceLoss)
+                else SequenceLossWrapper(loss_fn)
+            )
+            for key, loss_fn in rec_loss_fn.items()
+        }
         self.align_attention_loss_fn = align_attention_loss_fn
         self.align_attention_loss_weight = align_attention_loss_weight
         if modality_weights is None:
@@ -247,7 +255,15 @@ class MadMixtureLoss(nn.Module):
             rec_loss,
             modality_rec_loss,
             weighted_modality_rec_loss,
-        ) = self.compute_rec_loss(targets, rec, length, reduction)
+        ) = self.compute_rec_loss(
+            targets,
+            rec,
+            length_target=length,
+            out_context=out_context,
+            latent=latents, 
+            length_latent=length_latent,                
+            reduction=reduction
+        )
         loss_details = {"rec_loss": rec_loss}
         modality_rec_details = with_prefix("rec", modality_rec_loss)
         modality_rec_weighted_details = with_prefix(
@@ -285,7 +301,10 @@ class MadMixtureLoss(nn.Module):
             ) = self.compute_transfer_loss(
                 targets=targets,
                 transfer_rec=transfer_rec,
-                lengths=length,
+                length_target=length,
+                out_context=out_context,
+                latent=latents, 
+                length_latent=length_latent,                
                 reduction=reduction,
             )
             modality_transfer_loss_details = with_prefix_transfer(
@@ -386,7 +405,7 @@ class MadMixtureLoss(nn.Module):
             f"{prefix}_{key}_loss": value for key, value in loss_dict.items()
         }
 
-    def compute_rec_loss(self, targets, rec, lengths, reduction="mean"):
+    def compute_rec_loss(self, targets, rec, length_target, out_context, latent, length_latent, reduction="mean"):
         """Computes the recreation losses
         
         Arguments
@@ -415,7 +434,14 @@ class MadMixtureLoss(nn.Module):
         """
         modality_rec_loss = {
             key: self.rec_loss_fn[key](
-                rec[key], targets[key], length=lengths[key], reduction=reduction
+                rec[key],
+                targets[key],
+                length_target=length_target[key],
+                out_context=out_context,
+                latent=latent[key], 
+                length_latent=length_latent[key],
+                key=key,
+                reduction=reduction
             )
             for key in self.modalities
         }
@@ -425,13 +451,24 @@ class MadMixtureLoss(nn.Module):
         return rec_loss, modality_rec_loss, weighted_modality_rec_loss
 
     def compute_transfer_loss(
-        self, targets, transfer_rec, lengths, reduction="mean"
+        self,
+        targets,
+        transfer_rec,
+        length_target,
+        out_context,
+        latent,
+        length_latent,
+        reduction="mean"
     ):
         modality_transfer_loss = {
             (src, tgt): self.rec_loss_fn[tgt](
                 modality_transfer_rec,
                 targets[tgt],
-                length=lengths[tgt],
+                length_target=length_target[tgt],
+                out_context=out_context,
+                latent=latent[tgt], 
+                length_latent=length_latent[tgt],
+                key=f"{src}_to_{tgt}",
                 reduction=reduction,
             )
             for (src, tgt), modality_transfer_rec in transfer_rec.items()
@@ -748,7 +785,7 @@ class ContextAlignmentLoss(nn.Module):
             output context keys containing alignments
         latent_lengths: dict
             sequence lengths in the latent space
-        target_lengtsh: dict
+        target_lengths: dict
             target lengths
         reduction: str
             reduction type
@@ -810,6 +847,108 @@ class ContextAlignmentLoss(nn.Module):
             target_lengths=target_lengths_abs,
             reduction=reduction,
         )
+    
+class SequenceLoss(nn.Module):
+    """A superclass for sequence losses"""
+    def forward(self, predictions, targets, length_target, out_context, latent, length_latent, key, reduction):
+        raise NotImplementedError()
+
+
+class SequenceLossWrapper(SequenceLoss):
+    """A wrapper that wraps a simple sequence loss (e.g. NLL)
+    
+    Arguments
+    ---------
+    loss_fn: callable
+        the loss function of the form loss_fn(predictions, targets,
+        reduction="<reduction>)
+    """
+    def __init__(self, loss_fn):
+        super().__init__()
+        self.loss_fn = loss_fn
+
+    def forward(self, predictions, targets, length_target, out_context, latent, length_latent, key, reduction):
+        """Computes the loss
+        
+        Arguments
+        ---------
+        predictions: torch.Tensor
+            the predictions (e.g. log-probabilities if using NLL)
+        targets: torch.Tensor
+            the target sequence
+        lengths_pred: torch.Tensor
+            prediction lengths
+        out_context: dict
+            the output context
+        latent: torch.Tensor
+            the latent representation
+        lengths_latent: torch.Tensor
+            latent representation lengths (absolute)
+        reduction: str
+            Options are 'mean', 'batch'
+        """
+
+        return self.loss_fn(predictions, targets, reduction=reduction)
+
+
+class CTCSequenceLoss(SequenceLoss):
+    """A combination of the CTC loss and a sequence loss (similar to what
+    is used in stock ASR models)
+    
+    Arguments
+    ---------
+    ctc_weight: float
+        the CTC cost weight
+    seq_loss_fn: callable
+        the sequence loss (e.g. NLL)
+    ctc_cost_fn: callable
+        the CTC loss
+    """
+    def __init__(self, ctc_weight, seq_loss_fn=None, ctc_loss_fn=None):
+        super().__init__()
+        if seq_loss_fn is None:
+            seq_loss_fn = nll_loss
+        if ctc_loss_fn is None:
+            ctc_loss_fn = ctc_loss
+        self.ctc_weight = ctc_weight
+        self.ctc_loss_fn = ctc_loss_fn
+        self.seq_loss_fn = seq_loss_fn
+    
+    def forward(self, predictions, targets, length_target, out_context, latent, length_latent, key, reduction):
+        """Computes the loss
+        
+        Arguments
+        ---------
+        predictions: torch.Tensor
+            the predictions (e.g. log-probabilities if using NLL)
+        targets: torch.Tensor
+            the target sequence
+        lengths_pred: torch.Tensor
+            prediction lengths
+        out_context: dict
+            the output context
+        latent: torch.Tensor
+            the latent representation
+        lengths_latent: torch.Tensor
+            latent representation lengths (absolute)
+        reduction: str
+            Options are 'mean', 'batch'
+        """
+        seq_loss = self.seq_loss_fn(
+            predictions,
+            targets,
+            reduction=reduction
+        )
+        p_ctc = out_context.get(f"{key}_p_ctc")
+        if p_ctc is None:
+            ctc_loss = torch.tensor(0., device=predictions.device)
+        else:
+            lengths_latent_rel = length_latent / latent.size(1)
+            ctc_loss = self.ctc_loss_fn(
+                p_ctc, targets, lengths_latent_rel, length_target,
+                reduction=reduction
+            )
+        return seq_loss + self.ctc_weight * ctc_loss
 
 
 class DistanceDiffLengthLoss(nn.Module):

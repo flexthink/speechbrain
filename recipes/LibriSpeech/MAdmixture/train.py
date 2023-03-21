@@ -260,12 +260,19 @@ class MadMixtureBrain(sb.Brain):
         if self.hparams.audio_enabled:
             wavs, wav_lens = batch.sig
             feats_audio = self.hparams.compute_features(wavs)
+            targets_audio = self.hparams.compute_targets(wavs)
             if self.hparams.compute_features_transpose:
                 feats_audio = feats_audio.transpose(-1, -2)
-            for norm in self.modules.normalize:
+            if self.hparams.compute_targets_transpose:
+                targets_audio = targets_audio.transpose(-1, -2)
+            
+            for norm in self.modules.normalize_feats:
                 feats_audio = norm(feats_audio, wav_lens)
+            for norm in self.modules.normalize_targets:
+                targets_audio = norm(targets_audio, wav_lens)
+
             feats["audio"] = feats_audio
-            targets["audio"] = feats_audio
+            targets["audio"] = targets_audio
             lengths["audio"] = wav_lens
 
         # TODO: Embeddings are computed twice, avoid this
@@ -286,7 +293,7 @@ class MadMixtureBrain(sb.Brain):
             feats_neg, lengths_neg = self.prepare_features_negative(batch)
 
         context = {
-            "audio": feats_audio,
+            "audio": targets_audio,
             "char_emb": feats_char_emb,
             "phn_emb": feats_phn_emb,
         }
@@ -302,7 +309,7 @@ class MadMixtureBrain(sb.Brain):
             feats_audio = self.hparams.compute_features(wavs)
             if self.hparams.compute_features_transpose:
                 feats_audio = feats_audio.transpose(-1, -2)
-            for norm in self.modules.normalize:
+            for norm in self.modules.normalize_feats:
                 feats_audio = norm(feats_audio, wav_lens)
             feats_neg["audio"] = feats_audio
             lengths_neg["audio"] = wav_lens

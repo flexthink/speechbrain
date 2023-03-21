@@ -69,6 +69,7 @@ curriculum_num_samples_valid: 1000
 curriculum_num_samples_test: 1000
 
 # Character and phoneme parameters
+blank_index: 0
 bos_index: 1
 eos_index: 2
 char_min_decode_ratio: 0
@@ -125,10 +126,12 @@ negative_sampler: !new:speechbrain.dataio.negative.ReproducibleNegativeSampler
 
 # Feature parameters
 sample_rate: 16000
-spec_n_fft: 1024
+spec_features_n_fft: 400
+spec_features_n_mels: 40
+spec_targets_n_fft: 1024
+spec_targets_n_mels: 80
 spec_f_min: 0
 spec_f_max: 8000
-spec_n_mels: 80
 spec_power: 1
 spec_ref: 10.0
 spec_hop_length: 256
@@ -183,19 +186,27 @@ char_dec_dropout: 0.5
 char_dec_neurons: 512
 char_dec_att_neurons: 256
 char_dec_num_layers: 4
+char_dec_channels: 10
+char_dec_scaling: 1.0
+char_dec_kernel_size: 100
 char_aligner_dropout: 0.1
+char_ctc_weight_decode: 0.40
 
 # Phoneme Encoder/Decoder Parameters
 phn_enabled: True
 phn_embedding_dim: 512
-phn_enc_dropout: 0.5
+phn_enc_dropout: 0.15
 phn_enc_neurons: 512
 phn_enc_num_layers: 4
-phn_dec_dropout: 0.5
-phn_dec_neurons: 512
-phn_dec_att_neurons: 256
+phn_dec_dropout: 0.15
+phn_dec_neurons: 1024
+phn_dec_att_neurons: 1024
 phn_dec_num_layers: 4
+phn_dec_channels: 10
+phn_dec_scaling: 1.0
+phn_dec_kernel_size: 100
 phn_aligner_dropout: 0.1
+phn_ctc_weight_decode: 0.40
 
 ignore_tokens:
     - !ref <bos_index>
@@ -224,14 +235,16 @@ madmixture_align_attention_loss_weight_half_life: 5
 madmixture_align_attention_loss_hard_stop: 10
 madmixture_audio_weight: 2.0
 madmixture_phn_weight: 1.0
+madmixture_phn_ctc_weight: 0.5
 madmixture_char_weight: 1.0
+madmixture_char_ctc_weight: 0.5
 madmixture_triplet_loss_margin: 0.5
 madmixture_triplet_loss_weight: 0.5
 madmixture_context_loss_weight: 1.0
 madmixture_align_use_content: False
 madmixture_align_interpolation_mode: nearest
 
-# The first object passed to the Brain class is this "Epoch Counter"
+# The first object passed to the Brain class is this "Epoch Counter"`
 # which is saved by the Checkpointer so that training can be resumed
 # if it gets interrupted at any point.
 epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
@@ -242,12 +255,18 @@ phn_label_encoder: !new:speechbrain.dataio.encoder.TextEncoder
 
 
 # Feature extraction
-compute_features: !new:speechbrain.nnet.containers.Sequential
+compute_features: !new:speechbrain.lobes.features.Fbank
+   sample_rate: !ref <sample_rate>
+   n_fft: !ref <spec_features_n_fft>
+   n_mels: !ref <spec_features_n_mels>
+
+compute_targets: !new:speechbrain.nnet.containers.Sequential
     spec: !new:torchaudio.transforms.MelSpectrogram
-        n_fft: !ref <spec_n_fft>
+        sample_rate: !ref <sample_rate>
+        n_fft: !ref <spec_targets_n_fft>
         f_min: !ref <spec_f_min>
         f_max: !ref <spec_f_max>
-        n_mels: !ref <spec_n_mels>
+        n_mels: !ref <spec_targets_n_mels>
         power: !ref <spec_power>
         hop_length: !ref <spec_hop_length>
         win_length: !ref <spec_win_length>
@@ -255,8 +274,11 @@ compute_features: !new:speechbrain.nnet.containers.Sequential
         mel_scale: !ref <spec_mel_scale>
     amp2db: !new:torchaudio.transforms.AmplitudeToDB
 
-compute_features_transpose: True
+compute_features_transpose: False
+compute_targets_transpose: True
 
+audio_in_norm: !new:speechbrain.processing.features.InputNormalization
+   norm_type: global
     
 # Feature normalization (mean and std)
 global_norm: !new:speechbrain.processing.features.GlobalNorm
@@ -269,12 +291,15 @@ min_level_norm: !new:speechbrain.processing.features.MinLevelNorm
 
 dynamic_range_compression: !new:speechbrain.processing.features.DynamicRangeCompression
 
-normalize: !new:torch.nn.ModuleList
+normalize_feats: !new:torch.nn.ModuleList
+    - [!ref <audio_in_norm>]
+
+normalize_targets: !new:torch.nn.ModuleList
     - [!ref <min_level_norm>, !ref <global_norm>]
 
 # The CRDNN model is an encoder that combines CNNs, RNNs, and DNNs.
 audio_enc: !new:speechbrain.lobes.models.CRDNN.CRDNN
-    input_shape: [null, null, !ref <spec_n_mels>]
+    input_shape: [null, null, !ref <spec_features_n_mels>]
     activation: !ref <audio_enc_activation>
     dropout: !ref <audio_enc_dropout>
     cnn_blocks: !ref <audio_enc_cnn_blocks>
@@ -295,7 +320,7 @@ audio_enc: !new:speechbrain.lobes.models.CRDNN.CRDNN
 
 audio_dec: !new:speechbrain.lobes.models.madmixture.adapters.TacotronDecoder
     decoder_input_key: audio
-    n_mel_channels: !ref <spec_n_mels>
+    n_mel_channels: !ref <spec_targets_n_mels>
     encoder_embedding_dim: !ref <madmixture_latent_dim>
     n_frames_per_step: !ref <audio_dec_n_frames_per_step>
     max_decoder_steps: !ref <audio_dec_max_decoder_steps>
@@ -323,11 +348,18 @@ char_dec_rnn: !new:speechbrain.nnet.RNN.AttentionalRNNDecoder
     enc_dim: !ref <madmixture_latent_dim>
     input_size: !ref <char_embedding_dim>
     rnn_type: gru
-    attn_type: content
+    attn_type: location
+    scaling: !ref <char_dec_scaling>
+    channels: !ref <char_dec_channels>
+    kernel_size: !ref <char_dec_kernel_size> 
     dropout: !ref <char_dec_dropout>
     hidden_size: !ref <char_dec_neurons>
     attn_dim: !ref <char_dec_att_neurons>
     num_layers: !ref <char_dec_num_layers>
+
+char_ctc_lin: !new:speechbrain.nnet.linear.Linear
+   input_size: !ref <madmixture_latent_dim>
+   n_neurons: !ref <char_count>
 
 char_dec: !new:speechbrain.lobes.models.madmixture.adapters.RNNDecoder
     latent_size: !ref <madmixture_latent_dim>
@@ -336,7 +368,7 @@ char_dec: !new:speechbrain.lobes.models.madmixture.adapters.RNNDecoder
     input_key: char_emb
     emb: !ref <char_emb>
     bos_index: !ref <bos_index>
-
+    ctc_lin: !ref <char_ctc_lin>
 
 phn_emb: !new:speechbrain.nnet.embedding.Embedding
     num_embeddings: !ref <phn_count>
@@ -357,11 +389,18 @@ phn_dec_rnn: !new:speechbrain.nnet.RNN.AttentionalRNNDecoder
     enc_dim: !ref <madmixture_latent_dim>
     input_size: !ref <phn_embedding_dim>
     rnn_type: gru
-    attn_type: content
+    attn_type: location
+    scaling: !ref <phn_dec_scaling>
+    channels: !ref <phn_dec_channels>
+    kernel_size: !ref <phn_dec_kernel_size> 
     dropout: !ref <phn_dec_dropout>
     hidden_size: !ref <phn_dec_neurons>
     attn_dim: !ref <phn_dec_att_neurons>
     num_layers: !ref <phn_dec_num_layers>
+
+phn_ctc_lin: !new:speechbrain.nnet.linear.Linear
+   input_size: !ref <madmixture_latent_dim>
+   n_neurons: !ref <phn_count>
 
 phn_dec: !new:speechbrain.lobes.models.madmixture.adapters.RNNDecoder
     latent_size: !ref <madmixture_latent_dim>
@@ -370,6 +409,7 @@ phn_dec: !new:speechbrain.lobes.models.madmixture.adapters.RNNDecoder
     input_key: phn_emb
     emb: !ref <phn_emb>
     bos_index: !ref <bos_index>
+    ctc_lin: !ref <phn_ctc_lin>
 
 
 audio_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
@@ -379,7 +419,7 @@ audio_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
     use_content: !ref <madmixture_align_use_content>
     latent_length_mode: !ref <madmixture_latent_length_mode>
     latent_length: !ref <madmixture_latent_length>
-    interpolation_mode: !ref <madmixture_align_interpolation_mode>
+    interpolation_mode: !ref <madmixture_align_interpolation_mode>    
 
 char_aligner: !new:speechbrain.lobes.models.madmixture.PQAttentionalAligner
     dim: !ref <madmixture_latent_dim>
@@ -429,10 +469,18 @@ model: !new:speechbrain.lobes.models.madmixture.MadMixture
     latent_length_mode: !ref <madmixture_latent_length_mode>
     latent_length: !ref <madmixture_latent_length>
 
+ctc_cost: !name:speechbrain.nnet.losses.ctc_loss
+   blank_index: !ref <blank_index>
 
 compute_cost_rec_audio: !name:speechbrain.nnet.losses.mse_loss
-compute_cost_rec_char: !name:speechbrain.nnet.losses.nll_loss
-compute_cost_rec_phn: !name:speechbrain.nnet.losses.nll_loss
+compute_cost_rec_char: !new:speechbrain.nnet.loss.madmixture_loss.CTCSequenceLoss
+    ctc_loss_fn: !ref <ctc_cost>
+    ctc_weight: !ref <madmixture_char_ctc_weight>
+
+compute_cost_rec_phn: !new:speechbrain.nnet.loss.madmixture_loss.CTCSequenceLoss
+    ctc_loss_fn: !ref <ctc_cost>
+    ctc_weight: !ref <madmixture_phn_ctc_weight>
+
 compute_cost_alignment: !new:speechbrain.nnet.loss.madmixture_loss.AlignmentLoss
     eos_weight: !ref <madmixture_alignment_loss_eos_weight>
 
@@ -493,6 +541,9 @@ char_beam_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
     embedding: !ref <char_emb>
     decoder: !ref <char_dec_rnn>
     linear: !ref <char_dec.lin_out>
+    ctc_linear: !ref <char_ctc_lin>
+    ctc_weight: !ref <char_ctc_weight_decode>
+    blank_index: !ref <blank_index>
     bos_index: !ref <bos_index>
     eos_index: !ref <eos_index>
     min_decode_ratio: !ref <char_min_decode_ratio>
@@ -504,6 +555,9 @@ phn_beam_search: !new:speechbrain.decoders.S2SRNNBeamSearcher
     embedding: !ref <phn_emb>
     decoder: !ref <phn_dec_rnn>
     linear: !ref <phn_dec.lin_out>
+    ctc_linear: !ref <phn_ctc_lin>
+    ctc_weight: !ref <phn_ctc_weight_decode>
+    blank_index: !ref <blank_index>
     bos_index: !ref <bos_index>
     eos_index: !ref <eos_index>
     min_decode_ratio: !ref <phn_min_decode_ratio>
@@ -527,7 +581,7 @@ evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
                     vocoder_batch_size: !ref <batch_size>
                     vocoder_pre: !ref <dynamic_range_compression>
                     sample_rate: !ref <sample_rate>
-                    normalization: !ref <normalize>
+                    normalization: !ref <normalize_targets>
                     audio_samples_enabled: !ref <audio_samples_enabled>
 
                 char: !name:speechbrain.lobes.models.madmixture.TokenSequenceEvaluator
@@ -554,7 +608,8 @@ evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
 # device, as well as having train()/eval() called on them by the Brain class
 modules:
     model: !ref <model>
-    normalize: !ref <normalize>
+    normalize_feats: !ref <normalize_feats>
+    normalize_targets: !ref <normalize_targets>
     dynamic_range_compression: !ref <dynamic_range_compression>
     compute_features: !ref <compute_features>
 
@@ -597,6 +652,12 @@ curriculum_train_mid: !new:speechbrain.dataio.curriculum.Curriculum
       max_words: 10
       num_samples: 50000
 
+curriculum_train_short: !new:speechbrain.dataio.curriculum.Curriculum
+    steps:
+    - min_words: 2
+      max_words: 5
+      num_samples: 50000      
+
 
 curriculum_valid_gradual: !new:speechbrain.dataio.curriculum.Curriculum
     steps:
@@ -618,7 +679,12 @@ curriculum_valid_mid: !new:speechbrain.dataio.curriculum.Curriculum
     - min_words: 2
       max_words: 10
       num_samples: !ref <curriculum_num_samples_valid>
-        
+
+curriculum_valid_short: !new:speechbrain.dataio.curriculum.Curriculum
+    steps:
+    - min_words: 2
+      max_words: 5
+      num_samples: !ref <curriculum_num_samples_valid>
 
 curriculum_test: !new:speechbrain.dataio.curriculum.Curriculum
         steps:
@@ -633,11 +699,13 @@ curriculum:
         choices:
             gradual: !ref <curriculum_train_gradual>
             mid: !ref <curriculum_train_mid>
+            short: !ref <curriculum_train_short>
     valid: !apply:speechbrain.utils.hparams.choice
         value: !ref <curriculum_type>
         choices:
             gradual: !ref <curriculum_valid_gradual>
             mid: !ref <curriculum_valid_mid>
+            short: !ref <curriculum_valid_short>
     test: !ref <curriculum_test>
 
 
@@ -651,13 +719,16 @@ checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
     recoverables:
         model: !ref <model>
         scheduler: !ref <lr_annealing>
-        normalizer: !ref <normalize>
+        normalize_feats: !ref <normalize_feats>
+        normalize_targets: !ref <normalize_targets>
         counter: !ref <epoch_counter>
         negative_sampler: !ref <negative_sampler>
         curriculum_train_gradual: !ref <curriculum_train_gradual>
         curriculum_train_mid: !ref <curriculum_train_mid>
+        curriculum_train_short: !ref <curriculum_train_short>
         curriculum_valid_gradual: !ref <curriculum_valid_gradual>
         curriculum_valid_mid: !ref <curriculum_valid_mid>
+        curriculum_valid_short: !ref <curriculum_valid_short>
         curriculum_test: !ref <curriculum_test>
 
 

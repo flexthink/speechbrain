@@ -1444,8 +1444,8 @@ def get_attention_mask(in_mask, out_mask):
     attn_mask = torch.zeros(batch_size, out_max_len, in_max_len).to(
         in_mask.device
     )
-    out_mask_attn = ~out_mask.squeeze().bool()
-    in_mask_attn = ~in_mask.squeeze().bool()
+    out_mask_attn = ~out_mask.squeeze(-1).bool()
+    in_mask_attn = ~in_mask.squeeze(-1).bool()
     attn_mask[out_mask_attn.unsqueeze(-1).repeat(1, 1, in_max_len)] = 1
     attn_mask[in_mask_attn.unsqueeze(1).repeat(1, out_max_len, 1)] = 1
     return attn_mask

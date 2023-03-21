@@ -1168,7 +1168,9 @@ def hyp_s2s_search(probs, lengths, latent, lengths_latent, searcher):
          nested list of decoded sequences
 
     """
-    hyps, _ = searcher(latent, lengths_latent / latent.size(1))
+    max_len = lengths_latent.max()
+    latent_trim = latent[:, :max_len, :]
+    hyps, _ = searcher(latent_trim, lengths_latent / latent_trim.size(1))
     return hyps
 
 

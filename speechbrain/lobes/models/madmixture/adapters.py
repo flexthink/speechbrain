@@ -134,6 +134,9 @@ class RNNDecoder(nn.Module):
     
     bos_index: int
         the index of the BOS token (needed during inference)
+
+    ctc_lin: nn.Module
+        the linear layer for CTC (optional)
     """
 
     outputs_context = True
@@ -147,7 +150,7 @@ class RNNDecoder(nn.Module):
         act=None,
         out_dim=None,
         bos_index=0,
-        use_latent_bos=False,
+        ctc_lin=None        
     ):
         super().__init__()
         self.rnn = rnn
@@ -163,17 +166,9 @@ class RNNDecoder(nn.Module):
         if act is None:
             act = Softmax(apply_log=True)
         self.act = act
-        self.use_latent_bos = use_latent_bos
-        if self.use_latent_bos:
-            self.register_buffer(
-                "latent_bos", self._get_latent_bos(size=latent_size)
-            )
+        self.ctc_lin = ctc_lin
+        self.ctc_act = Softmax(apply_log=True)
         self.bos_index = bos_index
-
-    def _get_latent_bos(self, size):
-        marker = torch.ones(size)
-        marker[::2] = 0
-        return marker
 
     def forward(self, latent, lengths, context):
         """Performs the decoding forward pass
@@ -200,25 +195,17 @@ class RNNDecoder(nn.Module):
             input_value = self._get_dummy_sequence(
                 batch_size, device=latent.device
             )
-        if self.use_latent_bos:
-            latent, latent_length = self._add_latent_bos(latent, latent_length)
         output, alignments = self.rnn(
             input_value, latent, wav_len=latent_length
         )
         output = self.lin_out(output)
         output = self.act(output)
         out_context = {"decoder_alignments": alignments}
+        if self.ctc_lin is not None:
+            logits_ctc = self.ctc_lin(latent)
+            p_ctc = self.ctc_act(logits_ctc)
+            out_context["p_ctc"] = p_ctc
         return output, out_context
-
-    def _add_latent_bos(self, latent, latent_length):
-        batch_size, max_len, latent_size = latent.shape
-        latent_length_abs = latent_length * max_len
-        latent_length_bos = (latent_length_abs + 1) / (max_len + 1)
-        bos_seq = self.latent_bos[None, None, :].expand(
-            batch_size, 1, latent_size
-        )
-        latent_bos = torch.concat((bos_seq, latent), dim=1)
-        return latent_bos, latent_length_bos
 
     def _get_dummy_sequence(self, batch_size, device):
         seq = torch.tensor([[self.bos_index]], device=device)
