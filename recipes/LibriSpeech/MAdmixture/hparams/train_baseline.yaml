@@ -608,7 +608,7 @@ evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
 # device, as well as having train()/eval() called on them by the Brain class
 modules:
     model: !ref <model>
-    audio_in_norm: !ref <audio_in_norm>
+    normalize_feats: !ref <normalize_feats>
     normalize_targets: !ref <normalize_targets>
     dynamic_range_compression: !ref <dynamic_range_compression>
     compute_features: !ref <compute_features>
@@ -720,7 +720,7 @@ checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
     recoverables:
         model: !ref <model>
         scheduler: !ref <lr_annealing>
-        normalize_feats: !ref <normalize_feats>
+        audio_in_norm: !ref <audio_in_norm>
         normalize_targets: !ref <normalize_targets>
         counter: !ref <epoch_counter>
         negative_sampler: !ref <negative_sampler>
