@@ -612,6 +612,7 @@ modules:
     normalize_targets: !ref <normalize_targets>
     dynamic_range_compression: !ref <dynamic_range_compression>
     compute_features: !ref <compute_features>
+    compute_targets: !ref <compute_targets>
 
 # This function manages learning rate annealing over the epochs.
 # We here use the NewBoB algorithm, that anneals the learning rate if
