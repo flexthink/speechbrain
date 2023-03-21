@@ -608,7 +608,7 @@ evaluator: !name:speechbrain.lobes.models.madmixture.MadMixtureEvaluator
 # device, as well as having train()/eval() called on them by the Brain class
 modules:
     model: !ref <model>
-    normalize_feats: !ref <normalize_feats>
+    audio_in_norm: !ref <audio_in_norm>
     normalize_targets: !ref <normalize_targets>
     dynamic_range_compression: !ref <dynamic_range_compression>
     compute_features: !ref <compute_features>
