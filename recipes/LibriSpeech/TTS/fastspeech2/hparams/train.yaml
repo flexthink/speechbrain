@@ -25,7 +25,7 @@ progress_batch_sample_size: 4
 #################################
 data_folder: !PLACEHOLDER # e.g., /data/Database/LJSpeech-1.1
 
-train_splits: ["train-clean-100"]
+train_splits: ["train-clean-100", "train-clean-360"]
 dev_splits: ["dev-clean"]
 test_splits: ["test-clean"]
 
