@@ -194,7 +194,7 @@ criterion: !new:speechbrain.lobes.models.FastSpeech2.LossWithAlignment
 
 vocoder: "hifi-gan"
 pretrained_vocoder: True
-vocoder_source: speechbrain/tts-hifigan-ljspeech
+vocoder_source: speechbrain/tts-hifigan-libritts-16kHz
 vocoder_download_path: tmpdir_vocoder
 
 modules:
