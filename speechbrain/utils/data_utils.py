@@ -126,6 +126,7 @@ def get_all_files(
                         break
 
             # Check exclude_and case
+            exclude_and_entry = False
             if exclude_and is not None:
                 match_found = 0
 

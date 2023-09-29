@@ -11,6 +11,8 @@ Mirco Ravanelli, Ju-Chieh Chou, Loren Lugosch 2020
 import os
 import csv
 import random
+import torchaudio
+import numpy as np
 from collections import Counter
 from dataclasses import dataclass
 import functools
@@ -23,6 +25,7 @@ from speechbrain.dataio.dataio import (
     read_audio_info,
 )
 from speechbrain.utils.parallel import parallel_map
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 OPT_FILE = "opt_librispeech_prepare.pkl"
@@ -39,6 +42,11 @@ def prepare_librispeech(
     merge_lst=[],
     merge_name=None,
     create_lexicon=False,
+    pitch_enabled=False,
+    pitch_n_fft=1024,
+    pitch_hop_length=256,
+    pitch_min_f0=65,
+    pitch_max_f0=2093,
     skip_prep=False,
 ):
     """
@@ -87,7 +95,7 @@ def prepare_librispeech(
         return
     data_folder = data_folder
     splits = tr_splits + dev_splits + te_splits
-    save_folder = save_folder
+    save_folder = Path(save_folder)
     select_n_sentences = select_n_sentences
     conf = {
         "select_n_sentences": select_n_sentences,
@@ -99,6 +107,21 @@ def prepare_librispeech(
         os.makedirs(save_folder)
 
     save_opt = os.path.join(save_folder, OPT_FILE)
+
+    compute_pitch = None
+    pitch_folder = None
+    # Create the pitch folder if it does not already exist
+    if pitch_enabled:
+        pitch_folder = save_folder / "pitch"
+        pitch_folder.mkdir(parents=True, exist_ok=True)
+        compute_pitch = functools.partial(
+            torchaudio.functional.compute_kaldi_pitch,
+            sample_rate=SAMPLERATE,
+            frame_length=(pitch_n_fft / SAMPLERATE * 1000),
+            frame_shift=(pitch_hop_length / SAMPLERATE * 1000),
+            min_f0=pitch_min_f0,
+            max_f0=pitch_max_f0,
+        )
 
     # Check if this phase is already done (if so, skip it)
     if skip(splits, save_folder, conf):
@@ -117,11 +140,11 @@ def prepare_librispeech(
         split = splits[split_index]
 
         wav_lst = get_all_files(
-            os.path.join(data_folder, split), match_and=[".flac"]
+            os.path.join(data_folder, split), match_and=[".flac"], exclude_and=["._"]
         )
 
         text_lst = get_all_files(
-            os.path.join(data_folder, split), match_and=["trans.txt"]
+            os.path.join(data_folder, split), match_and=["trans.txt"], exclude_and=["._"]
         )
 
         text_dict = text_to_dict(text_lst)
@@ -133,7 +156,13 @@ def prepare_librispeech(
             n_sentences = len(wav_lst)
 
         create_csv(
-            save_folder, wav_lst, text_dict, split, n_sentences,
+            save_folder,
+            wav_lst,
+            text_dict,
+            split,
+            n_sentences,
+            compute_pitch,
+            pitch_folder
         )
 
     # Merging csv file if needed
@@ -269,9 +298,15 @@ class LSRow:
     duration: float
     file_path: str
     words: str
+    pitch_file_path: str
 
 
-def process_line(wav_file, text_dict) -> LSRow:
+def process_line(
+    wav_file,
+    text_dict,
+    compute_pitch=None,
+    pitch_folder=None,
+) -> LSRow:
     snt_id = wav_file.split("/")[-1].replace(".flac", "")
     spk_id = "-".join(snt_id.split("-")[0:2])
     wrds = text_dict[snt_id]
@@ -279,6 +314,9 @@ def process_line(wav_file, text_dict) -> LSRow:
 
     info = read_audio_info(wav_file)
     duration = info.num_frames / info.sample_rate
+    pitch_file_path = None
+    if compute_pitch is not None:
+        pitch_file_path = process_pitch(wav_file, compute_pitch, pitch_folder)
 
     return LSRow(
         snt_id=snt_id,
@@ -286,11 +324,43 @@ def process_line(wav_file, text_dict) -> LSRow:
         duration=duration,
         file_path=wav_file,
         words=wrds,
+        pitch_file_path=pitch_file_path
     )
 
 
+def process_pitch(
+    wav_file,
+    compute_pitch,
+    pitch_folder
+):
+    """Computes and saves pitch information
+
+    Arguments
+    ---------
+    wav_file: str|pathlib.Path
+        the source wave file
+    compute_pitch: str
+        the function to compute pitch information
+    pitch_folder: pathlib.Path
+        the destination path
+    """
+    audio, _ = torchaudio.load(wav_file)
+    pitch_file_name = Path(wav_file).stem + ".npy"
+    pitch_file_path = pitch_folder / pitch_file_name
+    pitch = compute_pitch(audio)
+    pitch = pitch[0, :, 0]
+    np.save(pitch_file_path, pitch)
+    return pitch_file_path
+
+
 def create_csv(
-    save_folder, wav_lst, text_dict, split, select_n_sentences,
+    save_folder,
+    wav_lst,
+    text_dict,
+    split,
+    select_n_sentences,
+    compute_pitch,
+    pitch_folder
 ):
     """
     Create the dataset csv file given a list of wav files.
@@ -307,6 +377,10 @@ def create_csv(
         The name of the current data split.
     select_n_sentences : int, optional
         The number of sentences to select.
+    compute_pitch: callable
+        The function to compute pitch information
+    pitch_folder: str
+        The path where pitch files will be saved
 
     Returns
     -------
@@ -321,15 +395,22 @@ def create_csv(
     # Preliminary prints
     msg = "Creating csv lists in  %s..." % (csv_file)
     logger.info(msg)
-
-    csv_lines = [["ID", "duration", "wav", "spk_id", "wrd"]]
+    header = ["ID", "duration", "wav", "spk_id", "wrd"]
+    if compute_pitch is not None:
+        header.append("pitch")
+    csv_lines = [header]
 
     snt_cnt = 0
-    line_processor = functools.partial(process_line, text_dict=text_dict)
+    line_processor = functools.partial(
+        process_line,
+        text_dict=text_dict,
+        compute_pitch=compute_pitch,
+        pitch_folder=pitch_folder,
+    )
     # Processing all the wav files in wav_lst
     # FLAC metadata reading is already fast, so we set a high chunk size
     # to limit main thread CPU bottlenecks
-    for row in parallel_map(line_processor, wav_lst, chunk_size=8192):
+    for row in parallel_map(line_processor, wav_lst, chunk_size=2):
         csv_line = [
             row.snt_id,
             str(row.duration),
@@ -337,6 +418,8 @@ def create_csv(
             row.spk_id,
             row.words,
         ]
+        if row.pitch_file_path is not None:
+            csv_line.append(row.pitch_file_path)
 
         # Appending current file to the csv_lines list
         csv_lines.append(csv_line)
