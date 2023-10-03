@@ -49,6 +49,7 @@ select_n_sentences:
   - !ref <subset_test>
 
 skip_prep: False
+skip_train: False
 
 ################################
 # Audio Parameters             #

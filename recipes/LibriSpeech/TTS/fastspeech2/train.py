@@ -419,6 +419,10 @@ def main():
         },
     )
 
+    if hparams["skip_train"]:
+        logger.info("Skipping training")
+        sys.exit(0)
+
     datasets = dataio_prepare(hparams)
 
     # Brain class initialization
