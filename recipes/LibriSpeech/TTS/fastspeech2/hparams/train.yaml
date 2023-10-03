@@ -24,6 +24,7 @@ progress_batch_sample_size: 4
 # Data files and pre-processing #
 #################################
 data_folder: !PLACEHOLDER # e.g., /data/Database/LJSpeech-1.1
+prepared_data_folder: !ref <save_folder>
 
 train_splits: ["train-clean-100", "train-clean-360"]
 dev_splits: ["dev-clean"]
@@ -32,6 +33,7 @@ test_splits: ["test-clean"]
 splits: ["train", "valid"]
 split_ratio: [90, 10]
 use_subset: False
+use_relative_paths: True
 subset_train: 100
 subset_valid: 10
 subset_test: 10
@@ -51,6 +53,7 @@ skip_prep: False
 ################################
 # Audio Parameters             #
 ################################
+audio_normalize: True
 sample_rate: 16000
 hop_length: 256
 win_length: null

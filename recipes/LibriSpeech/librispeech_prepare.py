@@ -47,6 +47,9 @@ def prepare_librispeech(
     pitch_hop_length=256,
     pitch_min_f0=65,
     pitch_max_f0=2093,
+    sample_rate=16000,
+    normalize=False,
+    use_relative_paths=False,
     skip_prep=False,
 ):
     """
@@ -77,6 +80,12 @@ def prepare_librispeech(
     create_lexicon: bool
         If True, it outputs csv files containing mapping between grapheme
         to phonemes. Use it for training a G2P system.
+    normalize: bool
+        where or not to apply simple volume normalization (dividing by the
+        maximum)
+    use_relative_paths: bool
+        whether or not to use relative paths. This is useful on shared clusters
+        where the target path might not be fixed
     skip_prep: bool
         If True, data preparation is skipped.
 
@@ -108,13 +117,13 @@ def prepare_librispeech(
 
     save_opt = os.path.join(save_folder, OPT_FILE)
 
-    compute_pitch = None
+    process_pitch_fn = None
     pitch_folder = None
     # Create the pitch folder if it does not already exist
     if pitch_enabled:
         pitch_folder = save_folder / "pitch"
         pitch_folder.mkdir(parents=True, exist_ok=True)
-        compute_pitch = functools.partial(
+        process_pitch_fn = functools.partial(
             torchaudio.functional.compute_kaldi_pitch,
             sample_rate=SAMPLERATE,
             frame_length=(pitch_n_fft / SAMPLERATE * 1000),
@@ -155,14 +164,37 @@ def prepare_librispeech(
         else:
             n_sentences = len(wav_lst)
 
+        process_audio_fn = None
+        wav_folder = None
+        resample = SAMPLERATE != sample_rate
+        if resample or normalize:
+            process_audio_fn = functools.partial(
+                process_audio,
+                resample=resample,
+                sample_rate=sample_rate,
+                normalize=normalize,
+            )
+            wav_folder = save_folder / "wav"
+            wav_folder.mkdir(parents=True, exist_ok=True)
+
+        path_placeholders = None
+        if use_relative_paths:
+            path_placeholders = {
+                "data_root": Path(data_folder),
+                "prepared_data_root": Path(save_folder),
+            }
+
         create_csv(
             save_folder,
             wav_lst,
             text_dict,
             split,
             n_sentences,
-            compute_pitch,
-            pitch_folder
+            process_pitch_fn,
+            pitch_folder,
+            process_audio_fn,
+            wav_folder,
+            path_placeholders
         )
 
     # Merging csv file if needed
@@ -304,8 +336,11 @@ class LSRow:
 def process_line(
     wav_file,
     text_dict,
-    compute_pitch=None,
+    process_pitch_fn=None,
+    process_audio_fn=None,
+    wav_folder=None,
     pitch_folder=None,
+    path_placeholders=None
 ) -> LSRow:
     snt_id = wav_file.split("/")[-1].replace(".flac", "")
     spk_id = "-".join(snt_id.split("-")[0:2])
@@ -315,8 +350,21 @@ def process_line(
     info = read_audio_info(wav_file)
     duration = info.num_frames / info.sample_rate
     pitch_file_path = None
-    if compute_pitch is not None:
-        pitch_file_path = process_pitch(wav_file, compute_pitch, pitch_folder)
+    if process_audio_fn is not None:
+        wav_file = process_audio_fn(wav_file, wav_folder)
+    if process_pitch_fn is not None:
+        pitch_file_path = process_pitch(
+            wav_file, process_pitch_fn, pitch_folder
+        )
+    if path_placeholders is not None:
+        wav_file = relativize_path(
+            wav_file,
+            path_placeholders
+        )
+        pitch_file_path = relativize_path(
+            pitch_file_path,
+            path_placeholders
+        )
 
     return LSRow(
         snt_id=snt_id,
@@ -328,9 +376,32 @@ def process_line(
     )
 
 
+def relativize_path(file_name, path_placeholders):
+    """Converts an absolute path to a relative path
+    
+    Arguments
+    ---------
+    file_name: str
+        the file name (which might be absolute)
+    path_placeholders: dict
+        possible path replacements
+        
+    Returns
+    -------
+    result: str
+        the relativized file name"""
+    file_path = Path(file_name)
+    for key, path in path_placeholders.items():
+        if file_path.is_relative_to(path):
+            relative_path = file_path.relative_to(path)
+            file_name = f"${key}/{relative_path}"
+            break
+    return file_name
+
+
 def process_pitch(
     wav_file,
-    compute_pitch,
+    process_pitch_fn,
     pitch_folder
 ):
     """Computes and saves pitch information
@@ -339,7 +410,7 @@ def process_pitch(
     ---------
     wav_file: str|pathlib.Path
         the source wave file
-    compute_pitch: str
+    process_pitch_fn: callable
         the function to compute pitch information
     pitch_folder: pathlib.Path
         the destination path
@@ -347,7 +418,7 @@ def process_pitch(
     audio, _ = torchaudio.load(wav_file)
     pitch_file_name = Path(wav_file).stem + ".npy"
     pitch_file_path = pitch_folder / pitch_file_name
-    pitch = compute_pitch(audio)
+    pitch = process_pitch_fn(audio)
     pitch = pitch[0, :, 0]
     np.save(pitch_file_path, pitch)
     return pitch_file_path
@@ -359,8 +430,11 @@ def create_csv(
     text_dict,
     split,
     select_n_sentences,
-    compute_pitch,
-    pitch_folder
+    process_pitch_fn,
+    pitch_folder,
+    process_audio_fn,
+    wav_folder,
+    path_placeholders,
 ):
     """
     Create the dataset csv file given a list of wav files.
@@ -377,10 +451,14 @@ def create_csv(
         The name of the current data split.
     select_n_sentences : int, optional
         The number of sentences to select.
-    compute_pitch: callable
+    process_pitch_fn: callable
         The function to compute pitch information
     pitch_folder: str
         The path where pitch files will be saved
+    process_audio_fn: callable
+        The function to process the audio file
+    path_placeholders: dict
+        Paths that can be relativized using placehodlers
 
     Returns
     -------
@@ -396,7 +474,7 @@ def create_csv(
     msg = "Creating csv lists in  %s..." % (csv_file)
     logger.info(msg)
     header = ["ID", "duration", "wav", "spk_id", "wrd"]
-    if compute_pitch is not None:
+    if process_audio_fn is not None:
         header.append("pitch")
     csv_lines = [header]
 
@@ -404,8 +482,11 @@ def create_csv(
     line_processor = functools.partial(
         process_line,
         text_dict=text_dict,
-        compute_pitch=compute_pitch,
+        process_pitch_fn=process_pitch_fn,
         pitch_folder=pitch_folder,
+        process_audio_fn=process_audio_fn,
+        wav_folder=wav_folder,
+        path_placeholders=path_placeholders
     )
     # Processing all the wav files in wav_lst
     # FLAC metadata reading is already fast, so we set a high chunk size
@@ -442,6 +523,47 @@ def create_csv(
     # Final print
     msg = "%s successfully created!" % (csv_file)
     logger.info(msg)
+
+
+def process_audio(
+    file_name,
+    destination_folder,
+    resample=False,
+    sample_rate=16000,
+    normalize=False
+):
+    """Processes an audio file
+
+    Arguments
+    ---------
+    file_name: str|pathlib.Path
+        the file name of the original wave file
+    destination_folder: pathlib.Path
+        the path to which wav files will be saved
+    resample: bool
+        whether the audio needs to be resampled
+    sample_rate: bool
+        the target sample rate
+    normalize: bool
+        whether the samples should be re-normalized
+    """
+    wav, original_sample_rate = torchaudio.load(file_name)
+    if resample:
+        wav = torchaudio.functional.resample(
+            wav,
+            orig_freq=original_sample_rate,
+            new_freq=sample_rate
+        )
+    if normalize:
+        wav = wav / wav.abs().max()
+
+    destination_file_name = (
+        destination_folder / Path(file_name).name
+    )
+    torchaudio.save(
+        destination_file_name, wav, sample_rate=sample_rate
+    )
+    return destination_file_name
 
 
 def skip(splits, save_folder, conf):

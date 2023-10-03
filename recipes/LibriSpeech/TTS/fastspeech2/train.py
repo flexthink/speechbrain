@@ -348,7 +348,10 @@ def dataio_prepare(hparams):
     for dataset in hparams["splits"]:
         datasets[dataset] = sb.dataio.dataset.DynamicItemDataset.from_csv(
             csv_path=hparams[f"{dataset}_csv"],
-            replacements={"data_root": hparams["data_folder"]},
+            replacements={
+                "data_root": hparams["data_folder"],
+                "prepared_data_root": hparams["prepared_data_folder"]
+            },
             dynamic_items=[audio_pipeline],
             output_keys=["mel_text_pair", "label", "wav", "pitch"],
         )
@@ -407,8 +410,11 @@ def main():
             "pitch_n_fft": hparams["n_fft"],
             "pitch_hop_length": hparams["hop_length"],
             "pitch_min_f0": hparams["min_f0"],
-            "pitch_max_f0": hparams["max_f0"],
+            "pitch_max_f0": hparams["max_f0"],            
             "select_n_sentences": select_n_sentences,
+            "sample_rate": hparams["sample_rate"],
+            "normalize": hparams["audio_normalize"],
+            "use_relative_paths": hparams["use_relative_paths"],
             "skip_prep": hparams["skip_prep"],
         },
     )
