@@ -38,9 +38,9 @@ subset_train: 100
 subset_valid: 10
 subset_test: 10
 
-train_csv: !ref <save_folder>/train.csv
-valid_csv: !ref <save_folder>/dev-clean.csv
-test_csv: !ref <save_folder>/test.csv
+train_csv: !ref <prepared_data_folder>/train.csv
+valid_csv: !ref <prepared_data_folder>/dev-clean.csv
+test_csv: !ref <prepared_data_folder>/test.csv
 
 
 select_n_sentences:
