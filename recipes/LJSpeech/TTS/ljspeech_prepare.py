@@ -13,17 +13,23 @@ import csv
 import json
 import random
 import logging
+from types import SimpleNamespace
 import torch
 import torchaudio
 import numpy as np
+import tgt
+import re
+import speechbrain as sb
 from tqdm import tqdm
+from pathlib import Path
 from speechbrain.utils.data_utils import download_file
 from speechbrain.dataio.dataio import load_pkl, save_pkl
-import tgt
 from speechbrain.pretrained import GraphemeToPhoneme
-import re
 from unidecode import unidecode
 from speechbrain.utils.text_to_sequence import _g2p_keep_punctuations
+from speechbrain.dataio.dataset import DynamicItemDataset
+from speechbrain.dataio.preparation import FeatureExtractor
+from speechbrain.lobes.models.huggingface_encodec import HuggingFaceEncodec
 
 
 logger = logging.getLogger(__name__)
@@ -52,6 +58,8 @@ def prepare_ljspeech(
     pitch_max_f0=400,
     skip_prep=False,
     use_custom_cleaner=False,
+    extract_features=None,
+    extract_features_opts=None,
     device="cpu",
 ):
     """
@@ -83,6 +91,10 @@ def prepare_ljspeech(
         If True, skip preparation
     use_custom_cleaner : bool
         If True, uses custom cleaner defined for this recipe
+    extract_features : list
+        The list of features to be extracted
+    extract_features_opts : dict
+        Options for feature extraction
     device : str
         Device for to be used for computation (used as required)
 
@@ -168,6 +180,17 @@ def prepare_ljspeech(
     logger.info(msg)
     data_split, meta_csv = split_sets(data_folder, splits, split_ratio)
 
+    extract_features_context = None
+    extract_features_folder = None
+    if extract_features:
+        extract_features_context = get_context(
+            extract_features=extract_features,
+            extract_features_opts=extract_features_opts or {},
+            save_path=save_folder,
+            device=device
+        )
+        extract_features_folder = Path(save_folder) / "features"
+
     if "train" in splits:
         prepare_json(
             model_name,
@@ -183,6 +206,9 @@ def prepare_ljspeech(
             pitch_min_f0,
             pitch_max_f0,
             use_custom_cleaner,
+            extract_features,
+            extract_features_context,
+            extract_features_folder,
             device,
         )
     if "valid" in splits:
@@ -200,6 +226,9 @@ def prepare_ljspeech(
             pitch_min_f0,
             pitch_max_f0,
             use_custom_cleaner,
+            extract_features,
+            extract_features_context,
+            extract_features_folder,
             device,
         )
     if "test" in splits:
@@ -217,6 +246,9 @@ def prepare_ljspeech(
             pitch_min_f0,
             pitch_max_f0,
             use_custom_cleaner,
+            extract_features,
+            extract_features_context,
+            extract_features_folder,
             device,
         )
     save_pkl(conf, save_opt)
@@ -341,6 +373,9 @@ def prepare_json(
     pitch_min_f0,
     pitch_max_f0,
     use_custom_cleaner=False,
+    extract_features=None,
+    extract_features_context=None,
+    extract_features_folder=None,
     device="cpu",
 ):
     """
@@ -374,6 +409,10 @@ def prepare_json(
         Max f0 for pitch computation
     use_custom_cleaner : bool
         If True, uses custom cleaner defined for this recipe
+    extract_features: list
+        If specified, feature extraction will be performed
+    extract_features: types.SimpleNamespace
+        Context for feature extraction (pretrained models, etc)
     device : str
         Device for to be used for computation (used as required)
 
@@ -537,6 +576,17 @@ def prepare_json(
             # Updates data for the utterance
             json_dict[id].update({"phonemes": phonemes})
             json_dict[id].update({"pitch": pitch_file})
+
+        # Feature Extraction
+    if extract_features:
+        extract_features_folder.mkdir(exist_ok=True)
+        prepare_features(
+            data=json_dict,
+            save_path=extract_features_folder,
+            features=extract_features,
+            context=extract_features_context,
+            device=device
+        )
 
     # Writing the dictionary to the json file
     with open(json_file, mode="w") as json_f:
@@ -714,3 +764,61 @@ def custom_clean(text, model_name):
     for regex, replacement in _abbreviations:
         text = re.sub(regex, replacement, text)
     return text
+
+
+def prepare_features(
+        data,
+        save_path,
+        features,
+        context,
+        device="cpu"
+):
+    """Performs feature extraction
+
+    Arguments
+    ---------
+    data: dict
+        a preprocessed dataset
+    features: list
+        the list of feature extractions to be performed"""
+    dataset = DynamicItemDataset(data)
+    feature_extractor = FeatureExtractor(
+        save_path=save_path,
+        src_keys=["sig"],
+        id_key="uttid",
+        device=device
+    )
+
+    @sb.utils.data_pipeline.takes("wav")
+    @sb.utils.data_pipeline.provides("sig")
+    def audio_pipeline(wav):
+        """Load the audio signal. """
+        sig = sb.dataio.dataio.read_audio(wav)
+        return sig
+    dataset.add_dynamic_item(audio_pipeline)
+
+    @sb.utils.data_pipeline.takes("sig")
+    @sb.utils.data_pipeline.provides("audio_tokens")
+    def encodec(sig):
+        return context.encodec.encode(sig.data.unsqueeze(1), sig.lengths)
+
+    feature_extractor.add_dynamic_item(encodec)
+    feature_extractor.set_output_features(features)
+    feature_extractor.extract(dataset)
+
+
+def get_context(
+    extract_features,
+    extract_features_opts,
+    save_path,
+    device
+):
+    """Gets the context (pretrained models, etc) for feature extraction"""
+    context = {}
+    if "audio_tokens" in extract_features:
+        context["encodec"] = HuggingFaceEncodec(
+            source=extract_features_opts.get("encodec_model", "facebook/encodec_24khz"),
+            save_path=save_path,
+        ).to(device)
+
+    return SimpleNamespace(**context)

@@ -5,9 +5,12 @@ Authors
 """
 import collections
 import torch
-from speechbrain.utils.data_utils import mod_default_collate
-from speechbrain.utils.data_utils import recursive_to
-from speechbrain.utils.data_utils import batch_pad_right
+from speechbrain.utils.data_utils import (
+    mod_default_collate,
+    recursive_to,
+    batch_pad_right,
+    undo_padding
+)
 from torch.utils.data._utils.collate import default_convert
 from torch.utils.data._utils.pin_memory import (
     pin_memory as recursive_pin_memory,
@@ -181,6 +184,13 @@ class PaddedBatch:
         """Gets the position."""
         key = self.__keys[pos]
         return getattr(self, key)
+    
+    def as_dict(self):
+        """Converts this batch to a dictionary"""
+        return {
+            key: getattr(self, key)
+            for key in self.__keys
+        }
 
     @property
     def batchsize(self):
@@ -269,3 +279,33 @@ class BatchsizeGuesser:
     def fallback(self, batch):
         """Implementation of fallback."""
         return 1
+
+
+def undo_batch(batch):
+    """Converts a padded batch or a dicitionary to a list of
+    dictionaries. Any instances of PaddedData encountered will
+    be converted to plain tensors
+
+    Arguments
+    ---------
+    batch: dict|speechbrain.dataio.batch.PaddedBatch
+        the batch
+
+    Returns
+    -------
+    result: dict
+        a list of dictionaries with each dictionary as a batch
+        element
+    """
+    if hasattr(batch, "as_dict"):
+        batch = batch.as_dict()
+    keys = batch.keys()
+    return [
+        dict(zip(keys, _unpack_item(item))) for item in zip(*batch.values())
+    ]
+
+
+def _unpack_item(item):
+    if isinstance(item, PaddedData):
+        item = undo_padding(item.data, item.length)
+    return item
