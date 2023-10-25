@@ -6,6 +6,9 @@ Authors
 """
 import torch
 import numpy as np
+import math
+import speechbrain as sb
+from pathlib import Path
 from speechbrain.dataio.dataloader import make_dataloader
 from speechbrain.dataio.dataset import DynamicItemDataset
 from speechbrain.dataio.batch import undo_batch
@@ -30,7 +33,7 @@ class FeatureExtractor:
     device: str|torch.Device
         the device on which operations will be run
 
-    loader_kwargs: dict
+    dataloader_opts: dict
         parameters to be passed to the data loader (batch size, etc)
     
     dynamic_items : list
@@ -48,17 +51,17 @@ class FeatureExtractor:
             id_key="id",
             save_format="npy",
             device="cpu",
-            loader_kwargs=None,
+            dataloader_opts=None,
             dynamic_items=None,
             description=None
     ):
-        if not loader_kwargs:
-            loader_kwargs = {}
+        if not dataloader_opts:
+            dataloader_opts = {}
         self.id_key = id_key
         self.save_path = save_path
         self.src_keys = src_keys
         self.id_key = id_key
-        self.loader_kwargs = loader_kwargs
+        self.dataloader_opts = dataloader_opts
         if callable(save_format):
             self.save_fn = save_format
         elif save_format in SAVE_FORMATS:
@@ -84,8 +87,10 @@ class FeatureExtractor:
             dataset = DynamicItemDataset(dataset)
         dataset.set_output_keys(self.src_keys + [self.id_key])
        
-        dataloader = make_dataloader(dataset, **self.loader_kwargs)
-        for batch in tqdm(dataloader, total=len(dataset), desc=self.description):
+        dataloader = make_dataloader(dataset, **self.dataloader_opts)
+        batch_size = self.dataloader_opts.get("batch_size", 1)
+        batch_count = int(math.ceil(len(dataset) / batch_size))
+        for batch in tqdm(dataloader, total=batch_count, desc=self.description):
             batch = batch.to(self.device)
             self.process_batch(batch)
 
@@ -157,7 +162,6 @@ def save_pt(item_id, data, save_path):
 
 def save_npy(item_id, data, save_path):
     """Saves the data in numpy format (one file per sample per feature)
-    
 
     Arguments
     ---------
@@ -175,7 +179,44 @@ def save_npy(item_id, data, save_path):
         np.save(file_path, value)
 
 
+def load_pt(save_path, item_id, features):
+    file_path = save_path / f"{item_id}.pt"
+    return torch.load(file_path)
+
+
+def load_npy(save_path, item_id, features):
+    return {
+        key: np.load(save_path / f"{key}_{item_id}.npy")
+        for key in features
+    }
+
+
 SAVE_FORMATS = {
-    "save_pt": save_pt,
+    "pt": save_pt,
     "npy": save_npy,
 }
+
+LOAD_FORMATS = {
+    "pt": load_pt,
+    "npy": load_npy,
+}
+
+
+def add_prepared_features(
+    dataset,
+    save_path,
+    features,
+    id_key="id",
+    save_format="npy"
+):
+    load_fn = LOAD_FORMATS.get(save_format, save_format)
+    save_path = Path(save_path)
+
+    @sb.utils.data_pipeline.takes(id_key)
+    @sb.utils.data_pipeline.provides(*features)
+    def prepared_features_pipeline(id_key):
+        data = load_fn(save_path, id_key, features)
+        for feature in features:
+            yield data[feature]
+
+    dataset.add_dynamic_item(prepared_features_pipeline)

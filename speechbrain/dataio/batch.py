@@ -301,11 +301,19 @@ def undo_batch(batch):
         batch = batch.as_dict()
     keys = batch.keys()
     return [
-        dict(zip(keys, _unpack_item(item))) for item in zip(*batch.values())
+        dict(zip(keys, item))
+        for item in zip(
+            *[_unpack_feature(feature) for feature in batch.values()]
+        )
     ]
 
 
-def _unpack_item(item):
-    if isinstance(item, PaddedData):
-        item = undo_padding(item.data, item.length)
-    return item
+def _unpack_feature(feature):
+    if isinstance(feature, PaddedData):
+        device = feature.data.device
+        feature = undo_padding(feature.data, feature.lengths)
+        feature = [
+            torch.tensor(item, device=device)
+            for item in feature
+        ]
+    return feature

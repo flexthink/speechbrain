@@ -27,9 +27,11 @@ from speechbrain.dataio.dataio import load_pkl, save_pkl
 from speechbrain.pretrained import GraphemeToPhoneme
 from unidecode import unidecode
 from speechbrain.utils.text_to_sequence import _g2p_keep_punctuations
+from speechbrain.dataio.batch import PaddedData
 from speechbrain.dataio.dataset import DynamicItemDataset
 from speechbrain.dataio.preparation import FeatureExtractor
 from speechbrain.lobes.models.huggingface_encodec import HuggingFaceEncodec
+from torchaudio.functional import resample
 
 
 logger = logging.getLogger(__name__)
@@ -209,6 +211,7 @@ def prepare_ljspeech(
             extract_features,
             extract_features_context,
             extract_features_folder,
+            extract_features_opts,
             device,
         )
     if "valid" in splits:
@@ -229,6 +232,7 @@ def prepare_ljspeech(
             extract_features,
             extract_features_context,
             extract_features_folder,
+            extract_features_opts,
             device,
         )
     if "test" in splits:
@@ -249,6 +253,7 @@ def prepare_ljspeech(
             extract_features,
             extract_features_context,
             extract_features_folder,
+            extract_features_opts,
             device,
         )
     save_pkl(conf, save_opt)
@@ -376,6 +381,7 @@ def prepare_json(
     extract_features=None,
     extract_features_context=None,
     extract_features_folder=None,
+    extract_features_opts=None,
     device="cpu",
 ):
     """
@@ -585,6 +591,7 @@ def prepare_json(
             save_path=extract_features_folder,
             features=extract_features,
             context=extract_features_context,
+            options=extract_features_opts,
             device=device
         )
 
@@ -771,6 +778,7 @@ def prepare_features(
         save_path,
         features,
         context,
+        options=None,
         device="cpu"
 ):
     """Performs feature extraction
@@ -786,6 +794,7 @@ def prepare_features(
         save_path=save_path,
         src_keys=["sig"],
         id_key="uttid",
+        dataloader_opts=options.get("dataloader_opts", {}),
         device=device
     )
 
@@ -798,11 +807,23 @@ def prepare_features(
     dataset.add_dynamic_item(audio_pipeline)
 
     @sb.utils.data_pipeline.takes("sig")
-    @sb.utils.data_pipeline.provides("audio_tokens")
-    def encodec(sig):
-        return context.encodec.encode(sig.data.unsqueeze(1), sig.lengths)
+    @sb.utils.data_pipeline.provides("sig_resampled")
+    def resample_pipeline(sig):
+        sig_data = resample(
+            waveform=sig.data,
+            orig_freq=options["sample_rate"],
+            new_freq=options["model_sample_rate"]
+        )
+        return PaddedData(sig_data, sig.lengths)
 
-    feature_extractor.add_dynamic_item(encodec)
+    @sb.utils.data_pipeline.takes("sig_resampled")
+    @sb.utils.data_pipeline.provides("audio_tokens")
+    def encodec_pipeline(sig):
+        tokens = context.encodec.encode(sig.data.unsqueeze(1), sig.lengths)
+        return PaddedData(tokens, sig.lengths)
+
+    feature_extractor.add_dynamic_item(resample_pipeline)
+    feature_extractor.add_dynamic_item(encodec_pipeline)
     feature_extractor.set_output_features(features)
     feature_extractor.extract(dataset)
 

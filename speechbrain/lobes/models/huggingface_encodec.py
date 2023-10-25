@@ -10,7 +10,7 @@ from speechbrain.dataio.dataio import length_to_mask
 try:
     from transformers import EncodecModel
 except ImportError:
-    MSG = "Please install transformers from HuggingFace to use GPT2\n"
+    MSG = "Please install transformers from HuggingFace to use Encodec\n"
     MSG += "E.G. run: pip install transformers"
     raise ImportError(MSG)
 
@@ -74,7 +74,7 @@ class HuggingFaceEncodec(nn.Module):
         max_len = inputs.size(1)
         mask = length_to_mask(length * max_len, max_len)
         result = self.model.encode(inputs, mask)
-        return result["audio_codes"].squeeze(0)
+        return result["audio_codes"].squeeze(0).transpose(-1, -2)
 
     def decode(self, tokens, length):
         """Decodes audio from tokens
@@ -94,7 +94,7 @@ class HuggingFaceEncodec(nn.Module):
         max_len = tokens.size(1)
         mask = length_to_mask(length * max_len, max_len)
         return self.model.decode(
-            tokens.unsqueeze(0),
+            tokens.unsqueeze(0).transpose(-1, -2),
             [None],
             mask
         )
