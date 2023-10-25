@@ -134,6 +134,7 @@ class TokTTSBrain(sb.Brain):
             p_seq_reshaped,
             audio_tokens_reshaped,
             length=lengths_reshaped,
+            reduction="mean",
         )
         alignments = get_alignments(decoder_multihead_attns)
         attn_loss = self.hparams.attn_cost(
