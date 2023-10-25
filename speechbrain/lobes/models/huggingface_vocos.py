@@ -68,5 +68,5 @@ class HuggingFaceVocos(nn.Module):
         mask = length_to_mask(
             lengths * wavs.size(1),
             max_len=wavs.size(1)
-        )
+        ).to(wavs)
         return wavs * mask

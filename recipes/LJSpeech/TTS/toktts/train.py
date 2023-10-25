@@ -19,6 +19,7 @@ from hyperpyyaml import load_hyperpyyaml
 from tqdm.auto import tqdm
 from speechbrain.utils.distributed import run_on_main
 from speechbrain.dataio.preparation import add_prepared_features
+from matplotlib import pyplot as plt
 
 logger = logging.getLogger(__name__)
 
@@ -133,12 +134,8 @@ class TokTTSBrain(sb.Brain):
             p_seq_reshaped,
             audio_tokens_reshaped,
             length=lengths_reshaped,
-            reduction="mean"
         )
-        alignments = torch.cat(
-            [item.unsqueeze(-1) for item in decoder_multihead_attns],
-            dim=-1
-        ).mean(dim=-1)
+        alignments = get_alignments(decoder_multihead_attns)
         attn_loss = self.hparams.attn_cost(
             alignments,
             input_lengths=batch.tokens.lengths * batch.tokens.data.size(1),
@@ -209,12 +206,15 @@ class TokTTSBrain(sb.Brain):
     def create_samples(self):
         """Writes audio samples at the end of an epoch"""
         epoch = self.hparams.epoch_counter.current
+        if epoch % self.hparams.samples_interval != 0:
+            return
         samples_folder = Path(self.hparams.samples_folder) / str(epoch)
         samples_folder.mkdir(parents=True, exist_ok=True)
         sample_loader = sb.dataio.dataloader.make_dataloader(
             self.sample_data, **self.hparams.sample_dataloader_opts
         )
         for batch in sample_loader:
+            batch = batch.to(self.device)
             sample_tokens, length, attn = self.infer(batch)
             samples = self.modules.vocoder(sample_tokens, length)
             self.write_samples(
@@ -223,6 +223,12 @@ class TokTTSBrain(sb.Brain):
                 samples,
                 length
             )
+            self.write_attentions(
+                samples_folder,
+                batch.uttid,
+                attn
+            )
+
 
     def create_perfect_samples(self):
         """Creates the best samples that can be created using
@@ -235,6 +241,7 @@ class TokTTSBrain(sb.Brain):
             self.sample_data, **self.hparams.sample_dataloader_opts
         )
         for batch in sample_loader:
+            batch = batch.to(self.device)
             sample_tokens, length = batch.audio_tokens
             samples = self.modules.vocoder(sample_tokens, length)
             self.write_samples(
@@ -265,7 +272,7 @@ class TokTTSBrain(sb.Brain):
             item_sig_cut = item_sig[:item_length_abs]
             sb.dataio.dataio.write_audio(
                 file_name,
-                item_sig_cut,
+                item_sig_cut.detach().cpu(),
                 samplerate=self.hparams.model_sample_rate)
 
     def infer(self, batch):
@@ -308,6 +315,21 @@ class TokTTSBrain(sb.Brain):
 
         return audio_tokens_out, lengths, decoder_multihead_attn
 
+    def write_attentions(self, sample_path, item_ids, attn):
+        alignments = get_alignments(attn)
+        for item_id, item_attn in zip(item_ids, alignments):
+            fig, ax = plt.subplots(figsize=(8, 2))
+            try:
+                file_name = sample_path / f"{item_id}_attn.png"
+                ax.imshow(item_attn.detach().cpu())
+                ax.set_title(f"{item_id} Alignment")
+                ax.set_xlabel("Audio")
+                ax.set_ylabel("Text")
+                fig.savefig(file_name)
+            finally:
+                plt.close(fig)
+
+
 
 def dataio_prepare(hparams):
     """This function prepares the datasets to be used in the brain class.
@@ -340,13 +362,13 @@ def dataio_prepare(hparams):
 
     @sb.utils.data_pipeline.takes("label")
     @sb.utils.data_pipeline.provides(
-        "label", "tokens", "tokens_bos"
+        "label", "tokens"
     )
     def text_pipeline(label):
         """Processes the transcriptions to generate proper labels"""
         label = label.upper()
         yield label
-        tokens = label_encoder.encode_label_torch(label)
+        tokens = label_encoder.encode_sequence_torch(label)
         yield tokens
 
     audio_bos = torch.ones(1, hparams["num_quantizers"]) * hparams["bos_index"]
@@ -381,7 +403,7 @@ def dataio_prepare(hparams):
 
         add_prepared_features(
             dataset=dynamic_dataset,
-            save_path=Path(hparams["save_folder"]) / "features",
+            save_path=Path(hparams["data_folder"]) / "features",
             id_key="uttid",
             features=["audio_tokens"]
         )
@@ -488,6 +510,25 @@ def check_multiprocessing(hparams, run_opts=None):
         opts["drop_last"] = drop_last
 
 
+def get_alignments(attn):
+    """Aggregates alignments from multiple layers and heads
+    
+    Arguments
+    ---------
+    attn: list
+        raw attentions returned from a Transformer
+
+    Results
+    -------
+    alignments: torch.Tensor
+        The resulting alignments
+    """
+    return torch.cat(
+        [item.unsqueeze(-1) for item in attn],
+        dim=-1
+    ).mean(dim=-1)
+
+
 def apply_overfit_test(hparams, dataset):
     """Helper for applying an overfit test conditionally based
     on hyperparameters:
@@ -565,7 +606,7 @@ if __name__ == "__main__":
         hparams = load_hyperpyyaml(fin, overrides)
 
     # Check/adjust multiprocessing settings
-    check_multiprocessing(hparams, run_opts)
+    #check_multiprocessing(hparams, run_opts)
 
     # Create experiment directory
     sb.create_experiment_directory(
@@ -581,13 +622,14 @@ if __name__ == "__main__":
             prepare_ljspeech,
             kwargs={
                 "data_folder": hparams["data_folder"],
-                "save_folder": hparams["save_folder"],
+                "save_folder": hparams["data_folder"],
                 "splits": hparams["splits"],
                 "split_ratio": hparams["split_ratio"],
                 "seed": hparams["seed"],
                 "extract_features": ["audio_tokens"],
                 "extract_features_opts": hparams["extract_features_opts"],
-                "model_name": "toktts"
+                "model_name": "toktts",
+                "device": run_opts.get("device", "cpu")
             },
         )
 

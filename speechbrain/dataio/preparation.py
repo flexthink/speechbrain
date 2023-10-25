@@ -176,7 +176,7 @@ def save_npy(item_id, data, save_path):
     """
     for key, value in data.items():
         file_path = save_path / f"{key}_{item_id}.npy"
-        np.save(file_path, value)
+        np.save(file_path, value.detach().cpu().numpy())
 
 
 def load_pt(save_path, item_id, features):
