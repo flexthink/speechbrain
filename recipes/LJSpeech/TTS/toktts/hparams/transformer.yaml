@@ -41,6 +41,7 @@ number_of_epochs: 100
 batch_size: 16
 grad_accumulation_factor: 1
 max_grad_norm: 5.0
+loss_reduction: 'batchmean'
 sorting: random
 num_workers: 4
 skip_prep: false
