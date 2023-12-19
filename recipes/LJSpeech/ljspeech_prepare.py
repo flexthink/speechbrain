@@ -413,10 +413,14 @@ def prepare_json(
         Max f0 for pitch computation
     use_custom_cleaner : bool
         If True, uses custom cleaner defined for this recipe
-    extract_features: list
+    extract_features : list, optional
         If specified, feature extraction will be performed
-    extract_features: types.SimpleNamespace
+    extract_features_context : types.SimpleNamespace, optional
         Context for feature extraction (pretrained models, etc)
+    extract_features_folder : path-like, optional
+        The folder where extracted features will be saved
+    extract_features_opts : dict, optional
+        Options for feature extraction
     device : str
         Device for to be used for computation (used as required)
 
@@ -581,7 +585,7 @@ def prepare_json(
             json_dict[id].update({"phonemes": phonemes})
             json_dict[id].update({"pitch": pitch_file})
 
-        # Feature Extraction
+    # Feature Extraction
     if extract_features:
         extract_features_folder.mkdir(exist_ok=True)
         prepare_features(

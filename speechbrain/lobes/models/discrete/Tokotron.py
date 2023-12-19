@@ -1065,6 +1065,7 @@ class TokotronRNNDecoder(nn.Module):
         if target_dropout is None:
             target_dropout = dropout
         self.target_dropout = target_dropout
+        self.attn_type = attn_type
         self.dec = AttentionalRNNDecoder(
             rnn_type=rnn_type,
             input_size=input_size,
@@ -1131,7 +1132,7 @@ class TokotronRNNDecoder(nn.Module):
         tgt = F.dropout(tgt, self.target_dropout, training=self.training)
 
         dec_out, dec_attn = self.dec(tgt, enc_out, src_length)
-        if dec_attn.dim() > 3:
+        if self.attn_type == "keyvalue":
             dec_attn = dec_attn.squeeze(2)
         lin_out = self.out_proj(dec_out)
         batch_size, audio_max_len, _ = lin_out.shape
@@ -1325,6 +1326,8 @@ class TokotronRNNDecoder(nn.Module):
             # Concatenate outputs for all steps
             audio_tokens_out = torch.stack(audio_tokens_lst, dim=1)
             dec_attn = torch.stack(dec_attn_lst, dim=1)
+            if self.attn_type == "keyvalue":
+                dec_attn.squeeze_(2)
             p_eos = torch.stack(p_eos_lst, dim=1)
 
             # Length = gate activation index + the offset, not exceeding
