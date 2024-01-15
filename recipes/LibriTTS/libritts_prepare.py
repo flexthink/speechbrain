@@ -5,7 +5,6 @@ Authors
  * Pradnya Kandarkar 2022
 """
 
-from speechbrain.utils.data_utils import get_all_files, download_file
 import json
 import os
 import shutil
@@ -13,8 +12,17 @@ import random
 import logging
 import torchaudio
 import torch
+import speechbrain as sb
 from tqdm import tqdm
-from speechbrain.inference.txt import GraphemeToPhoneme
+from types import SimpleNamespace
+from pathlib import Path
+from speechbrain.inference.text import GraphemeToPhoneme
+from speechbrain.utils.data_utils import get_all_files, download_file
+from speechbrain.dataio.batch import PaddedData
+from speechbrain.dataio.dataset import DynamicItemDataset
+from speechbrain.dataio.preparation import FeatureExtractor
+from torchaudio.functional import resample
+
 
 logger = logging.getLogger(__name__)
 LIBRITTS_URL_PREFIX = "https://www.openslr.org/resources/60/"
@@ -29,12 +37,16 @@ def prepare_libritts(
     save_json_test,
     sample_rate,
     split_ratio=[80, 10, 10],
+    save_folder=None,
     libritts_subsets=None,
     train_split=None,
     valid_split=None,
     test_split=None,
     seed=1234,
     model_name=None,
+    extract_features=None,
+    extract_features_opts=None,
+    device="cpu",
 ):
     """
     Prepares the json files for the LibriTTS dataset.
@@ -76,6 +88,9 @@ def prepare_libritts(
     # Setting the seed value
     random.seed(seed)
 
+    if save_folder is None:
+        save_folder = data_folder
+
     # Checks if this phase is already done (if so, skips it)
     if skip(save_json_train, save_json_valid, save_json_test):
         logger.info("Preparation completed in previous run, skipping.")
@@ -84,17 +99,60 @@ def prepare_libritts(
     logger.info(
         f"Creating {save_json_train}, {save_json_valid}, and {save_json_test}"
     )
+    extract_features_context = None
+    extract_features_folder = None
+    if extract_features:
+        extract_features_context = get_context(
+            extract_features=extract_features,
+            extract_features_opts=extract_features_opts or {},
+            device=device,
+        )
+        extract_features_folder = Path(save_folder) / "features"
+
 
     # If specific splits are provided, creates data manifest files accordingly
     if train_split:
         wav_list = prepare_split(data_folder, train_split)
-        create_json(wav_list, save_json_train, sample_rate, model_name)
+        create_json(
+            data_folder,
+            wav_list,
+            save_json_train,
+            sample_rate,
+            model_name,
+            extract_features,
+            extract_features_context,
+            extract_features_folder,
+            extract_features_opts,
+            device,
+        )
     if valid_split:
         wav_list = prepare_split(data_folder, valid_split)
-        create_json(wav_list, save_json_valid, sample_rate, model_name)
+        create_json(
+            data_folder,
+            wav_list,
+            save_json_valid,
+            sample_rate,
+            model_name,
+            extract_features,
+            extract_features_context,
+            extract_features_folder,
+            extract_features_opts,
+            device,
+        )
     if test_split:
         wav_list = prepare_split(data_folder, test_split)
-        create_json(wav_list, save_json_test, sample_rate, model_name)
+        create_json(
+            data_folder,
+            wav_list,
+            save_json_test,
+            sample_rate,
+            model_name,
+            extract_features,
+            extract_features_context,
+            extract_features_folder,
+            extract_features_opts,
+            device,
+        )
 
     if skip(save_json_train, save_json_valid, save_json_test):
         logger.info("Preparation completed.")
@@ -159,11 +217,26 @@ def prepare_split(data_folder, split_list):
 
         # Collects all files matching the provided extension
         wav_list.extend(get_all_files(subset_folder, match_and=extension))
-
+    wav_list = [
+        file_name
+        for file_name in wav_list
+        if not Path(file_name).name.startswith("._")
+    ]
     return wav_list
 
 
-def create_json(wav_list, json_file, sample_rate, model_name=None):
+def create_json(
+    data_folder,
+    wav_list,
+    json_file,
+    sample_rate,
+    model_name=None,
+    extract_features=None,
+    extract_features_context=None,
+    extract_features_folder=None,
+    extract_features_opts=None,
+    device="cpu",
+):
     """
     Creates the json file given a list of wav files.
     Arguments
@@ -176,6 +249,17 @@ def create_json(wav_list, json_file, sample_rate, model_name=None):
         The sample rate to be used for the dataset
     model_name : str
         Model name (used to prepare additional model specific data)
+    extract_features: list, optional
+        If specified, feature extraction will be performed
+    extract_features_context: types.SimpleNamespace, optional
+        Context for feature extraction (pretrained models, etc)
+    extract_features_folder : path-like, optional
+        The folder where extracted features will be saved
+    extract_features_opts : dict, optional
+        Options for feature extraction
+    device : str
+        Device for to be used for computation (used as required)
+
     """
 
     # Downloads and initializes the G2P model to compute the phonemes if data is being prepared for Tacotron2 experiments
@@ -238,6 +322,19 @@ def create_json(wav_list, json_file, sample_rate, model_name=None):
             label_phoneme = " ".join(label_phoneme_list)
             json_dict[uttid].update({"label_phoneme": label_phoneme})
 
+    # Feature Extraction
+    if extract_features:
+        extract_features_folder.mkdir(exist_ok=True)
+        prepare_features(
+            data=json_dict,
+            data_folder=data_folder,
+            save_path=extract_features_folder,
+            features=extract_features,
+            context=extract_features_context,
+            options=extract_features_opts,
+            device=device,
+        )
+
     # Writes the dictionary to the json file
     with open(json_file, mode="w") as json_f:
         json.dump(json_dict, json_f, indent=2)
@@ -299,3 +396,85 @@ def check_folders(*folders):
         if not os.path.exists(folder):
             return False
     return True
+
+
+def prepare_features(
+    data, data_folder, save_path, features, context, options=None, device="cpu"
+):
+    """Performs feature extraction
+
+    Arguments
+    ---------
+    data: dict
+        a preprocessed dataset
+    features: list
+        the list of feature extractions to be performed"""
+    dataset = DynamicItemDataset(data)
+    feature_extractor = FeatureExtractor(
+        save_path=save_path,
+        src_keys=["sig"],
+        id_key="uttid",
+        dataloader_opts=options.get("dataloader_opts", {}),
+        device=device,
+    )
+
+    @sb.utils.data_pipeline.takes("wav")
+    @sb.utils.data_pipeline.provides("sig")
+    def audio_pipeline(wav):
+        """Load the audio signal. """
+        wav = wav.format(data_root=data_folder)
+        sig = sb.dataio.dataio.read_audio(wav)
+        return sig
+
+    dataset.add_dynamic_item(audio_pipeline)
+
+    @sb.utils.data_pipeline.takes("sig")
+    @sb.utils.data_pipeline.provides("sig_resampled")
+    def resample_pipeline(sig):
+        sig_data = resample(
+            waveform=sig.data,
+            orig_freq=options["sample_rate"],
+            new_freq=options["model_sample_rate"],
+        )
+        return PaddedData(sig_data, sig.lengths)
+
+    @sb.utils.data_pipeline.takes("sig_resampled")
+    @sb.utils.data_pipeline.provides("audio_tokens", "audio_emb")
+    def token_pipeline(sig):
+        tokens, emb = context.token_model.encode(
+            sig.data.unsqueeze(1), sig.lengths
+        )
+        yield PaddedData(tokens, sig.lengths)
+        yield PaddedData(emb, sig.lengths)
+
+    feature_extractor.add_dynamic_item(resample_pipeline)
+    feature_extractor.add_dynamic_item(token_pipeline)
+    feature_extractor.set_output_features(features)
+    feature_extractor.extract(dataset)
+
+
+def get_context(extract_features, extract_features_opts, device):
+    """
+    Gets the context (pretrained models, etc) for feature extraction
+
+    Arguments
+    ---------
+    extract_features : list
+        A list of features to extract
+        Available features:
+        audio_tokens - raw tokens
+        audio_emb - embeddings from the model
+    extract_features_opts : dict
+        Options for feature extraction
+    device : str|torch.Device
+        The device on which extraction will be run
+
+    Returns
+    --------
+    context: SimpleNamespace
+        The context object
+    """
+    context = {}
+    if any(key in extract_features for key in ["audio_tokens", "audio_emb"]):
+        context["token_model"] = extract_features_opts["token_model"].to(device)
+    return SimpleNamespace(**context)

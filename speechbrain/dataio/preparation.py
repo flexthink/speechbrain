@@ -9,6 +9,7 @@ import numpy as np
 import math
 import speechbrain as sb
 import logging
+import re
 from tarfile import TarFile
 from pathlib import Path
 from speechbrain.dataio.dataloader import make_dataloader
@@ -18,6 +19,8 @@ from speechbrain.utils.data_pipeline import DataPipeline
 from tqdm.auto import tqdm
 
 logger = logging.getLogger(__name__)
+
+variable_finder = re.compile(r"\$([\w.]+)")
 
 
 class FeatureExtractor:
@@ -79,13 +82,16 @@ class FeatureExtractor:
         )
         self.description = description
 
-    def extract(self, dataset):
+    def extract(self, dataset, replacements=None):
         """Runs the preprocessing operation
 
         Arguments
         ---------
-        dataset: dict|speechbrain.dataio.dataset.DynamicItemDataset
+        dataset : dict|speechbrain.dataio.dataset.DynamicItemDataset
             the dataset to be saved
+        replacements : dict, optional
+            (Optional dict), e.g., {"data_folder": "/home/speechbrain/data"}
+            This is used to recursively format all string values in the data.
         """
         if isinstance(dataset, dict):
             dataset = DynamicItemDataset(dataset)
@@ -98,20 +104,34 @@ class FeatureExtractor:
             batch = batch.to(self.device)
             self.process_batch(batch)
 
-    def process_batch(self, batch):
+    def process_batch(self, batch, replacements=None):
         """Processes a batch of data
 
         Arguments
         ---------
         batch: speechbrain.dataio.batch.PaddedBatch
             a batch
+        replacements : dict, optional
+            (Optional dict), e.g., {"data_folder": "/home/speechbrain/data"}
+            This is used to recursively format all string values in the data.
         """
         batch_dict = batch.as_dict()
         ids = batch_dict[self.id_key]
+        batch_dict = self.apply_replacements(batch_dict, replacements)
         features = self.pipeline.compute_outputs(batch_dict)
 
         for item_id, item_features in zip(ids, undo_batch(features)):
             self.save_fn(item_id, item_features, save_path=self.save_path)
+
+    def apply_replacements(self, features, replacements):
+        return {
+            key: (
+                _replace_variables(value, replacements)
+                if isinstance(value, str)
+                else value
+            )
+            for key, value in features.items()
+        }
 
     def add_dynamic_item(self, func, takes=None, provides=None):
         """Adds a dynamic item to be output
@@ -370,3 +390,4 @@ class Freezer:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.unfreeze()
+
