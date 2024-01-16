@@ -489,6 +489,7 @@ if __name__ == "__main__":
                 prepare_libritts,
                 kwargs={
                     "data_folder": hparams["data_folder"],
+                    "save_folder": hparams["prepare_save_folder"],
                     "save_json_train": hparams["train_json"],
                     "save_json_valid": hparams["valid_json"],
                     "save_json_test": hparams["test_json"],
