@@ -337,8 +337,8 @@ class Freezer:
             self.archive_path,
         )
         with TarFile.open(self.archive_path, "w") as tar_file:
-            for file_name in file_names:
                 tar_file.add(
+            for file_name in file_names:
                     name=file_name,
                     arcname=file_name.relative_to(self.save_path),
                 )
@@ -386,8 +386,8 @@ class Freezer:
         ]
 
     def __enter__(self):
-        self.freeze()
+        self.unfreeze()
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.unfreeze()
+        self.freeze()
 
