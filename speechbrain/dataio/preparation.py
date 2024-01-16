@@ -337,8 +337,8 @@ class Freezer:
             self.archive_path,
         )
         with TarFile.open(self.archive_path, "w") as tar_file:
-                tar_file.add(
             for file_name in file_names:
+                tar_file.add(
                     name=file_name,
                     arcname=file_name.relative_to(self.save_path),
                 )
