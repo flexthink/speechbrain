@@ -74,7 +74,7 @@ gate_loss_gamma: 0.01
 gate_loss_max_weight: 1.
 
 # Feature parameters
-sample_rate: 22050
+sample_rate: 24000
 model_sample_rate: 24000
 max_audio_length: 700
 infer_max_audio_length: !ref <max_audio_length>
