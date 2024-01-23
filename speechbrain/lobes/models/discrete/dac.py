@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.parametrizations import weight_norm
+from speechbrain.dataio.dataio import length_to_mask, clean_padding_
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,12 @@ __MODEL_LATEST_TAGS__ = {
     ("24khz", "8kbps"): "0.0.4",
     ("16khz", "8kbps"): "0.0.5",
     ("44khz", "16kbps"): "1.0.0",
+}
+
+__SAMPLE_RATE_MAP__ = {
+    44100: "44khz",
+    24000: "24khz",
+    16000: "16khz",
 }
 
 
@@ -105,7 +112,7 @@ def init_weights(m):
 
 
 def download(
-    model_type: str = "44khz",
+    model_type: str = None,
     model_bitrate: str = "8kbps",
     tag: str = "latest",
     local_path: Path = None,
@@ -962,7 +969,7 @@ class DAC(nn.Module):
         codebook_dim: Union[int, list] = 8,
         quantizer_dropout: bool = False,
         sample_rate: int = 44100,
-        model_type: str = "44khz",
+        model_type: str = None,
         model_bitrate: str = "8kbps",
         tag: str = "latest",
         load_path: str = None,
@@ -1005,6 +1012,12 @@ class DAC(nn.Module):
         self.quantizer_dropout = quantizer_dropout
 
         if load_pretrained:
+            if model_type is None:
+                try:
+                    model_type = __SAMPLE_RATE_MAP__[sample_rate]
+                except KeyError:
+                    raise ValueError(f"Unsupported sample rate: {sample_rate}")
+
             if not load_path:
                 load_path = download(
                     model_type=model_type, model_bitrate=model_bitrate, tag=tag
@@ -1126,3 +1139,126 @@ class DAC(nn.Module):
 
         z, codes, _, _, _ = self.encode(audio_data, n_quantizers)
         return codes, z
+
+
+class DACFeatureExtractor(nn.Module):
+    """An adapter for feature extraction
+
+    Arguments
+    ---------
+    dac : DAC
+        a DAC model
+    """
+    def __init__(self, dac, n_quantizers):
+        super().__init__()
+        self.dac = dac
+        self.dac.eval()
+        self.n_quantizers = n_quantizers
+
+    def encode(self, inputs, length):
+        """Encodes a raw audio sample using DAC
+
+        Arguments
+        ---------
+        inputs : torch.Tensor
+            A (Batch x Samples) or (Batch x Channel x Samples)
+            tensor of audio
+        length : torch.Tensor
+            A tensor of relative lengths
+
+        Returns
+        -------
+        tokens : torch.Tensor
+            A (Batch x Tokens x Heads) tensor of audio tokens
+        emb : torch.Tensor
+            Raw vector embeddings from the model's
+            quantizers
+
+        """
+        if inputs.dim() < 3:
+            inputs = inputs.unsqueeze(1)
+        emb, codes, _, _, _ = self.dac.encode(inputs, n_quantizers=self.n_quantizers)
+        emb.transpose_(1, 2)
+        codes.transpose_(1, 2)
+        max_len = emb.size(1)
+        mask = length_to_mask(
+            length * max_len, max_len, device=inputs.device
+        ).unsqueeze(-1)
+        return codes * mask, emb * mask
+    
+    def forward(self, inputs, length):
+        """Encodes a raw audio sample using DAC
+
+        Arguments
+        ---------
+        inputs : torch.Tensor
+            A (Batch x Samples) or (Batch x Channel x Samples)
+            tensor of audio
+        length : torch.Tensor
+            A tensor of relative lengths
+
+        Returns
+        -------
+        tokens : torch.Tensor
+            A (Batch x Tokens x Heads) tensor of audio tokens
+        emb : torch.Tensor
+            Raw vector embeddings from the model's
+            quantizers
+
+        """
+        return self.encode(inputs, length)
+
+    def embeddings(self, tokens):
+        """Converts token indexes to vector embeddings
+
+        Arguments
+        ---------
+        tokens : torch.Tensor
+            a (Batch x Length x Heads) tensor of token indexes
+
+        Returns
+        -------
+        emb : torch.Tensor
+            a (Batch x Length x Heads x Embedding) tensor
+            of raw vector embeddings from the model's
+            quantizer codebooks
+        """
+        emb, _, _ = self.dac.quantizer.from_codes(tokens.transpose(1, 2).int())
+        return emb.transpose(1, 2)
+
+
+class DACVocoder(nn.Module):
+    """A vocoder adapter for DAC. Please keep in mind that that to obtain
+    audio of the highest quality, it might be necessary to train a
+    different vocoder adapted to the task
+    
+    Arguments
+    ---------
+    dac : DAC
+        a DAC model
+    """
+    def __init__(self, dac):
+        super().__init__()
+        self.dac = dac
+
+    def forward(self, tokens, length):
+        """Decodes tokens into audio
+        
+        Arguments
+        ---------
+        tokens : torch.Tensor
+            A (Batch x Length) tensor of DAC audio tokens
+        length : torch.Tensor
+            A 1-D tensor of relative lengths
+
+        Returns
+        -------
+        wavs : torch.Tensor
+            A (Batch x Length) tensor of raw waveforms
+        length : torch.Tensor
+            Relative lengths
+        """
+        z, _, _ = self.dac.quantizer.from_codes(tokens.transpose(1, 2).int())
+        wav = self.dac.decode(z).squeeze(1)
+        clean_padding_(wav, length)
+        return wav, length
