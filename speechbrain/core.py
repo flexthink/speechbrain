@@ -615,6 +615,7 @@ class Brain:
         checkpointer=None,
         profiler=None,
     ):
+        self.optimizers_dict = None
         self.opt_class = opt_class
         self.checkpointer = checkpointer
         self.profiler = profiler
@@ -761,7 +762,11 @@ class Brain:
         elif "cuda" in self.device and self.precision in ["fp16", "bf16"]:
             self.use_amp = True
 
-        if self.use_amp and self.checkpointer is not None:
+        if (
+            self.use_amp
+            and self.checkpointer is not None
+            and self.precision != "bf16"
+        ):
             self.checkpointer.add_recoverable("scaler", self.scaler)
 
         # List parameter count for the user
@@ -1067,8 +1072,11 @@ class Brain:
         Setting gradients to None should save the memory, e.g.
         during ``evaluate()`` and thus larger batch might be used.
         """
-        for opt in self.freeze_optimizers(self.optimizers_dict).values():
-            opt.zero_grad(set_to_none=set_to_none)
+        if self.optimizers_dict is not None:
+            for opt in self.freeze_optimizers(self.optimizers_dict).values():
+                opt.zero_grad(set_to_none=set_to_none)
+        elif self.opt_class is not None:
+            self.optimizer.zero_grad(set_to_none=set_to_none)
 
     def on_evaluate_start(self, max_key=None, min_key=None):
         """Gets called at the beginning of ``evaluate()``
@@ -1133,6 +1141,7 @@ class Brain:
             scaled_loss = self.scaler.scale(
                 loss / self.grad_accumulation_factor
             )
+            self.check_loss_isfinite(scaled_loss)
             scaled_loss.backward()
 
         if should_step:
@@ -1140,6 +1149,37 @@ class Brain:
 
         self.on_fit_batch_end(batch, outputs, loss, should_step)
         return loss.detach().cpu()
+
+    def check_loss_isfinite(self, loss):
+        """Check if the loss is finite.
+
+        If the loss is not finite, log a helpful message and increment the `nonfinite_count`.
+        If the `nonfinite_count` exceeds the `--nonfinite_patience` threshold, stop the training
+        and raise an error.
+
+        This check is particularly useful when the loss becomes NaN or inf, while the
+        parameters and gradients remain finite. It helps prevent getting stuck in an
+        infinite loop during training.
+
+        Arguments
+        ---------
+        loss : tensor
+            The loss tensor after ``backward()`` has been called but
+            before the optimizers ``step()``.
+        """
+        if not torch.isfinite(loss):
+            self.nonfinite_count += 1
+
+            # Check if patience is exhausted
+            if self.nonfinite_count > self.nonfinite_patience:
+                raise ValueError(
+                    "Loss is not finite and patience is exhausted. "
+                    "To debug, wrap `fit()` with "
+                    "autograd's `detect_anomaly()`, e.g.\n\nwith "
+                    "torch.autograd.detect_anomaly():\n\tbrain.fit(...)"
+                )
+            else:
+                logger.warning("Patience not yet exhausted.")
 
     def check_gradients(self):
         """ Checks if the gradients are finite. If not, it will emit a warning and set them to zero."""
@@ -1162,7 +1202,18 @@ class Brain:
         """Performs a step of gradient descent on the optimizers. This method is called every
         ``grad_accumulation_factor`` steps."""
         # 1. get the valid optimizers, i.e., the ones that are not frozen during this step
-        valid_optimizers = self.freeze_optimizers(self.optimizers_dict)
+        if self.optimizers_dict is not None:
+            valid_optimizers = self.freeze_optimizers(self.optimizers_dict)
+        elif self.opt_class is not None:
+            # if valid_optimizers is not defined which could happen if a user is using an old
+            # init_optimizers() method, then we assume that the only valid optimizer is
+            # self.optimizer (which is the default behavior).
+            valid_optimizers = {"optimizer": self.optimizer}
+        else:
+            # Note: in some cases you might want to only compute gradients statistics and
+            # you do not need to call the optimizers.step() method. In this case, you can
+            # simply return from this method and skip the rest of the code.
+            return
 
         # 2. unscale the gradients of the valid optimizers
         for opt in valid_optimizers.values():
@@ -1177,7 +1228,7 @@ class Brain:
                 opt.param_groups[0]["params"], self.max_grad_norm
             )
 
-        # no need to activate this flag if you are in fp16
+        # Note: no need to activate this flag if you are in fp16
         # since GradScaler is automatically handling the nonfinite gradients
         if not self.scaler.is_enabled() and self.skip_nonfinite_grads:
             self.check_gradients()

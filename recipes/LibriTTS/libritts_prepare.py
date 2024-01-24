@@ -23,6 +23,7 @@ from speechbrain.dataio.dataset import DynamicItemDataset
 from speechbrain.dataio.preparation import FeatureExtractor
 from torchaudio.functional import resample
 
+from speechbrain.utils.text_to_sequence import _g2p_keep_punctuations
 
 logger = logging.getLogger(__name__)
 LIBRITTS_URL_PREFIX = "https://www.openslr.org/resources/60/"
@@ -278,7 +279,7 @@ def create_json(
 
         # Reads the signal
         signal, sig_sr = torchaudio.load(wav_file)
-
+        duration = signal.shape[1] / sig_sr
         # Manipulates path to get relative path and uttid
         path_parts = wav_file.split(os.path.sep)
         uttid, _ = os.path.splitext(path_parts[-1])
@@ -310,17 +311,17 @@ def create_json(
         json_dict[uttid] = {
             "uttid": uttid,
             "wav": relative_path,
+            "duration": duration,
             "spk_id": spk_id,
             "label": normalized_text,
             "segment": True if "train" in json_file else False,
         }
 
-        # Tacotron2 specific data preparation
-        if model_name == "Tacotron2":
-            # Computes phoneme labels using SpeechBrain G2P for Tacotron2
-            label_phoneme_list = g2p(normalized_text)
-            label_phoneme = " ".join(label_phoneme_list)
-            json_dict[uttid].update({"label_phoneme": label_phoneme})
+        # Characters are used for Tacotron2, phonemes may be needed for other models
+        if model_name != "Tacotron2":
+            # Computes phoneme labels using SpeechBrain G2P and keeps the punctuations
+            phonemes = _g2p_keep_punctuations(g2p, normalized_text)
+            json_dict[uttid].update({"label_phoneme": phonemes})
 
     # Feature Extraction
     if extract_features:
