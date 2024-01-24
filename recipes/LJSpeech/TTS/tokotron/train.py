@@ -489,7 +489,7 @@ if __name__ == "__main__":
                 prepare_ljspeech,
                 kwargs={
                     "data_folder": hparams["data_folder"],
-                    "save_folder": hparams["data_folder"],
+                    "save_folder": hparams["prepare_save_folder"],
                     "splits": hparams["splits"],
                     "split_ratio": hparams["split_ratio"],
                     "seed": hparams["seed"],
