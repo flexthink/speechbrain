@@ -312,7 +312,7 @@ def dataio_prepare(hparams):
 
         add_prepared_features(
             dataset=dynamic_dataset,
-            save_path=Path(hparams["data_folder"]) / "features",
+            save_path=Path(hparams["prepare_save_folder"]) / "features",
             id_key="uttid",
             features=["audio_tokens"],
         )
