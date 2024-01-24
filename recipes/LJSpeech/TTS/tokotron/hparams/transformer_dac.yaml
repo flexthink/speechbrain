@@ -18,9 +18,9 @@ data_folder: !PLACEHOLDER # e.g., /path/to/LibriSpeech
 # data_folder_rirs: !ref <data_folder>
 prepare_save_folder: !ref <data_folder>/prepared
 prepare_archive_path: null
-train_json: !ref <data_folder>/train.json
-valid_json: !ref <data_folder>/valid.json
-test_json: !ref <data_folder>/test.json
+train_json: !ref <prepare_save_folder>/train.json
+valid_json: !ref <prepare_save_folder>/valid.json
+test_json: !ref <prepare_save_folder>/test.json
 progress_folder: !ref <output_folder>/progress
 progress_archive: !ref <progress_folder>/progress.tar
 progress_current: !ref <progress_folder>/current
