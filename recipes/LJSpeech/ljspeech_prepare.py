@@ -817,11 +817,12 @@ def prepare_features(
     @sb.utils.data_pipeline.takes("sig_resampled")
     @sb.utils.data_pipeline.provides("audio_tokens", "audio_emb")
     def token_pipeline(sig):
-        tokens, emb = context.token_model.encode(
-            sig.data.unsqueeze(1), sig.lengths
-        )
-        yield PaddedData(tokens, sig.lengths)
-        yield PaddedData(emb, sig.lengths)
+        with torch.no_grad():
+            tokens, emb = context.token_model.encode(
+                sig.data.unsqueeze(1), sig.lengths
+            )
+            yield PaddedData(tokens, sig.lengths)
+            yield PaddedData(emb, sig.lengths)
 
     feature_extractor.add_dynamic_item(resample_pipeline)
     feature_extractor.add_dynamic_item(token_pipeline)
