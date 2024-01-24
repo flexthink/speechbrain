@@ -986,6 +986,7 @@ class DAC(nn.Module):
         load_path: str = None,
         strict: bool = False,
         load_pretrained: bool = False,
+        freeze: bool = False,
     ):
         """ Initializes DAC
 
@@ -1008,6 +1009,9 @@ class DAC(nn.Module):
         strict : bool, optional, by default False
         load_pretrained : bool, optional
              If True, then a pretrained model is loaded, by default False
+        freeze : bool (default: True)
+            If True, the model is frozen. If False, the model will be trained
+            alongside with the rest of the pipeline.             
         """
         super().__init__()
 
@@ -1060,6 +1064,26 @@ class DAC(nn.Module):
         if load_pretrained:
             self.load_state_dict(model_dict["state_dict"], strict=strict)
             self.metadata = metadata
+        self.freeze = freeze
+        if self.freeze:
+            logger.warning(
+                f"speechbrain.lobes.models.discrete.dac - {type(self).__name__} is frozen."
+            )
+            self.freeze_model()
+
+    def freeze_model(self):
+        """
+        Freezes parameters of a model.
+        This should be overrided too, depending on users' needs, for example, adapters use.
+
+        Arguments
+        ---------
+        model : from AutoModel.from_config
+            Valid HuggingFace transformers model object.
+        """
+        self.eval()
+        for param in self.parameters():
+            param.requires_grad = False
 
     def encode(
         self, audio_data: torch.Tensor, n_quantizers: int = None,
