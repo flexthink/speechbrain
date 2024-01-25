@@ -15,6 +15,7 @@ output_folder: !ref ./results/hifi_gan/<seed>
 save_folder: !ref <output_folder>/save
 prepare_save_folder: !ref <data_folder>/prepared
 prepare_archive_path: null
+prepare_skip_ignore_folders: False
 train_log: !ref <output_folder>/train_log.txt
 progress_sample_path: !ref <output_folder>/samples
 epochs: 200

@@ -501,6 +501,7 @@ if __name__ == "__main__":
                     "extract_features": ["audio_tokens"],
                     "extract_features_opts": hparams["extract_features_opts"],
                     "model_name": "hifigan",
+                    "skip_ignore_folders": hparams["prepare_skip_ignore_folders"],
                     "device": device,
                 },
             )
