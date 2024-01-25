@@ -92,6 +92,7 @@ silence_padding: !ref <gate_offset>
 dac: !new:speechbrain.lobes.models.discrete.dac.DAC
     sample_rate: !ref <model_sample_rate>
     freeze: !ref <freeze_token_model>
+    load_pretrained: True
 
 # Token model (pretrained)
 token_model: !new:speechbrain.lobes.models.discrete.dac.DACFeatureExtractor
