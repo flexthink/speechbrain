@@ -500,7 +500,7 @@ if __name__ == "__main__":
                     "seed": hparams["seed"],
                     "extract_features": ["audio_tokens"],
                     "extract_features_opts": hparams["extract_features_opts"],
-                    "model_name": "tokotron",
+                    "model_name": "hifigan",
                     "device": device,
                 },
             )
