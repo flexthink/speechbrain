@@ -37,6 +37,8 @@ import torch.nn.functional as F
 import torch.nn as nn
 import speechbrain as sb
 from speechbrain.nnet.CNN import Conv1d, ConvTranspose1d, Conv2d
+from speechbrain.nnet.embedding import MultiEmbedding
+from speechbrain.nnet.linear import Linear
 from torchaudio import transforms
 
 LRELU_SLOPE = 0.1
@@ -634,6 +636,9 @@ class UnitHifiganGenerator(HifiganGenerator):
         size of the convolution filter in each layer of the duration predictor.
     var_pred_dropout : float
         dropout probability of each layer in the duration predictor.
+    num_heads : int, optional
+        The number of embedding heads (needs to be set for models that
+        output multiple tokens per time step, such as Encodec and DAC)
 
     Example
     -------
@@ -678,6 +683,7 @@ class UnitHifiganGenerator(HifiganGenerator):
         var_pred_hidden_dim=128,
         var_pred_kernel_size=3,
         var_pred_dropout=0.5,
+        num_heads=1
     ):
         super().__init__(
             in_channels,
@@ -692,7 +698,17 @@ class UnitHifiganGenerator(HifiganGenerator):
             cond_channels,
             conv_post_bias,
         )
-        self.unit_embedding = torch.nn.Embedding(num_embeddings, embedding_dim)
+        self.num_heads = num_heads
+        if self.num_heads > 1:
+            self.unit_embedding = EmbeddingFusion(
+                num_embeddings=num_embeddings,
+                embedding_dim=embedding_dim,
+                num_heads=num_heads,
+                combined_embedding_dim=embedding_dim,
+            )
+        else:
+            self.unit_embedding = torch.nn.Embedding(num_embeddings, embedding_dim)
+
         self.duration_predictor = duration_predictor
         if duration_predictor:
             self.var_predictor = VariancePredictor(
@@ -1550,3 +1566,65 @@ class DiscriminatorLoss(nn.Module):
 
         loss["D_loss"] = disc_loss
         return loss
+
+
+class EmbeddingFusion(nn.Module):
+    """Produces a single embedding out of multiple token embeddings,
+    useful for vocoders trained on top of discrete token models with
+    multiple quantizers, such as Encodec and DAC
+    
+    Arguments
+    ---------
+    num_embeddings : int
+        Size of the dictionary of embeddings.
+    embedding_dim : int
+        It is the dim of embedding (i.e, the dimensionality of the output).
+    num_heads : int
+        The number of embedding "heads" (i.e. tokens per step)
+    combined_embedding_dim : int, optional
+        The dimension of the combined embedding
+    """
+    def __init__(
+        self,
+        num_embeddings,
+        embedding_dim,
+        num_heads,
+        combined_embedding_dim=None
+    ):
+        super().__init__()
+        if combined_embedding_dim is None:
+            combined_embedding_dim = embedding_dim
+        self.num_heads = num_heads
+        self.embedding_dim = embedding_dim
+        self.combined_embedding_dim = combined_embedding_dim
+        self.emb = MultiEmbedding(
+            num_embeddings=num_embeddings,
+            embedding_dim=embedding_dim,
+            num_heads=num_heads
+        )
+        self.proj = Linear(
+            input_size=embedding_dim * num_heads,
+            n_neurons=combined_embedding_dim,
+            bias=False
+        )
+    
+    def forward(self, tokens):
+        """Produces a concatenated embedding from a multi-token
+        sequence
+
+        Arguments
+        ---------
+        tokens : torch.Tensor
+            a (Batch x Time x Tokens) tensor of token indices
+
+        Returns
+        -------
+        emb : torch.Tensor
+            An embedding of size combined_embedding_dim"""
+        
+        emb = self.emb(tokens)
+        batch_size, max_len, _, _ = emb.shape
+        emb = emb.view(
+            batch_size, max_len, self.combined_embedding_dim * self.num_heads)
+        emb = self.proj(emb)
+        return emb

@@ -835,6 +835,7 @@ def prepare_features(
             tokens, emb = context.token_model.encode(
                 sig.data.unsqueeze(1), sig.lengths
             )
+            tokens = tokens.int()
             yield PaddedData(tokens, sig.lengths)
             yield PaddedData(emb, sig.lengths)
 
