@@ -496,6 +496,7 @@ if __name__ == "__main__":
                     "extract_features": ["audio_tokens"],
                     "extract_features_opts": hparams["extract_features_opts"],
                     "model_name": "tokotron",
+                    "skip_ignore_folders": hparams["prepare_skip_ignore_folders"],
                     "device": run_opts.get("device", "cpu"),
                 },
             )

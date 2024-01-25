@@ -61,6 +61,7 @@ def prepare_ljspeech(
     use_custom_cleaner=False,
     extract_features=None,
     extract_features_opts=None,
+    skip_ignore_folders=False,
     device="cpu",
 ):
     """
@@ -96,6 +97,11 @@ def prepare_ljspeech(
         The list of features to be extracted
     extract_features_opts : dict
         Options for feature extraction
+    skip_ignore_folders : bool
+        Whether to ignore differences in data and save folders when
+        checking if the dataset has already been prepared. This is
+        useful on high-performance compute clusters where such
+        folders are not permanent
     device : str
         Device for to be used for computation (used as required)
 
@@ -168,7 +174,7 @@ def prepare_ljspeech(
             os.makedirs(pitch_folder)
 
     # Check if this phase is already done (if so, skip it)
-    if skip(splits, save_folder, conf):
+    if skip(splits, save_folder, conf, ignore_foders=skip_ignore_folders):
         logger.info("Skipping preparation, completed in previous run.")
         return
 
@@ -257,7 +263,7 @@ def prepare_ljspeech(
     save_pkl(conf, save_opt)
 
 
-def skip(splits, save_folder, conf):
+def skip(splits, save_folder, conf, ignore_foders=False):
     """
     Detects if the ljspeech data_preparation has been already done.
     If the preparation has been done, we can skip it.
@@ -286,6 +292,9 @@ def skip(splits, save_folder, conf):
     if skip is True:
         if os.path.isfile(save_opt):
             opts_old = load_pkl(save_opt)
+            if ignore_foders:
+                opts_old = remove_folder_opts(opts_old)
+                conf = remove_folder_opts(opts_old)
             if opts_old == conf:
                 skip = True
             else:
@@ -293,6 +302,11 @@ def skip(splits, save_folder, conf):
         else:
             skip = False
     return skip
+
+
+def remove_folder_opts(conf):
+    """Removes all folder options from  the configuration dict"""
+    return {k: v for k, v in conf.items() if not k.endswith("_folder")}
 
 
 def split_sets(data_folder, splits, split_ratio):
