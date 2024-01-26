@@ -461,7 +461,7 @@ def prepare_json(
 
         # Common data preparation
         id = list(csv_reader)[index][0]
-        wav = os.path.join(wavs_folder, f"{id}.wav")
+        wav = os.path.join("{data_root}", f"{id}.wav")
         label = list(csv_reader)[index][2]
         if use_custom_cleaner:
             label = custom_clean(label, model_name)

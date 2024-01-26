@@ -389,8 +389,9 @@ def sample_interval(seqs, segment_size):
     return new_seqs
 
 
-def compute_hop_size(hparams, device):
+def compute_hop_size(hparams):
     token_model = hparams["token_model"]
+    device = next(iter(token_model.parameters()))
     dummy_audio_sample = torch.randn(
         1, hparams["dummy_audio_sample_length"], device=device
     )
@@ -403,12 +404,12 @@ def compute_hop_size(hparams, device):
     return hop_size
 
 
-def dataio_prepare(hparams, device):
+def dataio_prepare(hparams):
     """This function prepares the datasets to be used in the brain class.
     It also defines the data processing pipeline through user-defined functions.
     """
     segment_size = hparams["segment_size"]
-    code_hop_size = compute_hop_size(hparams, device)
+    code_hop_size = compute_hop_size(hparams)
 
     # Define audio pipeline:
     @sb.utils.data_pipeline.takes("wav", "segment", "audio_tokens")
@@ -506,7 +507,7 @@ if __name__ == "__main__":
                 },
             )
 
-    datasets = dataio_prepare(hparams, device=device)
+    datasets = dataio_prepare(hparams)
 
     # Brain class initialization
     hifi_gan_brain = HifiGanBrain(
