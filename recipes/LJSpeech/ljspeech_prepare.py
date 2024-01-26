@@ -200,8 +200,9 @@ def prepare_ljspeech(
     if "train" in splits:
         prepare_json(
             model_name,
-            data_split["train"],
+            data_split["train"],            
             save_json_train,
+            data_folder,
             wavs_folder,
             meta_csv,
             phoneme_alignments_folder,
@@ -223,6 +224,7 @@ def prepare_ljspeech(
             model_name,
             data_split["valid"],
             save_json_valid,
+            data_folder,
             wavs_folder,
             meta_csv,
             phoneme_alignments_folder,
@@ -244,6 +246,7 @@ def prepare_ljspeech(
             model_name,
             data_split["test"],
             save_json_test,
+            data_folder,            
             wavs_folder,
             meta_csv,
             phoneme_alignments_folder,
@@ -258,6 +261,7 @@ def prepare_ljspeech(
             extract_features_context,
             extract_features_folder,
             extract_features_opts,
+            data_folder,
             device,
         )
     save_pkl(conf, save_opt)
@@ -380,6 +384,7 @@ def prepare_json(
     model_name,
     seg_lst,
     json_file,
+    data_folder,
     wavs_folder,
     csv_reader,
     phoneme_alignments_folder,
@@ -435,6 +440,8 @@ def prepare_json(
         The folder where extracted features will be saved
     extract_features_opts : dict, optional
         Options for feature extraction
+    data_folder : str
+        Path to the folder where the original LJspeech dataset is stored
     device : str
         Device for to be used for computation (used as required)
 
@@ -461,7 +468,7 @@ def prepare_json(
 
         # Common data preparation
         id = list(csv_reader)[index][0]
-        wav = os.path.join("{data_root}", f"{id}.wav")
+        wav = os.path.join("{data_root}", WAVS, f"{id}.wav")
         label = list(csv_reader)[index][2]
         if use_custom_cleaner:
             label = custom_clean(label, model_name)
@@ -604,6 +611,7 @@ def prepare_json(
         extract_features_folder.mkdir(exist_ok=True)
         prepare_features(
             data=json_dict,
+            data_folder=data_folder,
             save_path=extract_features_folder,
             features=extract_features,
             context=extract_features_context,
@@ -790,7 +798,7 @@ def custom_clean(text, model_name):
 
 
 def prepare_features(
-    data, save_path, features, context, options=None, device="cpu"
+    data, data_folder, save_path, features, context, options=None, device="cpu"
 ):
     """Performs feature extraction
 
@@ -813,6 +821,7 @@ def prepare_features(
     @sb.utils.data_pipeline.provides("sig")
     def audio_pipeline(wav):
         """Load the audio signal. """
+        wav = wav.replace("{data_root}", data_folder)
         sig = sb.dataio.dataio.read_audio(wav)
         return sig
 

@@ -391,7 +391,7 @@ def sample_interval(seqs, segment_size):
 
 def compute_hop_size(hparams):
     token_model = hparams["token_model"]
-    device = next(iter(token_model.parameters()))
+    device = next(iter(token_model.parameters())).device
     dummy_audio_sample = torch.randn(
         1, hparams["dummy_audio_sample_length"], device=device
     )
