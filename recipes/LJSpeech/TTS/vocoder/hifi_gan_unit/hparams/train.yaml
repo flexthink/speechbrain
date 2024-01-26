@@ -42,7 +42,7 @@ layer: 6
 
 segment_size: 8960
 code_hop_size: 320
-sample_rate: 16000
+sample_rate: 24000
 
 
 hop_length: 256
@@ -65,19 +65,20 @@ weight_decay: 0.9999
 adam_b1: 0.8
 adam_b2: 0.99
 batch_size: 32 #minimum 32
+num_workers: 8
 
 train_dataloader_opts:
   batch_size: !ref <batch_size>
   drop_last: False
-  num_workers: 8
+  num_workers: !ref <num_workers>
 
 valid_dataloader_opts:
   batch_size: 1
-  num_workers: 8
+  num_workers: !ref <num_workers>
 
 test_dataloader_opts:
   batch_size: 1
-  num_workers: 8
+  num_workers: !ref <num_workers>
 
 ################################
 # Model Parameters and model   #
