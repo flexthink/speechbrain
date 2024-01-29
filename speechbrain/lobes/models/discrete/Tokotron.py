@@ -673,7 +673,13 @@ class TokotronTransformerModel(nn.Module):
         dec_out = self.decoder.infer(enc_out, input_length)
         wav, wav_length = None, None
         if self.vocoder is not None:
-            wav, wav_length = self.vocoder(dec_out.audio_tokens, input_length)
+            vocoder_out = self.vocoder(dec_out.audio_tokens, input_length)
+            if isinstance(vocoder_out, tuple):
+                wav, wav_length = vocoder_out
+            else:
+                wav, wav_length = vocoder_out, input_length
+            if wav.dim() == 3:
+                wav = wav.squeeze(1)
         return TokotronInfernceOutput(
             audio_tokens=dec_out.audio_tokens,
             length=dec_out.audio_tokens,

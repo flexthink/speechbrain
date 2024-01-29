@@ -246,7 +246,7 @@ def prepare_ljspeech(
             model_name,
             data_split["test"],
             save_json_test,
-            data_folder,            
+            data_folder,
             wavs_folder,
             meta_csv,
             phoneme_alignments_folder,
@@ -261,7 +261,6 @@ def prepare_ljspeech(
             extract_features_context,
             extract_features_folder,
             extract_features_opts,
-            data_folder,
             device,
         )
     save_pkl(conf, save_opt)
@@ -845,6 +844,8 @@ def prepare_features(
                 sig.data.unsqueeze(1), sig.lengths
             )
             tokens = tokens.int()
+            if tokens.dim() < 3:
+                tokens = tokens.unsqueeze(-1)
             yield PaddedData(tokens, sig.lengths)
             yield PaddedData(emb, sig.lengths)
 

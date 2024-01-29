@@ -17,6 +17,8 @@ import logging
 import torch
 from speechbrain.dataio.dataio import length_to_mask
 from speechbrain.inference.interfaces import Pretrained
+from speechbrain.dataio.dataio import clean_padding_
+
 
 logger = logging.getLogger(__name__)
 
@@ -355,6 +357,11 @@ class UnitHIFIGAN(Pretrained):
             waveform = self.infer(units.unsqueeze(0).to(self.device))
         return waveform.squeeze(0)
 
-    def forward(self, units):
+    def forward(self, units, length=None):
         "Decodes the input units"
-        return self.decode_batch(units)
+        if units.dim() > 2:
+            units = units.squeeze(-1)
+        wav = self.decode_batch(units)
+        if length:
+            clean_padding_(wav, length)
+        return wav

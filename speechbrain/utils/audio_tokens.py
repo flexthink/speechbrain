@@ -9,7 +9,7 @@ from speechbrain.dataio.batch import PaddedBatch
 from functools import partial
 
 
-def get_silence_token(model, sample_length=100000, device=None):
+def get_silence_token(model, sample_length=100000, extract_emb=True, device=None):
     """Attempts to find out the silence tokens for a given model,
     if applicable
 
@@ -32,9 +32,11 @@ def get_silence_token(model, sample_length=100000, device=None):
 
     audio = torch.zeros(1, sample_length, device=device)
     length = torch.ones(1, device=device)
-    tokens, _ = model(audio, length)
+    tokens, _ = model.encode(audio, length)
     silence_tokens = tokens.squeeze(0).mode(0).values
-    silence_emb = model.embeddings(silence_tokens[None, None, :]).squeeze()
+    silence_emb = None
+    if extract_emb:
+        silence_emb = model.embeddings(silence_tokens[None, None, :]).squeeze()
     return silence_tokens, silence_emb
 
 

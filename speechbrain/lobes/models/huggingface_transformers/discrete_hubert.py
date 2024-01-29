@@ -157,9 +157,11 @@ class DiscreteHuBERT(HuBERT):
         """
 
         # If we freeze, we simply remove all grads from the graph.
+        if wav.dim() == 3:
+            wav = wav.squeeze(1)        
         with torch.set_grad_enabled(not self.freeze):
             feats = self.extract_features(wav, wav_lens)[self.ssl_layer_num]
-        tokens = self.kmeans.predict(feats.flatten(end_dim=-2).cpu())
+        tokens = self.kmeans.predict(feats.flatten(end_dim=-2).detach().cpu())
         embs = self.vocabulary[tokens]
         return (
             torch.tensor(
@@ -173,3 +175,7 @@ class DiscreteHuBERT(HuBERT):
                 device=wav.device,
             ),
         )
+
+    def encode(self, wav, wav_lens=None):
+        emb, tokens = self(wav, wav_lens)
+        return tokens, emb

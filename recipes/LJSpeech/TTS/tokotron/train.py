@@ -215,11 +215,18 @@ class TokotronBrain(sb.Brain):
             for batch in sample_loader:
                 batch = batch.to(self.device)
                 sample_tokens, length = batch.audio_tokens_pad
-                samples, samples_length = self.modules.vocoder(
+                vocoder_out = self.modules.vocoder(
                     sample_tokens, length
                 )
+                if isinstance(vocoder_out, tuple):
+                    samples, samples_length = vocoder_out
+                else:
+                    samples = vocoder_out
+                    samples_length = length
                 max_len = samples.size(1)
                 samples_length_abs = (samples_length * max_len).int()
+                if samples.dim() == 3:
+                    samples = samples.squeeze(1)
                 with self.hparams.progress_logger:
                     for item_id, item_wav, item_length in zip(
                         batch.uttid, samples, samples_length_abs
@@ -277,7 +284,10 @@ def dataio_prepare(hparams):
         tokens = label_encoder.encode_sequence_torch(label)
         yield tokens
 
-    silence_token, _ = get_silence_token(hparams["token_model"])
+    silence_token, _ = get_silence_token(
+        hparams["token_model"],
+        extract_emb=False
+    )
     silence_token = silence_token.cpu()
     silence_padding_len = int(math.ceil(hparams["silence_padding"]))
     audio_bos = (
