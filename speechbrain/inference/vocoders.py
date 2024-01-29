@@ -362,6 +362,11 @@ class UnitHIFIGAN(Pretrained):
         if units.dim() > 2:
             units = units.squeeze(-1)
         wav = self.decode_batch(units)
-        if length:
+        if length is not None:
             clean_padding_(wav, length)
         return wav
+    
+    def to(self, device):
+        result = super().to(device)
+        self.device = device
+        return result
