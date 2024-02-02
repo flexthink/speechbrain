@@ -113,9 +113,6 @@ class TokotronBrain(sb.Brain):
             The currently-starting epoch. This is passed
             `None` during the test stage.
         """
-        # Set up statistics trackers for this stage
-        # In this case, we would like to keep track of the word error rate (wer)
-        # and the character error rate (cer)
         self.create_perfect_samples()
         self.loss_metric = sb.utils.metric_stats.MultiMetricStats(
             metric=self.hparams.compute_cost, batch_eval=True,
@@ -223,10 +220,10 @@ class TokotronBrain(sb.Brain):
                 else:
                     samples = vocoder_out
                     samples_length = length
-                max_len = samples.size(1)
-                samples_length_abs = (samples_length * max_len).int()
                 if samples.dim() == 3:
                     samples = samples.squeeze(1)
+                max_len = samples.size(1)
+                samples_length_abs = (samples_length * max_len).int()
                 with self.hparams.progress_logger:
                     for item_id, item_wav, item_length in zip(
                         batch.uttid, samples, samples_length_abs
@@ -237,6 +234,7 @@ class TokotronBrain(sb.Brain):
                             content=item_cut.detach().cpu(),
                             mode="audio",
                             folder="_perfect",
+                            samplerate=self.hparams.model_sample_rate
                         )
                     self.hparams.progress_logger[
                         "perfect_samples_created"
