@@ -12,11 +12,8 @@ train_log: !ref <output_folder>/train_log.txt
 
 # Data files
 data_folder: !PLACEHOLDER # e.g., /path/to/LibriSpeech
-# If RIRS_NOISES dir exists in /localscratch/xxx_corpus/RIRS_NOISES
-# then data_folder_rirs should be /localscratch/xxx_corpus
-# otherwise the dataset will automatically be downloaded
-# data_folder_rirs: !ref <data_folder>
 prepare_save_folder: !ref <data_folder>/prepared
+pretrained_model_save_folder: !ref <prepare_save_folder>
 prepare_archive_path: null
 prepare_skip_ignore_folders: False
 train_json: !ref <prepare_save_folder>/train.json
@@ -96,10 +93,10 @@ silence_padding: !ref <gate_offset>
 # Token model (pretrained)
 token_model: !new:speechbrain.lobes.models.huggingface_transformers.discrete_hubert.DiscreteHuBERT
     source: !ref <token_model_src>
-    save_path: !ref <prepare_save_folder>
+    save_path: !ref <pretrained_model_save_folder>
     kmeans_repo_id: !ref <token_model_kmeans_src>
     kmeans_filename: !ref <token_model_kmeans_file_name>
-    kmeans_cache_dir: !ref <prepare_save_folder>
+    kmeans_cache_dir: !ref <pretrained_model_save_folder>
 
 # Dataloader options
 train_dataloader_opts:
