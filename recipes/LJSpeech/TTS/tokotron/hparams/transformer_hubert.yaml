@@ -158,6 +158,7 @@ attention_type: regularMHA
 
 vocoder: !apply:speechbrain.inference.vocoders.UnitHIFIGAN.from_hparams
   source: !ref <vocoder_src>
+  savedir: !ref <pretrained_model_save_folder>/unithifigan-hubert
 
 model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel # yamllint disable-line rule:line-length
     input_num_tokens: !ref <text_num_tokens>
