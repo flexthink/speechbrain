@@ -359,6 +359,7 @@ class TokotronTransformerDecoder(nn.Module):
                 # Compute the gate activation (final sigmoid)
                 step_gate_act = step_gate_out.sigmoid() > self.gate_threshold
 
+
                 # Update the gate activation index as follows
                 #
                 # - If the gate has already activated in a previous step, leave the index as is
@@ -382,7 +383,7 @@ class TokotronTransformerDecoder(nn.Module):
                 # For a given sample, consider it done if the gate has activated at least
                 # gate_offset steps ago
                 seq_done = seq_gate_act & (
-                    seq_gate_idx - idx >= self.gate_offset
+                    idx - seq_gate_idx >= self.gate_offset
                 )
 
                 # Terminate inference if all samples are done
@@ -673,11 +674,11 @@ class TokotronTransformerModel(nn.Module):
         dec_out = self.decoder.infer(enc_out, input_length)
         wav, wav_length = None, None
         if self.vocoder is not None:
-            vocoder_out = self.vocoder(dec_out.audio_tokens, input_length)
+            vocoder_out = self.vocoder(dec_out.audio_tokens, dec_out.length)
             if isinstance(vocoder_out, tuple):
                 wav, wav_length = vocoder_out
             else:
-                wav, wav_length = vocoder_out, input_length
+                wav, wav_length = vocoder_out, dec_out.length
             if wav.dim() == 3:
                 wav = wav.squeeze(1)
         return TokotronInfernceOutput(

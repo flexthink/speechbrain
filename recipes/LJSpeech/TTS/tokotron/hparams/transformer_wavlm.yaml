@@ -97,6 +97,7 @@ token_model: !new:speechbrain.lobes.models.huggingface_transformers.discrete_wav
     kmeans_repo_id: !ref <token_model_kmeans_src>
     kmeans_filename: !ref <token_model_kmeans_file_name>
     kmeans_cache_dir: !ref <pretrained_model_save_folder>
+    freeze: True
 
 # Dataloader options
 train_dataloader_opts:
