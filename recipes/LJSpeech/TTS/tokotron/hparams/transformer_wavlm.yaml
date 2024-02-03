@@ -31,6 +31,7 @@ token_model_src: microsoft/wavlm-large
 token_model_kmeans_src: speechbrain/SSL_Quantization
 token_model_kmeans_file_name: LJSpeech_wavlm_k512_L7.pt
 vocoder_src: chaanks/hifigan-unit-wavlm-l7-k512-ljspeech-ljspeech
+ssl_layer_num: 7
 
 splits: ["train", "valid", "test"]
 split_ratio: [90, 5, 5]
@@ -97,7 +98,8 @@ token_model: !new:speechbrain.lobes.models.huggingface_transformers.discrete_wav
     kmeans_repo_id: !ref <token_model_kmeans_src>
     kmeans_filename: !ref <token_model_kmeans_file_name>
     kmeans_cache_dir: !ref <pretrained_model_save_folder>
-    freeze: True
+    freeze: !ref <freeze_token_model>
+    ssl_layer_num: !ref <ssl_layer_num>
 
 # Dataloader options
 train_dataloader_opts:
