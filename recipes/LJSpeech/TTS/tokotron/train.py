@@ -30,7 +30,7 @@ from speechbrain.utils.audio_tokens import (
 
 logger = logging.getLogger(__name__)
 
-SPECIAL_TOKEN_COUNT = 3
+SPECIAL_TOKEN_COUNT = 1
 
 
 # Brain class for speech recognition training
@@ -242,6 +242,12 @@ class TokotronBrain(sb.Brain):
                     self.hparams.progress_logger.clear()
 
 
+INPUT_FEATURE_MAP = {
+    "text": "label",
+    "phonemes": "phonemes"
+}
+
+
 def dataio_prepare(hparams):
     """This function prepares the datasets to be used in the brain class.
     It also defines the data processing pipeline through user-defined functions.
@@ -272,13 +278,18 @@ def dataio_prepare(hparams):
         "test": hparams["test_json"],
     }
     label_encoder = hparams["label_encoder"]
+    input_feature = INPUT_FEATURE_MAP[hparams["input"]]
 
     @sb.utils.data_pipeline.takes("label")
-    @sb.utils.data_pipeline.provides("label", "tokens")
+    @sb.utils.data_pipeline.provides("label")
     def text_pipeline(label):
         """Processes the transcriptions to generate proper labels"""
         label = label.upper()
-        yield label
+
+    @sb.utils.data_pipeline.takes(input_feature)
+    @sb.utils.data_pipeline.provides("tokens")
+    def tokens_pipeline(label):
+        """Processes the transcriptions to generate proper labels"""
         tokens = label_encoder.encode_sequence_torch(label)
         yield tokens
 
@@ -303,13 +314,15 @@ def dataio_prepare(hparams):
         audio_tokens_bos = torch.cat([audio_bos, audio_tokens_pad], dim=0)
         yield audio_tokens_bos
 
+    dynamic_items = [tokens_pipeline, audio_pipeline, text_pipeline]        
+
     init_sequence_encoder(hparams)
 
     for dataset in data_info:
         dynamic_dataset = sb.dataio.dataset.DynamicItemDataset.from_json(
             json_path=data_info[dataset],
             replacements={"data_root": data_folder},
-            dynamic_items=[text_pipeline, audio_pipeline],
+            dynamic_items=dynamic_items,
             output_keys=[
                 "uttid",
                 "tokens",
@@ -380,7 +393,6 @@ def init_sequence_encoder(hparams):
     token_list_file_name = hparams["token_list_file"]
     tokens = read_token_list(token_list_file_name)
     encoder.add_unk()
-    encoder.add_bos_eos()
     encoder.update_from_iterable(tokens, sequence_input=False)
     encoder.expect_len(len(tokens) + SPECIAL_TOKEN_COUNT)
     return encoder
@@ -503,7 +515,9 @@ if __name__ == "__main__":
                     "seed": hparams["seed"],
                     "extract_features": ["audio_tokens"],
                     "extract_features_opts": hparams["extract_features_opts"],
+                    "extract_phonemes": hparams["input"] == "phonemes",
                     "model_name": "tokotron",
+                    "g2p_src": hparams["g2p_src"],
                     "skip_ignore_folders": hparams["prepare_skip_ignore_folders"],
                     "device": run_opts.get("device", "cpu"),
                 },

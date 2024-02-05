@@ -61,6 +61,8 @@ def prepare_ljspeech(
     use_custom_cleaner=False,
     extract_features=None,
     extract_features_opts=None,
+    extract_phonemes=False,
+    g2p_src="speechbrain/soundchoice-g2p",
     skip_ignore_folders=False,
     device="cpu",
 ):
@@ -97,6 +99,11 @@ def prepare_ljspeech(
         The list of features to be extracted
     extract_features_opts : dict
         Options for feature extraction
+    extract_phonemes : bool
+        Whether to extract phonemes using a G2P model
+    g2p_src : str
+        The name of the HuggingFace Hub to use for the Grapheme-to-Phoneme
+        model or the path to it
     skip_ignore_folders : bool
         Whether to ignore differences in data and save folders when
         checking if the dataset has already been prepared. This is
@@ -215,8 +222,10 @@ def prepare_ljspeech(
             use_custom_cleaner,
             extract_features,
             extract_features_context,
-            extract_features_folder,
+            extract_features_folder,            
             extract_features_opts,
+            extract_phonemes,
+            g2p_src,
             device,
         )
     if "valid" in splits:
@@ -239,6 +248,8 @@ def prepare_ljspeech(
             extract_features_context,
             extract_features_folder,
             extract_features_opts,
+            extract_phonemes,
+            g2p_src,
             device,
         )
     if "test" in splits:
@@ -261,6 +272,8 @@ def prepare_ljspeech(
             extract_features_context,
             extract_features_folder,
             extract_features_opts,
+            extract_phonemes,
+            g2p_src,
             device,
         )
     save_pkl(conf, save_opt)
@@ -398,6 +411,8 @@ def prepare_json(
     extract_features_context=None,
     extract_features_folder=None,
     extract_features_opts=None,
+    extract_phonemes=False,
+    g2p_src="speechbrain/soundchoice-g2p",
     device="cpu",
 ):
     """
@@ -439,8 +454,9 @@ def prepare_json(
         The folder where extracted features will be saved
     extract_features_opts : dict, optional
         Options for feature extraction
-    data_folder : str
-        Path to the folder where the original LJspeech dataset is stored
+    g2p_src : str
+        The name of the HuggingFace Hub to use for the Grapheme-to-Phoneme
+        model or the path to it
     device : str
         Device for to be used for computation (used as required)
 
@@ -451,11 +467,13 @@ def prepare_json(
 
     logger.info(f"preparing {json_file}.")
     if model_name in ["Tacotron2", "FastSpeech2WithAlignment"]:
+        extract_phonemes = True
+    if extract_phonemes:
         logger.info(
             "Computing phonemes for LJSpeech labels using SpeechBrain G2P. This may take a while."
         )
         g2p = GraphemeToPhoneme.from_hparams(
-            "speechbrain/soundchoice-g2p", run_opts={"device": device}
+            g2p_src, run_opts={"device": device}
         )
     if "FastSpeech2" in model_name:
         logger.info(
@@ -600,10 +618,11 @@ def prepare_json(
 
                 np.save(pitch_file, pitch)
 
+            json_dict[id].update({"pitch": pitch_file})
+        if extract_phonemes:
             phonemes = _g2p_keep_punctuations(g2p, label)
             # Updates data for the utterance
             json_dict[id].update({"phonemes": phonemes})
-            json_dict[id].update({"pitch": pitch_file})
 
     # Feature Extraction
     if extract_features:
@@ -848,6 +867,7 @@ def prepare_features(
                 tokens = tokens.unsqueeze(-1)
             yield PaddedData(tokens, sig.lengths)
             yield PaddedData(emb, sig.lengths)
+
 
     feature_extractor.add_dynamic_item(resample_pipeline)
     feature_extractor.add_dynamic_item(token_pipeline)

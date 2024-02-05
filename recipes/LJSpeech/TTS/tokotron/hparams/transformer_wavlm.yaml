@@ -28,6 +28,7 @@ samples_interval: 5
 
 freeze_token_model: True
 token_model_src: microsoft/wavlm-large
+g2p_src: speechbrain/soundchoice-g2p
 token_model_kmeans_src: speechbrain/SSL_Quantization
 token_model_kmeans_file_name: LJSpeech_wavlm_k512_L7.pt
 vocoder_src: chaanks/hifigan-unit-wavlm-l7-k512-ljspeech-ljspeech
@@ -40,10 +41,7 @@ split_ratio: [90, 5, 5]
 ckpt_interval_minutes: 30 # save checkpoint every N min
 
 # Training parameters
-# To make Transformers converge, the global bath size should be large enough.
-# The global batch size is computed as batch_size * n_gpus * gradient_accumulation.
-# Empirically, we found that this value should be >= 128.
-# Please, set your parameters accordingly.
+input: text
 number_of_epochs: 1000
 batch_size: 16
 grad_accumulation_factor: 1
@@ -153,7 +151,13 @@ audio_num_tokens: 512
 audio_emb_size: 128
 audio_emb_freeze: True
 audio_emb_pretrained: False
-text_num_tokens: 31
+text_num_tokens: 39
+phn_num_tokens: 52
+input_num_tokens: !apply:speechbrain.utils.hparams.choice
+    value: !ref <input>
+    choices:
+        text: !ref <phn_num_tokens>
+        phonemes: !ref <text_num_tokens>
 audio_tokens_per_step: 1
 attention_type: regularMHA
 
@@ -164,7 +168,7 @@ vocoder: !apply:speechbrain.inference.vocoders.UnitHIFIGAN.from_hparams
   savedir: !ref <pretrained_model_save_folder>/unithifigan-wavlm
 
 model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel # yamllint disable-line rule:line-length
-    input_num_tokens: !ref <text_num_tokens>
+    input_num_tokens: !ref <input_num_tokens>
     audio_num_tokens: !ref <audio_num_tokens>
     audio_tokens_per_step: !ref <audio_tokens_per_step>
     d_model: !ref <d_model>

@@ -28,6 +28,7 @@ samples_interval: 5
 
 freeze_token_model: True
 token_model_src: facebook/hubert-base-ls960
+g2p_src: speechbrain/soundchoice-g2p
 token_model_kmeans_src: speechbrain/SSL_Quantization
 token_model_kmeans_file_name: LJSpeech_hubert_k512_L7.pt
 vocoder_src: chaanks/hifigan-unit-hubert-l7-k512-ljspeech-ljspeech
@@ -39,10 +40,7 @@ split_ratio: [90, 5, 5]
 ckpt_interval_minutes: 30 # save checkpoint every N min
 
 # Training parameters
-# To make Transformers converge, the global bath size should be large enough.
-# The global batch size is computed as batch_size * n_gpus * gradient_accumulation.
-# Empirically, we found that this value should be >= 128.
-# Please, set your parameters accordingly.
+input: text
 number_of_epochs: 1000
 batch_size: 16
 grad_accumulation_factor: 1
@@ -80,7 +78,13 @@ debug_infer_max_audio_length: 10
 
 # Label encoder
 label_encoder: !new:speechbrain.dataio.encoder.TextEncoder
-token_list_file: ./hparams/char_en.txt
+token_list_file_text: ./hparams/char_en.txt
+token_list_file_phn: ./hparams/arpabet.txt
+token_list_file: !apply:speechbrain.utils.hparams.choice
+    value: !ref <input>
+    choices:
+        text: !ref <token_list_file_text>
+        phonemes: !ref <token_list_file_phn>
 
 # Gate offset
 gate_offset: !apply:speechbrain.nnet.losses.distance_diff_loss_ramp
@@ -134,6 +138,7 @@ extract_features_opts:
     token_model: !ref <token_model>
     sample_rate: !ref <sample_rate>
     model_sample_rate: !ref <model_sample_rate>
+    g2p_src: !ref <g2p_src>
 
 
 ####################### Model parameters ###########################
@@ -150,7 +155,14 @@ audio_num_tokens: 512
 audio_emb_size: 128
 audio_emb_freeze: True
 audio_emb_pretrained: False
-text_num_tokens: 31
+text_num_tokens: 39
+phn_num_tokens: 52
+input_num_tokens: !apply:speechbrain.utils.hparams.choice
+    value: !ref <input>
+    choices:
+        text: !ref <phn_num_tokens>
+        phonemes: !ref <text_num_tokens>
+
 audio_tokens_per_step: 1
 attention_type: regularMHA
 
@@ -161,7 +173,7 @@ vocoder: !apply:speechbrain.inference.vocoders.UnitHIFIGAN.from_hparams
   savedir: !ref <pretrained_model_save_folder>/unithifigan-hubert
 
 model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel # yamllint disable-line rule:line-length
-    input_num_tokens: !ref <text_num_tokens>
+    input_num_tokens: !ref <input_num_tokens>
     audio_num_tokens: !ref <audio_num_tokens>
     audio_tokens_per_step: !ref <audio_tokens_per_step>
     d_model: !ref <d_model>
