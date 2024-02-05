@@ -150,8 +150,8 @@ phn_num_tokens: 52
 input_num_tokens: !apply:speechbrain.utils.hparams.choice
     value: !ref <input>
     choices:
-        text: !ref <phn_num_tokens>
-        phonemes: !ref <text_num_tokens>
+        text: !ref <text_num_tokens>
+        phonemes: !ref <phn_num_tokens>
 audio_tokens_per_step: 2
 attention_type: regularMHA
 
