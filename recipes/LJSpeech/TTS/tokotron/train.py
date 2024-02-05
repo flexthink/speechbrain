@@ -20,6 +20,7 @@ import torch
 import sys
 from pathlib import Path
 from hyperpyyaml import load_hyperpyyaml
+from speechbrain.dataio.dataset import FilteredSortedDynamicItemDataset
 from speechbrain.utils.distributed import run_on_main
 from speechbrain.dataio.preparation import add_prepared_features
 from speechbrain.utils.audio_tokens import (
@@ -363,12 +364,49 @@ def dataio_prepare(hparams):
             "sorting must be random, ascending or descending"
         )
 
-    datasets["sample"] = (
-        datasets["valid"]
-        .batch_shuffle(1)
-        .filtered_sorted(select_n=hparams["num_audio_samples"])
-    )
+    datasets["sample"] = select_sample(hparams, datasets)
     return datasets, silence_token
+
+
+def select_sample(hparams, datasets):
+    """Selects a sample of files for sample generation, freezing the sample if
+    requested to persist across multiple experiments
+
+    Arguments
+    ---------
+    hparams : dict
+        experiment hyperparameters
+    datasets : dict
+        a dictionary of datasets
+
+    Returns
+    -------
+    dataset : speechbrain.dataio.dataset.FilteredSortedDynamicItemDataset
+        the sample dataset
+    """
+    sample_path = hparams.get("sample_path")
+    dataset = None
+    if sample_path is not None:
+        sample_path = Path(sample_path)
+        if sample_path.exists():
+            with open(sample_path, "r") as sample_file:
+                data_ids = [line.strip() for line in sample_file]
+                dataset = FilteredSortedDynamicItemDataset(
+                    datasets["valid"],
+                    data_ids
+                )
+
+    if dataset is None:
+        dataset = (
+            datasets["valid"]
+            .batch_shuffle(1)
+            .filtered_sorted(select_n=hparams["num_audio_samples"])
+        )
+        if sample_path is not None:
+            with open(sample_path, "w") as sample_file:
+                for data_id in dataset.data_ids:
+                    print(data_id, file=sample_file)
+    return dataset
 
 
 def init_sequence_encoder(hparams):
@@ -519,6 +557,7 @@ if __name__ == "__main__":
                     "model_name": "tokotron",
                     "g2p_src": hparams["g2p_src"],
                     "skip_ignore_folders": hparams["prepare_skip_ignore_folders"],
+                    "frozen_split_path": hparams.get("frozen_split_path"),
                     "device": run_opts.get("device", "cpu"),
                 },
             )

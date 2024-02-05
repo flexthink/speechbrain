@@ -64,6 +64,7 @@ def prepare_ljspeech(
     extract_phonemes=False,
     g2p_src="speechbrain/soundchoice-g2p",
     skip_ignore_folders=False,
+    frozen_split_path=None,
     device="cpu",
 ):
     """
@@ -109,6 +110,9 @@ def prepare_ljspeech(
         checking if the dataset has already been prepared. This is
         useful on high-performance compute clusters where such
         folders are not permanent
+    frozen_split_path : str | path-like
+        The path to the frozen split file (used to standardize multiple
+        experiments)
     device : str
         Device for to be used for computation (used as required)
 
@@ -192,7 +196,9 @@ def prepare_ljspeech(
     # Prepare data splits
     msg = "Creating json file for ljspeech Dataset.."
     logger.info(msg)
-    data_split, meta_csv = split_sets(data_folder, splits, split_ratio)
+    data_split, meta_csv = split_sets(
+        data_folder, splits, split_ratio, frozen_split_path
+    )
 
     extract_features_context = None
     extract_features_folder = None
@@ -325,13 +331,15 @@ def remove_folder_opts(conf):
     return {k: v for k, v in conf.items() if not k.endswith("_folder")}
 
 
-def split_sets(data_folder, splits, split_ratio):
+def split_sets(data_folder, splits, split_ratio, frozen_split_path):
     """Randomly splits the wav list into training, validation, and test lists.
     Note that a better approach is to make sure that all the classes have the
     same proportion of samples for each session.
 
     Arguments
     ---------
+    data_folder : str | path-like
+        the path to the data folder
     wav_list : list
         list of all the signals in the dataset
     split_ratio: list
@@ -339,6 +347,8 @@ def split_sets(data_folder, splits, split_ratio):
         valid, and test sets, respectively.
         For instance split_ratio=[80, 10, 10] will assign 80% of the sentences
         to training, 10% for validation, and 10% for test.
+    frozen_split_path : str | path-like
+        the path to the frozen split file
 
     Returns
     ------
@@ -350,6 +360,12 @@ def split_sets(data_folder, splits, split_ratio):
     )
 
     meta_csv = list(csv_reader)
+    if frozen_split_path is not None:
+        frozen_split_path = Path(frozen_split_path)
+        if frozen_split_path.exists():
+            with open(frozen_split_path, "r") as frozen_split_file:
+                data_split = json.load(frozen_split_file)
+            return data_split, meta_csv
 
     index_for_sessions = []
     session_id_start = "LJ001"
@@ -388,6 +404,10 @@ def split_sets(data_folder, splits, split_ratio):
                     data_split[split].extend(index_for_sessions[j])
             if split == "test":
                 data_split[split].extend(index_for_sessions[j])
+
+    if frozen_split_path is not None:
+        with open(frozen_split_path, "w") as frozen_split_file:
+            json.dump(data_split, frozen_split_file, indent=0)
 
     return data_split, meta_csv
 

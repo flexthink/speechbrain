@@ -12,16 +12,14 @@ train_log: !ref <output_folder>/train_log.txt
 
 # Data files
 data_folder: !PLACEHOLDER # e.g., /path/to/LibriSpeech
-# If RIRS_NOISES dir exists in /localscratch/xxx_corpus/RIRS_NOISES
-# then data_folder_rirs should be /localscratch/xxx_corpus
-# otherwise the dataset will automatically be downloaded
-# data_folder_rirs: !ref <data_folder>
 prepare_save_folder: !ref <data_folder>/prepared
 prepare_archive_path: null
 prepare_skip_ignore_folders: False
 train_json: !ref <prepare_save_folder>/train.json
 valid_json: !ref <prepare_save_folder>/valid.json
 test_json: !ref <prepare_save_folder>/test.json
+frozen_split_path: null
+sample_path: null
 progress_folder: !ref <output_folder>/progress
 progress_archive: !ref <progress_folder>/progress.tar
 progress_current: !ref <progress_folder>/current
