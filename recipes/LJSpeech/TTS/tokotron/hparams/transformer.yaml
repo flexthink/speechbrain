@@ -11,7 +11,7 @@ save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
 token_model_src: "facebook/encodec_24khz"
-g2p_src: speechbrain/soundchoice-g2p
+g2p_src: flexthink/soundchoice-g2p
 vocoder_src: "charactr/vocos-encodec-24khz"
 
 # Data files
