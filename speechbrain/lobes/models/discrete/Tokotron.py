@@ -538,6 +538,22 @@ class TokotronTransformerModel(nn.Module):
                 d_model, max_audio_length
             )
 
+    def __setattr__(self, name, value):
+        """Prevents the vocoder from being saved in state_dict() - it is not typically fine-tuned
+        and fine-tuning it would not be trivial
+
+        Arguments
+        ---------
+        name : str
+            The attribute name
+        value : any
+            The attribute value
+        """
+        if name == "vocoder":
+            self.__dict__[name] = value
+        else:
+            super().__setattr__(name, value)
+
     @property
     def gate_offset(self):
         """The number of steps following gate activation to include"""
@@ -859,6 +875,22 @@ class TokotronRNNModel(nn.Module):
         )
 
         self.vocoder = vocoder
+
+    def __setattr__(self, name, value):
+        """Prevents the vocoder from being saved in state_dict() - it is not typically fine-tuned
+        and fine-tuning it would not be trivial
+
+        Arguments
+        ---------
+        name : str
+            The attribute name
+        value : any
+            The attribute value
+        """
+        if name == "vocoder":
+            self.__dict__[name] = value
+        else:
+            super().__setattr__(name, value)
 
     @property
     def gate_offset(self):
@@ -1204,22 +1236,6 @@ class TokotronRNNDecoder(nn.Module):
         return TokotronDecoderOutput(
             lin_out_heads, gate_out, None, dec_attn, dec_attn, context
         )
-
-    def __setattr__(self, name, value):
-        """Prevents the vocoder from being saved in state_dict() - it is not typically fine-tuned
-        and fine-tuning it would not be trivial
-
-        Arguments
-        ---------
-        name : str
-            The attribute name
-        value : any
-            The attribute value
-        """
-        if name == "vocoder":
-            self.__dict__[name] = value
-        else:
-            super().__setattr__(name, value)
 
     def init_audio_emb(self, emb):
         """Initializes audio embeddings with the specified embedding tensor - useful for re-using the
