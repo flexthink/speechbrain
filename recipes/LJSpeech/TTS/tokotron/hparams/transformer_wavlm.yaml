@@ -218,8 +218,6 @@ checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
         model: !ref <model>
         lr_scheduler: !ref <lr_annealing>
         counter: !ref <epoch_counter>
-    custom_load_hooks:
-        model: !name:speechbrain.utils.checkpoints.torch_parameter_transfer
 
 freezer: !new:speechbrain.dataio.preparation.Freezer
     save_path: !ref <prepare_save_folder>
