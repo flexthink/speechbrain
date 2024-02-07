@@ -5,9 +5,12 @@ Authors
 """
 import collections
 import torch
-from speechbrain.utils.data_utils import mod_default_collate
-from speechbrain.utils.data_utils import recursive_to
-from speechbrain.utils.data_utils import batch_pad_right
+from speechbrain.utils.data_utils import (
+    mod_default_collate,
+    recursive_to,
+    batch_pad_right,
+    undo_padding,
+)
 from torch.utils.data._utils.collate import default_convert
 from torch.utils.data._utils.pin_memory import (
     pin_memory as recursive_pin_memory,
@@ -48,6 +51,8 @@ class PaddedBatch:
         Whether to apply PyTorch-default_collate-like stacking on values that
         didn't get padded. This stacks if it can, but doesn't error out if it
         cannot. Default:True, usually does the right thing.
+    key_padding_func : dict, optional
+        A special padding function for specific keys
 
     Example
     -------
@@ -107,11 +112,17 @@ class PaddedBatch:
         padding_kwargs={},
         apply_default_convert=True,
         nonpadded_stack=True,
+        key_padding_func=None,
+        key_padding_kwargs=None,
     ):
         self.__length = len(examples)
         self.__keys = list(examples[0].keys())
         self.__padded_keys = []
         self.__device_prep_keys = []
+        if key_padding_func is None:
+            key_padding_func = {}
+        if key_padding_kwargs is None:
+            key_padding_kwargs = {}
         for key in self.__keys:
             values = [example[key] for example in examples]
             # Default convert usually does the right thing (numpy2torch etc.)
@@ -122,7 +133,13 @@ class PaddedBatch:
             ):
                 # Padding and PaddedData
                 self.__padded_keys.append(key)
-                padded = PaddedData(*padding_func(values, **padding_kwargs))
+                effective_padding_func = key_padding_func.get(key, padding_func)
+                effective_padding_kwargs = key_padding_kwargs.get(
+                    key, padding_kwargs
+                )
+                padded = PaddedData(
+                    *effective_padding_func(values, **effective_padding_kwargs)
+                )
                 setattr(self, key, padded)
             else:
                 # Default PyTorch collate usually does the right thing
@@ -186,6 +203,10 @@ class PaddedBatch:
     def batchsize(self):
         """Returns the bach size"""
         return self.__length
+
+    def as_dict(self):
+        """Converts this batch to a dictionary"""
+        return {key: getattr(self, key) for key in self.__keys}
 
 
 class BatchsizeGuesser:
@@ -269,3 +290,46 @@ class BatchsizeGuesser:
     def fallback(self, batch):
         """Implementation of fallback."""
         return 1
+
+
+def undo_batch(batch):
+    """Converts a padded batch or a dicitionary to a list of
+    dictionaries. Any instances of PaddedData encountered will
+    be converted to plain tensors
+
+    Arguments
+    ---------
+    batch: dict|speechbrain.dataio.batch.PaddedBatch
+        the batch
+
+    Returns
+    -------
+    result: dict
+        a list of dictionaries with each dictionary as a batch
+        element
+    """
+    if hasattr(batch, "as_dict"):
+        batch = batch.as_dict()
+    keys = batch.keys()
+    return [
+        dict(zip(keys, item))
+        for item in zip(
+            *[_unpack_feature(feature) for feature in batch.values()]
+        )
+    ]
+
+
+def _unpack_feature(feature):
+    """Un-batches a single feature. If a PaddedBatch is provided, it will be converted
+    to a list of unpadded tensors. Otherwise, it will be returned unmodified
+
+    Arguments
+    ---------
+    feature : any
+        The feature to un-batch
+    """
+    if isinstance(feature, PaddedData):
+        device = feature.data.device
+        feature = undo_padding(feature.data, feature.lengths)
+        feature = [torch.tensor(item, device=device) for item in feature]
+    return feature
