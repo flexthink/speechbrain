@@ -576,8 +576,11 @@ class TokotronTransformerModel(nn.Module):
             * **unexpected_keys** is a list of str containing the unexpected keys        
         """
         state_dict = _filter_state_dict(state_dict)
-        return super().load_state_dict(state_dict, strict, assign)
-
+        try:
+            return super().load_state_dict(state_dict, strict, assign)
+        except TypeError:
+            # NOTE: Older versions of PyTorch don't have the assign parameter
+            return super().load_state_dict(state_dict, strict)
 
     @property
     def gate_offset(self):
@@ -922,7 +925,7 @@ class TokotronRNNModel(nn.Module):
         else:
             super().__setattr__(name, value)
 
-    def load_state_dict(self, state_dict, strict, assign):
+    def load_state_dict(self, state_dict, strict=True, assign=False):
         """Copy parameters and buffers from :attr:`state_dict` into this module and its descendants.
 
         Arguments
@@ -941,7 +944,11 @@ class TokotronRNNModel(nn.Module):
             * **unexpected_keys** is a list of str containing the unexpected keys        
         """
         state_dict = _filter_state_dict(state_dict)
-        return super().load_state_dict(state_dict, strict, assign)
+        try:
+            return super().load_state_dict(state_dict, strict, assign)
+        except TypeError:
+            # NOTE: Older versions of PyTorch don't have the assign parameter
+            return super().load_state_dict(state_dict, strict)
 
     @property
     def gate_offset(self):
