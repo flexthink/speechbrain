@@ -56,6 +56,8 @@ class TokotronBrain(sb.Brain):
         batch = batch.to(self.device)
         tokens, tokens_length = batch.tokens
         audio_tokens, audio_tokens_length = batch.audio_tokens_bos
+        if self.compression:
+            audio_tokens = self.compression_model.compress(audio_tokens)
         predictions = self.modules.model(
             input_tokens=tokens,
             input_length=tokens_length,
@@ -85,18 +87,21 @@ class TokotronBrain(sb.Brain):
             A one-element tensor used for backpropagating the gradient.
         """
         batch = batch.to(self.device)
+        audio_tokens, audio_tokens_length = batch.audio_tokens_pad
+        if self.compression:
+            audio_tokens = self.compression_model.compress(audio_tokens)
         loss_details = self.hparams.compute_cost(
             predictions=predictions,
-            audio_tokens=batch.audio_tokens_pad.data,
-            audio_length=batch.audio_tokens_pad.lengths,
+            audio_tokens=audio_tokens,
+            audio_length=audio_tokens_length,
             input_tokens=batch.tokens.data,
             input_length=batch.tokens.lengths,
         )
         self.loss_metric.append(
             batch.uttid,
             predictions=predictions,
-            audio_tokens=batch.audio_tokens_pad.data,
-            audio_length=batch.audio_tokens_pad.lengths,
+            audio_tokens=audio_tokens,
+            audio_length=audio_tokens_length,
             input_tokens=batch.tokens.data,
             input_length=batch.tokens.lengths,
             reduction="batch",
@@ -126,6 +131,13 @@ class TokotronBrain(sb.Brain):
             self.modules.model.init_audio_emb(
                 self.hparams.token_model.vocabulary
             )
+        # Load the compression model only if compression is enables
+        self.compression = getattr(self.hparams, "compression", False)
+        if self.compression:
+            self.compression_model = self.hparams.compression_model(
+                run_opts={"device": self.device}
+            )
+            self.modules.model.compression_model = self.compression_model
 
     def on_stage_end(self, stage, stage_loss, epoch):
         """Gets called at the end of an epoch.
@@ -186,7 +198,8 @@ class TokotronBrain(sb.Brain):
                 self.hparams.debug_infer_max_audio_length
             )
         sample_loader = sb.dataio.dataloader.make_dataloader(
-            self.sample_data, **self.hparams.sample_dataloader_opts
+            self.sample_data,
+            **self.hparams.sample_dataloader_opts,
         )
         for batch in sample_loader:
             batch = batch.to(self.device)

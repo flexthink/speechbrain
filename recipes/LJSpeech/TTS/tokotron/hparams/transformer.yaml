@@ -86,6 +86,10 @@ gate_offset: !apply:speechbrain.nnet.losses.distance_diff_loss_ramp
 
 silence_padding: !ref <gate_offset>
 
+# Compression model
+compression: false
+compression_model_src: flexthink/tokensquish-baseline
+
 
 # Token model (pretrained)
 token_model: !new:speechbrain.lobes.models.huggingface_transformers.Encodec
@@ -156,6 +160,8 @@ audio_tokens_per_step: 2
 attention_type: regularMHA
 
 ############################## models ################################
+compression_model: !name:speechbrain.inference.compression.TokenSquish.from_hparams
+    source: !ref <compression_model_src>
 
 vocoder: !new:speechbrain.lobes.models.huggingface_transformers.vocos.Vocos
     source: !ref <vocoder_src>

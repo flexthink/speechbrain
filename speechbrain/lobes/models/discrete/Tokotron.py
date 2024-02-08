@@ -10,11 +10,9 @@ Authors
 * Artem Ploujnikov, 2023
 """
 
-from typing import Any, Mapping, Optional, Set
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torch.nn.modules.module import Module
 from speechbrain.lobes.models.transformer.Transformer import (
     TransformerEncoder,
     TransformerDecoder,
@@ -77,7 +75,7 @@ TokotronInfernceOutput = namedtuple(
     ],
 )
 
-IGNORE_IN_STATE_DICT = {"vocoder"}
+IGNORE_IN_STATE_DICT = {"vocoder", "compression_model"}
 
 
 class TokotronTransformerDecoder(nn.Module):
@@ -363,7 +361,6 @@ class TokotronTransformerDecoder(nn.Module):
                 # Compute the gate activation (final sigmoid)
                 step_gate_act = step_gate_out.sigmoid() > self.gate_threshold
 
-
                 # Update the gate activation index as follows
                 #
                 # - If the gate has already activated in a previous step, leave the index as is
@@ -397,7 +394,7 @@ class TokotronTransformerDecoder(nn.Module):
 
             # Length = gate activation index + the offset, not exceeding
             length_abs = (seq_gate_idx + self.gate_offset).clip(
-                max=self.max_decoder_steps
+                max=self.infer_max_decoder_steps
             )
             # Compute relative lengths
             length = length_abs.float() / audio_tokens_out.size(1)
@@ -467,6 +464,8 @@ class TokotronTransformerModel(nn.Module):
         Whether to show inference progress in the console
     vocoder : nn.Module
         The vocoder module
+    compression_model : nn.Module
+        The token compression model to be used
     """
 
     def __init__(
@@ -493,6 +492,7 @@ class TokotronTransformerModel(nn.Module):
         audio_emb_freeze=False,
         show_inference_progress=True,
         vocoder=None,
+        compression_model=None,
     ):
         super().__init__()
         self.in_emb = Embedding(
@@ -539,6 +539,7 @@ class TokotronTransformerModel(nn.Module):
             self.positional_encoding = PositionalEncoding(
                 d_model, max_audio_length
             )
+        self.compression_model = compression_model
 
     def __setattr__(self, name, value):
         """Prevents the vocoder from being saved in state_dict() - it is not typically fine-tuned
@@ -556,7 +557,7 @@ class TokotronTransformerModel(nn.Module):
         else:
             super().__setattr__(name, value)
 
-    def load_state_dict(self, state_dict, strict, assign):
+    def load_state_dict(self, state_dict, strict=True, assign=False):
         """Copy parameters and buffers from :attr:`state_dict` into this module and its descendants.
 
         Arguments
@@ -714,7 +715,10 @@ class TokotronTransformerModel(nn.Module):
             pos_embs=pos_embs_encoder,
         )
         dec_out = self.decoder.infer(enc_out, input_length)
+        audio_tokens, audio_length = dec_out.audio_tokens, dec_out.length
         wav, wav_length = None, None
+        if self.compression_model is not None:
+            audio_tokens = self.compression_model.decompress(audio_tokens, audio_length)
         if self.vocoder is not None:
             vocoder_out = self.vocoder(dec_out.audio_tokens, dec_out.length)
             if isinstance(vocoder_out, tuple):
@@ -724,8 +728,8 @@ class TokotronTransformerModel(nn.Module):
             if wav.dim() == 3:
                 wav = wav.squeeze(1)
         return TokotronInfernceOutput(
-            audio_tokens=dec_out.audio_tokens,
-            length=dec_out.audio_tokens,
+            audio_tokens=audio_tokens,
+            length=audio_length,
             wav=wav,
             wav_length=wav_length,
             enc_self_attn=enc_self_attn,
@@ -848,6 +852,7 @@ class TokotronRNNModel(nn.Module):
         audio_emb_freeze=False,
         show_inference_progress=True,
         vocoder=None,
+        compression_model=None,
     ):
         super().__init__()
         self.input_num_tokens = input_num_tokens
@@ -899,6 +904,7 @@ class TokotronRNNModel(nn.Module):
         )
 
         self.vocoder = vocoder
+        self.compression_model = compression_model
 
     def __setattr__(self, name, value):
         """Prevents the vocoder from being saved in state_dict() - it is not typically fine-tuned
@@ -1029,15 +1035,18 @@ class TokotronRNNModel(nn.Module):
         enc_out, _ = self.encoder(src)
         dec_out = self.decoder.infer(enc_out, input_length)
         wav, wav_length = None, None
+        audio_tokens, audio_length = dec_out.audio_tokens, dec_out.length
+        if self.compression_model is not None:
+            audio_tokens = self.compression_model.decompress(audio_tokens, audio_length)
         if self.vocoder is not None:
-            vocoder_out = self.vocoder(dec_out.audio_tokens, dec_out.length)
+            vocoder_out = self.vocoder(audio_tokens, dec_out.length)
             if isinstance(vocoder_out, tuple):
                 wav, wav_length = vocoder_out
             else:
-                wav, wav_length = vocoder_out, dec_out.length
+                wav, wav_length = vocoder_out, audio_length
         return TokotronInfernceOutput(
             audio_tokens=dec_out.audio_tokens,
-            length=dec_out.audio_tokens,
+            length=audio_length,
             wav=wav,
             wav_length=wav_length,
             enc_self_attn=None,
@@ -1422,7 +1431,7 @@ class TokotronRNNDecoder(nn.Module):
 
             # Length = gate activation index + the offset, not exceeding
             length_abs = (seq_gate_idx + self.gate_offset).clip(
-                max=self.max_decoder_steps
+                max=self.infer_max_decoder_steps
             )
             # Compute relative lengths
             length = length_abs.float() / audio_tokens_out.size(1)
@@ -1582,10 +1591,11 @@ class TokotronLoss(nn.Module):
         max_len = out_len - 1
         p_seq_reshaped = (
             p_seq.transpose(1, 2).reshape(batch_size * heads, out_len, tok_dim)
-        )[:, :max_len, :]
+        )[:, :max_len]
+        tok_len = audio_tokens.size(1)
         audio_tokens_reshaped = audio_tokens.transpose(1, 2).reshape(
-            batch_size * heads, max_len
-        )
+            batch_size * heads, tok_len
+        )[:, :max_len]
         lengths_reshaped = audio_length.repeat(heads)
         seq_loss = self.seq_cost(
             p_seq_reshaped,

@@ -77,6 +77,7 @@ max_audio_length: 700
 infer_max_audio_length: !ref <max_audio_length>
 debug_infer_max_audio_length: 10
 
+
 # Label encoder
 label_encoder: !new:speechbrain.dataio.encoder.TextEncoder
 token_list_file: ./hparams/char_en.txt
@@ -88,6 +89,10 @@ gate_offset: !apply:speechbrain.nnet.losses.distance_diff_loss_ramp
     max_weight: !ref <gate_loss_max_weight>
 
 silence_padding: !ref <gate_offset>
+
+# Compression model
+compression: false
+compression_model_src: flexthink/tokensquish-baseline
 
 dac: !new:speechbrain.lobes.models.discrete.dac.DAC
     sample_rate: !ref <model_sample_rate>
@@ -162,6 +167,8 @@ audio_tokens_per_step: 2
 attention_type: regularMHA
 
 ############################## models ################################
+compression_model: !name:speechbrain.inference.compression.TokenSquish.from_hparams
+    source: !ref <compression_model_src>
 
 vocoder: !new:speechbrain.lobes.models.discrete.dac.DACVocoder
   dac: !ref <dac>

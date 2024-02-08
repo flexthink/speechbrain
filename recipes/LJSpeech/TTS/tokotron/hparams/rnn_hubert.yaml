@@ -92,6 +92,10 @@ gate_offset: !apply:speechbrain.nnet.losses.distance_diff_loss_ramp
 
 silence_padding: !ref <gate_offset>
 
+# Compression model
+compression: false
+compression_model_src: flexthink/tokensquish-baseline
+
 
 # Token model (pretrained)
 # Token model (pretrained)
@@ -174,10 +178,12 @@ input_num_tokens: !apply:speechbrain.utils.hparams.choice
 audio_tokens_per_step: 1
 
 ############################## models ################################
+compression_model: !name:speechbrain.inference.compression.TokenSquish.from_hparams
+    source: !ref <compression_model_src>
 
 vocoder: !apply:speechbrain.inference.vocoders.UnitHIFIGAN.from_hparams
-  source: !ref <vocoder_src>
-  savedir: !ref <pretrained_model_save_folder>/unithifigan-hubert
+    source: !ref <vocoder_src>
+    savedir: !ref <pretrained_model_save_folder>/unithifigan-hubert
 
 model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronRNNModel # yamllint disable-line rule:line-length
     input_num_tokens: !ref <text_num_tokens>
