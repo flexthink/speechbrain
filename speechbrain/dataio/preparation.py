@@ -111,9 +111,6 @@ class FeatureExtractor:
         ---------
         batch: speechbrain.dataio.batch.PaddedBatch
             a batch
-        replacements : dict, optional
-            (Optional dict), e.g., {"data_folder": "/home/speechbrain/data"}
-            This is used to recursively format all string values in the data.
         """
         batch_dict = batch.as_dict()
         ids = batch_dict[self.id_key]
@@ -379,4 +376,3 @@ class Freezer:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.freeze()
-

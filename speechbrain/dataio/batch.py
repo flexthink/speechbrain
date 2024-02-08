@@ -320,6 +320,14 @@ def undo_batch(batch):
 
 
 def _unpack_feature(feature):
+    """Un-batches a single feature. If a PaddedBatch is provided, it will be converted
+    to a list of unpadded tensors. Otherwise, it will be returned unmodified
+
+    Arguments
+    ---------
+    feature : any
+        The feature to un-batch
+    """
     if isinstance(feature, PaddedData):
         device = feature.data.device
         feature = undo_padding(feature.data, feature.lengths)

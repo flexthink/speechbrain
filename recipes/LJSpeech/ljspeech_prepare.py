@@ -228,7 +228,7 @@ def prepare_ljspeech(
             use_custom_cleaner,
             extract_features,
             extract_features_context,
-            extract_features_folder,            
+            extract_features_folder,
             extract_features_opts,
             extract_phonemes,
             g2p_src,
@@ -887,7 +887,6 @@ def prepare_features(
                 tokens = tokens.unsqueeze(-1)
             yield PaddedData(tokens, sig.lengths)
             yield PaddedData(emb, sig.lengths)
-
 
     feature_extractor.add_dynamic_item(resample_pipeline)
     feature_extractor.add_dynamic_item(token_pipeline)
