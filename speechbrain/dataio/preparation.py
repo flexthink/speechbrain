@@ -104,7 +104,7 @@ class FeatureExtractor:
             batch = batch.to(self.device)
             self.process_batch(batch)
 
-    def process_batch(self, batch, replacements=None):
+    def process_batch(self, batch):
         """Processes a batch of data
 
         Arguments
@@ -117,21 +117,10 @@ class FeatureExtractor:
         """
         batch_dict = batch.as_dict()
         ids = batch_dict[self.id_key]
-        batch_dict = self.apply_replacements(batch_dict, replacements)
         features = self.pipeline.compute_outputs(batch_dict)
 
         for item_id, item_features in zip(ids, undo_batch(features)):
             self.save_fn(item_id, item_features, save_path=self.save_path)
-
-    def apply_replacements(self, features, replacements):
-        return {
-            key: (
-                _replace_variables(value, replacements)
-                if isinstance(value, str)
-                else value
-            )
-            for key, value in features.items()
-        }
 
     def add_dynamic_item(self, func, takes=None, provides=None):
         """Adds a dynamic item to be output
