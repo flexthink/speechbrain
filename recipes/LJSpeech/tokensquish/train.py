@@ -417,6 +417,7 @@ if __name__ == "__main__":
                     "save_folder": hparams["prepare_save_folder"],
                     "splits": hparams["splits"],
                     "split_ratio": hparams["split_ratio"],
+                    "frozen_split_path": hparams["frozen_split_path"],
                     "seed": hparams["seed"],
                     "extract_features": ["audio_tokens"],
                     "extract_features_opts": hparams["extract_features_opts"],

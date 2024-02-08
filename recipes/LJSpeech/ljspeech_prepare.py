@@ -13,13 +13,13 @@ import csv
 import json
 import random
 import logging
+from types import SimpleNamespace
 import torch
 import torchaudio
 import numpy as np
 import tgt
 import re
 import speechbrain as sb
-from types import SimpleNamespace
 from tqdm import tqdm
 from pathlib import Path
 from speechbrain.utils.data_utils import download_file
@@ -61,6 +61,10 @@ def prepare_ljspeech(
     use_custom_cleaner=False,
     extract_features=None,
     extract_features_opts=None,
+    extract_phonemes=False,
+    g2p_src="speechbrain/soundchoice-g2p",
+    skip_ignore_folders=False,
+    frozen_split_path=None,
     device="cpu",
 ):
     """
@@ -96,6 +100,19 @@ def prepare_ljspeech(
         The list of features to be extracted
     extract_features_opts : dict
         Options for feature extraction
+    extract_phonemes : bool
+        Whether to extract phonemes using a G2P model
+    g2p_src : str
+        The name of the HuggingFace Hub to use for the Grapheme-to-Phoneme
+        model or the path to it
+    skip_ignore_folders : bool
+        Whether to ignore differences in data and save folders when
+        checking if the dataset has already been prepared. This is
+        useful on high-performance compute clusters where such
+        folders are not permanent
+    frozen_split_path : str | path-like
+        The path to the frozen split file (used to standardize multiple
+        experiments)
     device : str
         Device for to be used for computation (used as required)
 
@@ -168,7 +185,7 @@ def prepare_ljspeech(
             os.makedirs(pitch_folder)
 
     # Check if this phase is already done (if so, skip it)
-    if skip(splits, save_folder, conf):
+    if skip(splits, save_folder, conf, ignore_foders=skip_ignore_folders):
         logger.info("Skipping preparation, completed in previous run.")
         return
 
@@ -179,7 +196,9 @@ def prepare_ljspeech(
     # Prepare data splits
     msg = "Creating json file for ljspeech Dataset.."
     logger.info(msg)
-    data_split, meta_csv = split_sets(data_folder, splits, split_ratio)
+    data_split, meta_csv = split_sets(
+        data_folder, splits, split_ratio, frozen_split_path
+    )
 
     extract_features_context = None
     extract_features_folder = None
@@ -196,6 +215,7 @@ def prepare_ljspeech(
             model_name,
             data_split["train"],
             save_json_train,
+            data_folder,
             wavs_folder,
             meta_csv,
             phoneme_alignments_folder,
@@ -210,6 +230,8 @@ def prepare_ljspeech(
             extract_features_context,
             extract_features_folder,
             extract_features_opts,
+            extract_phonemes,
+            g2p_src,
             device,
         )
     if "valid" in splits:
@@ -217,6 +239,7 @@ def prepare_ljspeech(
             model_name,
             data_split["valid"],
             save_json_valid,
+            data_folder,
             wavs_folder,
             meta_csv,
             phoneme_alignments_folder,
@@ -231,6 +254,8 @@ def prepare_ljspeech(
             extract_features_context,
             extract_features_folder,
             extract_features_opts,
+            extract_phonemes,
+            g2p_src,
             device,
         )
     if "test" in splits:
@@ -238,6 +263,7 @@ def prepare_ljspeech(
             model_name,
             data_split["test"],
             save_json_test,
+            data_folder,
             wavs_folder,
             meta_csv,
             phoneme_alignments_folder,
@@ -252,12 +278,14 @@ def prepare_ljspeech(
             extract_features_context,
             extract_features_folder,
             extract_features_opts,
+            extract_phonemes,
+            g2p_src,
             device,
         )
     save_pkl(conf, save_opt)
 
 
-def skip(splits, save_folder, conf):
+def skip(splits, save_folder, conf, ignore_foders=False):
     """
     Detects if the ljspeech data_preparation has been already done.
     If the preparation has been done, we can skip it.
@@ -286,6 +314,9 @@ def skip(splits, save_folder, conf):
     if skip is True:
         if os.path.isfile(save_opt):
             opts_old = load_pkl(save_opt)
+            if ignore_foders:
+                opts_old = remove_folder_opts(opts_old)
+                conf = remove_folder_opts(opts_old)
             if opts_old == conf:
                 skip = True
             else:
@@ -295,13 +326,20 @@ def skip(splits, save_folder, conf):
     return skip
 
 
-def split_sets(data_folder, splits, split_ratio):
+def remove_folder_opts(conf):
+    """Removes all folder options from  the configuration dict"""
+    return {k: v for k, v in conf.items() if not k.endswith("_folder")}
+
+
+def split_sets(data_folder, splits, split_ratio, frozen_split_path):
     """Randomly splits the wav list into training, validation, and test lists.
     Note that a better approach is to make sure that all the classes have the
     same proportion of samples for each session.
 
     Arguments
     ---------
+    data_folder : str | path-like
+        the path to the data folder
     wav_list : list
         list of all the signals in the dataset
     split_ratio: list
@@ -309,6 +347,8 @@ def split_sets(data_folder, splits, split_ratio):
         valid, and test sets, respectively.
         For instance split_ratio=[80, 10, 10] will assign 80% of the sentences
         to training, 10% for validation, and 10% for test.
+    frozen_split_path : str | path-like
+        the path to the frozen split file
 
     Returns
     ------
@@ -320,6 +360,12 @@ def split_sets(data_folder, splits, split_ratio):
     )
 
     meta_csv = list(csv_reader)
+    if frozen_split_path is not None:
+        frozen_split_path = Path(frozen_split_path)
+        if frozen_split_path.exists():
+            with open(frozen_split_path, "r") as frozen_split_file:
+                data_split = json.load(frozen_split_file)
+            return data_split, meta_csv
 
     index_for_sessions = []
     session_id_start = "LJ001"
@@ -359,6 +405,10 @@ def split_sets(data_folder, splits, split_ratio):
             if split == "test":
                 data_split[split].extend(index_for_sessions[j])
 
+    if frozen_split_path is not None:
+        with open(frozen_split_path, "w") as frozen_split_file:
+            json.dump(data_split, frozen_split_file, indent=0)
+
     return data_split, meta_csv
 
 
@@ -366,6 +416,7 @@ def prepare_json(
     model_name,
     seg_lst,
     json_file,
+    data_folder,
     wavs_folder,
     csv_reader,
     phoneme_alignments_folder,
@@ -380,6 +431,8 @@ def prepare_json(
     extract_features_context=None,
     extract_features_folder=None,
     extract_features_opts=None,
+    extract_phonemes=False,
+    g2p_src="speechbrain/soundchoice-g2p",
     device="cpu",
 ):
     """
@@ -421,6 +474,9 @@ def prepare_json(
         The folder where extracted features will be saved
     extract_features_opts : dict, optional
         Options for feature extraction
+    g2p_src : str
+        The name of the HuggingFace Hub to use for the Grapheme-to-Phoneme
+        model or the path to it
     device : str
         Device for to be used for computation (used as required)
 
@@ -431,11 +487,13 @@ def prepare_json(
 
     logger.info(f"preparing {json_file}.")
     if model_name in ["Tacotron2", "FastSpeech2WithAlignment"]:
+        extract_phonemes = True
+    if extract_phonemes:
         logger.info(
             "Computing phonemes for LJSpeech labels using SpeechBrain G2P. This may take a while."
         )
         g2p = GraphemeToPhoneme.from_hparams(
-            "speechbrain/soundchoice-g2p", run_opts={"device": device}
+            g2p_src, run_opts={"device": device}
         )
     if "FastSpeech2" in model_name:
         logger.info(
@@ -447,7 +505,7 @@ def prepare_json(
 
         # Common data preparation
         id = list(csv_reader)[index][0]
-        wav = os.path.join(wavs_folder, f"{id}.wav")
+        wav = os.path.join("{data_root}", WAVS, f"{id}.wav")
         label = list(csv_reader)[index][2]
         if use_custom_cleaner:
             label = custom_clean(label, model_name)
@@ -580,16 +638,18 @@ def prepare_json(
 
                 np.save(pitch_file, pitch)
 
+            json_dict[id].update({"pitch": pitch_file})
+        if extract_phonemes:
             phonemes = _g2p_keep_punctuations(g2p, label)
             # Updates data for the utterance
             json_dict[id].update({"phonemes": phonemes})
-            json_dict[id].update({"pitch": pitch_file})
 
     # Feature Extraction
     if extract_features:
         extract_features_folder.mkdir(exist_ok=True)
         prepare_features(
             data=json_dict,
+            data_folder=data_folder,
             save_path=extract_features_folder,
             features=extract_features,
             context=extract_features_context,
@@ -776,7 +836,7 @@ def custom_clean(text, model_name):
 
 
 def prepare_features(
-    data, save_path, features, context, options=None, device="cpu"
+    data, data_folder, save_path, features, context, options=None, device="cpu"
 ):
     """Performs feature extraction
 
@@ -799,6 +859,7 @@ def prepare_features(
     @sb.utils.data_pipeline.provides("sig")
     def audio_pipeline(wav):
         """Load the audio signal. """
+        wav = wav.replace("{data_root}", data_folder)
         sig = sb.dataio.dataio.read_audio(wav)
         return sig
 
@@ -817,11 +878,15 @@ def prepare_features(
     @sb.utils.data_pipeline.takes("sig_resampled")
     @sb.utils.data_pipeline.provides("audio_tokens", "audio_emb")
     def token_pipeline(sig):
-        tokens, emb = context.token_model.encode(
-            sig.data.unsqueeze(1), sig.lengths
-        )
-        yield PaddedData(tokens, sig.lengths)
-        yield PaddedData(emb, sig.lengths)
+        with torch.no_grad():
+            tokens, emb = context.token_model.encode(
+                sig.data.unsqueeze(1), sig.lengths
+            )
+            tokens = tokens.int()
+            if tokens.dim() < 3:
+                tokens = tokens.unsqueeze(-1)
+            yield PaddedData(tokens, sig.lengths)
+            yield PaddedData(emb, sig.lengths)
 
     feature_extractor.add_dynamic_item(resample_pipeline)
     feature_extractor.add_dynamic_item(token_pipeline)

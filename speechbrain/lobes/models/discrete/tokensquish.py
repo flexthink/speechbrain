@@ -275,6 +275,10 @@ class TokenSquishModel(nn.Module):
         return tokens[:, :: self.scale_factor]
 
     def decompress(self, tokens, length):
+        if length is None:
+            length = torch.ones(
+                len(tokens), device=tokens.device, dtype=torch.float32
+            )
         out = self(tokens, length)
         return out.p_seq.argmax(-1)
 

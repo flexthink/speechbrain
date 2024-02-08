@@ -23,6 +23,7 @@ test_json: !ref <prepare_save_folder>/test.json
 
 splits: ["train", "valid", "test"]
 split_ratio: [90, 5, 5]
+frozen_split_path: null
 
 
 ckpt_interval_minutes: 30 # save checkpoint every N min
@@ -55,8 +56,6 @@ lr_warmup_steps: 10000
 lr_annealing_mode: step
 guided_attention_weight: 50.0
 guided_attention_sigma: 0.5
-commitment_loss_weight: 0.1
-codebook_loss_weight: 0.1
 
 # Feature parameters
 sample_rate: 22050
@@ -118,7 +117,6 @@ dropout: 0.2
 activation: !name:torch.nn.GELU
 audio_num_tokens: 1024
 audio_emb_size: 128
-audio_emb_freeze: True
 text_num_tokens: 31
 audio_tokens_per_step: 2
 interpolation_mode: linear
