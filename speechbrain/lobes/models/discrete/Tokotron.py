@@ -556,7 +556,7 @@ class TokotronTransformerModel(nn.Module):
         else:
             super().__setattr__(name, value)
 
-    def load_state_dict(self, state_dict, strict, assign):
+    def load_state_dict(self, state_dict, strict=True, assign=False):
         """Copy parameters and buffers from :attr:`state_dict` into this module and its descendants.
 
         Arguments
@@ -916,7 +916,7 @@ class TokotronRNNModel(nn.Module):
         else:
             super().__setattr__(name, value)
 
-    def load_state_dict(self, state_dict, strict, assign):
+    def load_state_dict(self, state_dict, strict=True, assign=False):
         """Copy parameters and buffers from :attr:`state_dict` into this module and its descendants.
 
         Arguments
