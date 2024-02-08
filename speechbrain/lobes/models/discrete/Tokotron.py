@@ -577,26 +577,6 @@ class TokotronTransformerModel(nn.Module):
         state_dict = _filter_state_dict(state_dict)
         return super().load_state_dict(state_dict, strict, assign)
 
-    def load_state_dict(self, state_dict, strict, assign):
-        """Copy parameters and buffers from :attr:`state_dict` into this module and its descendants.
-
-        Arguments
-        ---------
-        state_dict : dict 
-            A dict containing parameters and persistent buffers.
-        strict : (bool, optional)
-            Whether to strictly enforce that the keys
-        assign (bool, optional): whether to assign items in the state
-            dictionary to their corresponding keys in the module 
-
-        Returns
-        -------
-        ``NamedTuple`` with ``missing_keys`` and ``unexpected_keys`` fields:
-            * **missing_keys** is a list of str containing the missing keys
-            * **unexpected_keys** is a list of str containing the unexpected keys        
-        """
-        state_dict = _filter_state_dict(state_dict)
-        return super().load_state_dict(state_dict, strict, assign)
 
     @property
     def gate_offset(self):
@@ -935,6 +915,27 @@ class TokotronRNNModel(nn.Module):
             self.__dict__[name] = value
         else:
             super().__setattr__(name, value)
+
+    def load_state_dict(self, state_dict, strict, assign):
+        """Copy parameters and buffers from :attr:`state_dict` into this module and its descendants.
+
+        Arguments
+        ---------
+        state_dict : dict 
+            A dict containing parameters and persistent buffers.
+        strict : (bool, optional)
+            Whether to strictly enforce that the keys
+        assign (bool, optional): whether to assign items in the state
+            dictionary to their corresponding keys in the module 
+
+        Returns
+        -------
+        ``NamedTuple`` with ``missing_keys`` and ``unexpected_keys`` fields:
+            * **missing_keys** is a list of str containing the missing keys
+            * **unexpected_keys** is a list of str containing the unexpected keys        
+        """
+        state_dict = _filter_state_dict(state_dict)
+        return super().load_state_dict(state_dict, strict, assign)
 
     @property
     def gate_offset(self):
