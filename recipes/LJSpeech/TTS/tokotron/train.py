@@ -313,8 +313,9 @@ def dataio_prepare(hparams):
     )
     silence_token = silence_token.cpu()
     silence_padding_len = int(math.ceil(hparams["silence_padding"]))
+    bos_width = hparams.get("bos_width", 1)
     audio_bos = (
-        torch.ones(1, hparams["audio_tokens_per_step"]) * hparams["bos_index"]
+        torch.ones(bos_width, hparams["audio_tokens_per_step"]) * hparams["bos_index"]
     )
 
     @sb.utils.data_pipeline.takes("audio_tokens")
