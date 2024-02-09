@@ -1051,6 +1051,9 @@ class TokotronRNNModel(nn.Module):
                 wav, wav_length = vocoder_out
             else:
                 wav, wav_length = vocoder_out, audio_length
+            if wav.dim() == 3:
+                wav = wav.squeeze(1)
+
         return TokotronInfernceOutput(
             audio_tokens=dec_out.audio_tokens,
             length=audio_length,
