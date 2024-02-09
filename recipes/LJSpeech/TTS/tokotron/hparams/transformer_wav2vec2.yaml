@@ -29,7 +29,7 @@ num_audio_samples: 32
 samples_interval: 5
 
 freeze_token_model: True
-token_model_src: microsoft/wavlm-large
+token_model_src: facebook/wav2vec2-large-lv60
 g2p_src: flexthink/soundchoice-g2p
 token_model_kmeans_src: speechbrain/SSL_Quantization
 token_model_kmeans_file_name: LJSpeech_wavlm_k512_L7.pt
