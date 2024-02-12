@@ -1606,7 +1606,12 @@ class TokotronLoss(nn.Module):
         audio_tokens_reshaped = audio_tokens.transpose(1, 2).reshape(
             batch_size * heads, tok_len
         )[:, :max_len]
-        lengths_reshaped = audio_length.repeat(heads)
+        lengths_reshaped = (
+            audio_length
+            .unsqueeze(-1)
+            .expand(batch_size, heads)
+            .reshape(batch_size * heads)
+        )
         seq_loss = self.seq_cost(
             p_seq_reshaped,
             audio_tokens_reshaped,
