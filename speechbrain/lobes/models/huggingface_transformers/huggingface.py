@@ -79,6 +79,8 @@ class HFTransformersInterface(nn.Module):
         alongside with the rest of the pipeline.
     cache_dir : str or Path (default: None)
         Location of HuggingFace cache for storing pre-trained models, to which symlinks are created.
+    skip_sb_check : False
+        Skips the check for whether 
 
     Example
     -------
@@ -98,6 +100,7 @@ class HFTransformersInterface(nn.Module):
         quantization_config=None,
         freeze=False,
         cache_dir="pretrained_models",
+        skip_sb_check=False,
         **kwarg,
     ):
         super().__init__()
@@ -138,6 +141,7 @@ class HFTransformersInterface(nn.Module):
         else:
             self.model.gradient_checkpointing_disable()  # Required by DDP
             self.model.train()
+        self.skip_sb_check = skip_sb_check
 
     def _from_pretrained(
         self, source, save_path, cache_dir,
@@ -243,6 +247,9 @@ class HFTransformersInterface(nn.Module):
                     checkpoint_filename = os.path.join(path, File)
                     is_sb = True
                     return is_sb, checkpoint_filename, is_local
+        elif self.skip_sb_check:
+            is_sb = False
+            return is_sb, checkpoint_filename, is_local
         else:
             files = model_info(
                 path

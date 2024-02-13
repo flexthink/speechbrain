@@ -90,7 +90,7 @@ class Encodec(HFTransformersInterface):
         freeze=True,
         renorm_embeddings=True,
     ):
-        super().__init__(source=source, save_path=save_path, freeze=freeze)
+        super().__init__(source=source, save_path=save_path, freeze=freeze, skip_sb_check=True)
         if not sample_rate:
             sample_rate = DEFAULT_SAMPLE_RATE
         self.sample_rate = sample_rate
