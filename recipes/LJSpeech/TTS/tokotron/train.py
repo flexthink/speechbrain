@@ -257,7 +257,7 @@ class TokotronBrain(sb.Brain):
 
 
 INPUT_FEATURE_MAP = {
-    "text": "label",
+    "text": "label_norm",
     "phonemes": "phonemes"
 }
 
@@ -295,17 +295,16 @@ def dataio_prepare(hparams):
     input_feature = INPUT_FEATURE_MAP[hparams["input"]]
 
     @sb.utils.data_pipeline.takes("label")
-    @sb.utils.data_pipeline.provides("label")
+    @sb.utils.data_pipeline.provides("label_norm")
     def text_pipeline(label):
         """Processes the transcriptions to generate proper labels"""
-        label = label.upper()
+        return label.upper()
 
     @sb.utils.data_pipeline.takes(input_feature)
     @sb.utils.data_pipeline.provides("tokens")
     def tokens_pipeline(label):
         """Processes the transcriptions to generate proper labels"""
-        tokens = label_encoder.encode_sequence_torch(label)
-        yield tokens
+        return label_encoder.encode_sequence_torch(label)
 
     silence_token, _ = get_silence_token(
         hparams["token_model"],
@@ -329,7 +328,7 @@ def dataio_prepare(hparams):
         audio_tokens_bos = torch.cat([audio_bos, audio_tokens_pad], dim=0)
         yield audio_tokens_bos
 
-    dynamic_items = [tokens_pipeline, audio_pipeline, text_pipeline]        
+    dynamic_items = [text_pipeline, tokens_pipeline, audio_pipeline]
 
     init_sequence_encoder(hparams)
 
