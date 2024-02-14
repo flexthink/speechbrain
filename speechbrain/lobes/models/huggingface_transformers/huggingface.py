@@ -125,6 +125,7 @@ class HFTransformersInterface(nn.Module):
             self.auto_class = AutoModelForSeq2SeqLM
         else:
             self.auto_class = AutoModel
+        self.skip_sb_check = skip_sb_check
 
         # Download model
         self._from_pretrained(
@@ -141,7 +142,6 @@ class HFTransformersInterface(nn.Module):
         else:
             self.model.gradient_checkpointing_disable()  # Required by DDP
             self.model.train()
-        self.skip_sb_check = skip_sb_check
 
     def _from_pretrained(
         self, source, save_path, cache_dir,
