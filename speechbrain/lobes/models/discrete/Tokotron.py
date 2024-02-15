@@ -316,6 +316,7 @@ class TokotronTransformerDecoder(nn.Module):
             Decoder multihead attentions (or equivalent)
         """
         with torch.no_grad():
+            gate_offset = int(round(self.gate_offset))
             batch_size = enc_out.size(0)
 
             # Initialize BOS
@@ -384,7 +385,7 @@ class TokotronTransformerDecoder(nn.Module):
                 # For a given sample, consider it done if the gate has activated at least
                 # gate_offset steps ago
                 seq_done = seq_gate_act & (
-                    idx - seq_gate_idx >= self.gate_offset
+                    idx - seq_gate_idx >= gate_offset
                 )
 
                 # Terminate inference if all samples are done
@@ -393,9 +394,11 @@ class TokotronTransformerDecoder(nn.Module):
                     break
 
             # Length = gate activation index + the offset, not exceeding
-            length_abs = (seq_gate_idx + self.gate_offset).clip(
+            length_abs = (seq_gate_idx + gate_offset).clip(
                 max=self.infer_max_decoder_steps
             )
+            max_inferred_len = length_abs.max().int()
+            audio_tokens_out = audio_tokens_out[:, :max_inferred_len]
             # Compute relative lengths
             length = length_abs.float() / audio_tokens_out.size(1)
 
@@ -723,7 +726,7 @@ class TokotronTransformerModel(nn.Module):
         if self.compression_model is not None:
             audio_tokens = self.compression_model.decompress(audio_tokens, audio_length)
         if self.vocoder is not None:
-            vocoder_out = self.vocoder(dec_out.audio_tokens, dec_out.length)
+            vocoder_out = self.vocoder(audio_tokens, dec_out.length)
             if isinstance(vocoder_out, tuple):
                 wav, wav_length = vocoder_out
             else:
