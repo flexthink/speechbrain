@@ -1,0 +1,15 @@
+eval_mos_source: flexthink/ttseval-wavlm-transformer
+eval_asr_source: speechbrain/asr-transformer-transformerlm-librispeech
+eval_dataset: valid
+
+evaluators:
+  mos: !name:speechbrain.inference.eval.RegressionModelSpeechEvaluator.from_hparams
+    source: !ref <eval_mos_source>
+  asr: !name:speechbrain.inference.eval.EncoderDecoderASRSpeechEvaluator
+    source: !ref <eval_asr_source>
+
+eval_summary:
+  mos:
+    descriptive: ["score"]
+  asr:
+    descriptive: ["wer", "cer"]

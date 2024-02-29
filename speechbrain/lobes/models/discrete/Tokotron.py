@@ -595,6 +595,16 @@ class TokotronTransformerModel(nn.Module):
         """The number of steps following gate activation to include"""
         self.decoder.gate_offset = value
 
+    @property
+    def show_inference_progress(self):
+        """Whether inference progress is displayed"""
+        return self.decoder.show_inference_progress
+
+    @show_inference_progress.setter
+    def show_inference_progress(self, value):
+        """Enables or disables progress display"""
+        self.decoder.show_inference_progress = value
+
     def forward(
         self, input_tokens, input_length, audio_tokens, audio_length,
     ):
@@ -962,6 +972,16 @@ class TokotronRNNModel(nn.Module):
     def gate_offset(self, value):
         """The number of steps following gate activation to include"""
         self.decoder.gate_offset = value
+
+    @property
+    def show_inference_progress(self):
+        """Whether inference progress is displayed"""
+        return self.decoder.show_inference_progress
+
+    @show_inference_progress.setter
+    def show_inference_progress(self, value):
+        """Enables or disables progress display"""
+        self.decoder.show_inference_progress = value
 
     def forward(
         self, input_tokens, input_length, audio_tokens, audio_length,
