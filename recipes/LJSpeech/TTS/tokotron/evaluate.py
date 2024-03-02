@@ -45,7 +45,7 @@ class TokotronEvaluator:
         evaluators = hparams.get("evaluators", {})
         if evaluators:
             self.evaluators = {
-                key: evaluator_f()
+                key: evaluator_f(run_opts={"device": device})
                 for key, evaluator_f in evaluators.items()
             }
         else:
@@ -60,6 +60,10 @@ class TokotronEvaluator:
         dataset : speechbrain.dataio.dataset.DynamicItemDataset
             a dataset
         """
+        logger.info("Recovering the checkpoint")
+        ckpt = self.hparams.checkpointer.recover_if_possible()
+        if not ckpt:
+            raise ValueError("Unable to recover the checkpoint")
         loader = sb.dataio.dataloader.make_dataloader(dataset, batch_size=self.hparams.batch_size)
         loader_it = iter(loader)
         self.create_reports()
@@ -119,7 +123,9 @@ class TokotronEvaluator:
         ---------
         batch : speechbrain.dataio.batch.PaddedBatch
             the batch to be evaluated"""
+        batch = batch.to(self.device)
         tokens, tokens_length = batch.tokens
+        self.modules.model.vocoder.device = self.device
         infer_out = self.modules.model.infer(
             input_tokens=tokens, input_length=tokens_length
         )
@@ -172,7 +178,7 @@ class TokotronEvaluator:
             file_name = str(
                 self.samples_folder / f"{item_id}_pred.wav"
             )
-            infer_wav_cut = infer_wav[:wav_length.item()]
+            infer_wav_cut = infer_wav[:wav_length.item()].cpu()
             sb.dataio.dataio.write_audio(
                 file_name, infer_wav_cut, samplerate=self.hparams.model_sample_rate
             )

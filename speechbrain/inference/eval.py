@@ -273,6 +273,17 @@ class EncoderDecoderASRSpeechEvaluator(SpeechEvaluator):
                 self.asr.tokenizer.decode_ids(token_seq) for token_seq in hyps
             ]
         return predicted_words, best_scores, best_log_probs
+    
+    def to(self, device):
+        """Transfers this module to the spcieifed device
+
+        Arguments
+        ---------
+        device : str | torch.Device
+            the target device
+        """
+        self.asr = self.asr.to(device)
+        return self
 
 
 def itemize(result):
