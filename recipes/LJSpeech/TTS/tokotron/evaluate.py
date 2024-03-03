@@ -136,7 +136,8 @@ class TokotronEvaluator:
                 result = evaluator.evaluate(
                     wavs=infer_out.wav,
                     length=infer_out.wav_length,
-                    text=batch.label_norm_eval
+                    text=batch.label_norm_eval,
+                    sample_rate=self.hparams.model_sample_rate
                 )
                 details = undo_batch(result.details)
                 self.write_result(evaluator_key, batch, details)
@@ -262,7 +263,8 @@ def descriptive_statistics(items, key):
     key : str
         """
     values = torch.tensor([item[key] for item in items])
-    q1, median, q3 = values.quantile([0.25, 0.5, 0.75])
+    quantiles = torch.tensor([0.25, 0.5, 0.75])
+    q1, median, q3 = values.quantile(quantiles)
     stats = {
         "mean": values.mean(),
         "std": values.std(),

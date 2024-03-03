@@ -9,10 +9,10 @@ Authors:
 from speechbrain.inference.interfaces import Pretrained
 from speechbrain.inference.ASR import EncoderDecoderASR
 from speechbrain.dataio.batch import PaddedBatch
-from speechbrain.dataio.dataio import read_audio
 from speechbrain.utils.metric_stats import ErrorRateStats
 from collections import namedtuple
 import torch
+import torchaudio
 
 SpeechEvaluationResult = namedtuple(
     "SpeechEvaluationResult", ["score", "details"]
@@ -20,7 +20,15 @@ SpeechEvaluationResult = namedtuple(
 
 
 class SpeechEvaluator:
-    """A base class for speech evaluators"""
+    """A base class for speech evaluators
+
+    Arguments
+    ---------
+    sample_rate : int
+        The audio sample rate this evaluator expects
+    """
+    def __init__(self, sample_rate=16000):
+        self.sample_rate = sample_rate
 
     def evaluate_file(self, file_name, text=None):
         """Evaluates a single file
@@ -37,7 +45,7 @@ class SpeechEvaluator:
         result: SpeechEvaluationResult
             the evaluation result
         """
-        wav = read_audio(str(file_name)).to(self.device)
+        wav = self.read_audio(str(file_name)).to(self.device)
         result = self.evaluate(
             wavs=wav.unsqueeze(0),
             length=torch.ones(1).to(self.device),
@@ -69,7 +77,7 @@ class SpeechEvaluator:
         if text is None:
             text = [None] * len(file_names)
         items = [
-            {"wav": read_audio(str(file_name)), "text": item_text}
+            {"wav": self.read_audio(str(file_name)), "text": item_text}
             for file_name, item_text in zip(file_names, text)
         ]
         batch = PaddedBatch(items)
@@ -79,7 +87,23 @@ class SpeechEvaluator:
             text=batch.text,
         )
 
-    def evaluate(self, wavs, length, text=None):
+    def read_audio(self, file_name):
+        """Reads an audio file, resampling if necessary
+
+        Arguments
+        ---------
+        file_name : str | path-like
+            The file path
+
+        Returns
+        -------
+        audio : torch.Tensor
+            the audio
+        """
+        audio, audio_sample_rate = torchaudio.load(str(file_name))
+        return self.resample(audio, audio_sample_rate)
+
+    def evaluate(self, wavs, length, text=None, sample_rate=None):
         """Evaluates samples
 
         Arguments
@@ -93,12 +117,40 @@ class SpeechEvaluator:
         text : list
             Evaluator-specific metadata
 
+        sample_rate: int, optional
+            The sample rate of the audio. If not provided,
+            the audio is assumed to be at the same sample
+            rate as the model
+
         Returns
         -------
         result : list
             A list of SpeechEvaluationResult objects,
             one for each sample"""
         raise NotImplementedError()
+
+    def resample(self, audio, sample_rate=None):
+        """Resamples the audio, if necessary
+
+        Arguments
+        ---------
+        audio : torch.Tensor
+            the audio to be resampled
+        sample_rate : int
+            the sample rate of the audio
+
+        Returns
+        -------
+        audio : torch.Tensor
+            the target audio, resampled if necessary
+        """
+        if sample_rate is not None and sample_rate != self.sample_rate:
+            audio = torchaudio.functional.resample(
+                audio,
+                orig_freq=sample_rate,
+                new_freq=self.sample_rate
+            )
+        return audio
 
 
 def _unbatchify(value):
@@ -125,14 +177,34 @@ def _unbatchify(value):
     return value
 
 
-class RegressionModelSpeechEvaluator(Pretrained, SpeechEvaluator):
+class SpeechEvaluationRegressionModel(Pretrained):
+    """A pretrained wrapper for regression-based evaluaton
+    models"""
+
+    def __call__(self, wavs, length):
+        return self.mods.model(wavs, length)
+
+
+class RegressionModelSpeechEvaluator(SpeechEvaluator):
     """A speech evaluator that uses a regression model
     that produces a quality score (e.g. SSL fine-tuning)
     for a sample of speech
 
+    Arguments
+    ---------
+    source : str
+        The source model path or HuggingFace hub name
+    sample_rate : int
+        The audio sample rate this evaluator expects
     """
 
-    def evaluate(self, wavs, length, text=None):
+    def __init__(self, source, sample_rate=None, *args, **kwargs):
+        super().__init__(sample_rate=sample_rate)
+        self.model = SpeechEvaluationRegressionModel.from_hparams(
+            source, *args, **kwargs
+        )
+
+    def evaluate(self, wavs, length, text=None, sample_rate=None):
         """Evaluates a batch of waveforms
 
         Arguments
@@ -147,26 +219,39 @@ class RegressionModelSpeechEvaluator(Pretrained, SpeechEvaluator):
             Evaluator-specific metadata (ignored
             for this evaluator)
 
+        sample_rate: int, optional
+            The sample rate of the audio. If not provided,
+            the audio is assumed to be at the same sample
+            rate as the model
+
         Returns
         -------
         result : SpeechEvaluationResult
             an aggregated speech evaluation result with a score
             for each item
         """
-        scores = self.mods.model(wavs, length)
+        wavs = self.resample(wavs, sample_rate)
+        scores = self.model(wavs, length)
         while scores.dim() > 1 and scores.size(-1) == 1:
             scores = scores.squeeze(-1)
         return SpeechEvaluationResult(score=scores, details={"score": scores})
 
 
 class EncoderDecoderASRSpeechEvaluator(SpeechEvaluator):
-    """A speech evaluator implementation based on ASR. Computes the Word Error Rate (WER),
-    Character Error Rate (CER) and a few other metrics
-    """
+    """A speech evaluator implementation based on ASR.
+    Computes the Word Error Rate (WER), Character Error Rate (CER)
+    and a few other metrics
 
-    def __init__(self, *args, **kwargs):
-        super().__init__()
-        self.asr = EncoderDecoderASR.from_hparams(*args, **kwargs)
+    Arguments
+    ---------
+    sample_rate : int
+        The audio sample rate this evaluator expects    
+    """
+    def __init__(self, source, sample_rate=None, *args, **kwargs):
+        super().__init__(sample_rate=sample_rate)
+        self.asr = EncoderDecoderASR.from_hparams(
+            source, *args, **kwargs
+        )
         self.device = next(self.asr.mods.parameters()).device
 
     def init_metrics(self):
@@ -182,7 +267,7 @@ class EncoderDecoderASRSpeechEvaluator(SpeechEvaluator):
         cer_metric = ErrorRateStats(split_tokens=True)
         return wer_metric, cer_metric
 
-    def evaluate(self, wavs, length, text=None):
+    def evaluate(self, wavs, length, text=None, sample_rate=None):
         """Evaluates samples
 
         Arguments
@@ -193,8 +278,13 @@ class EncoderDecoderASRSpeechEvaluator(SpeechEvaluator):
         length: torch.Tensor
             relative lengths (a 1-D tensor)
 
-        text : list
+        text : list, optional
             Ground truth text
+
+        sample_rate: int, optional
+            The sample rate of the audio. If not provided,
+            the audio is assumed to be at the same sample
+            rate as the model
 
         Returns
         -------
@@ -202,6 +292,7 @@ class EncoderDecoderASRSpeechEvaluator(SpeechEvaluator):
             an aggregated speech evaluation result with a score
             for each item
         """
+        wavs = self.resample(wavs, sample_rate)
         if text is None:
             raise ValueError("This evaluator requires ground-truth text")
         predicted_words, scores, log_probs = self.transcribe_batch_with_details(
@@ -273,7 +364,7 @@ class EncoderDecoderASRSpeechEvaluator(SpeechEvaluator):
                 self.asr.tokenizer.decode_ids(token_seq) for token_seq in hyps
             ]
         return predicted_words, best_scores, best_log_probs
-    
+
     def to(self, device):
         """Transfers this module to the spcieifed device
 

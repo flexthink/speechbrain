@@ -1,12 +1,15 @@
 eval_mos_source: flexthink/ttseval-wavlm-transformer
 eval_asr_source: speechbrain/asr-transformer-transformerlm-librispeech
 eval_dataset: valid
+eval_sample_rate: 16000
 
 evaluators:
-  mos: !name:speechbrain.inference.eval.RegressionModelSpeechEvaluator.from_hparams
+  mos: !name:speechbrain.inference.eval.RegressionModelSpeechEvaluator
     source: !ref <eval_mos_source>
+    sample_rate: !ref <eval_sample_rate>
   asr: !name:speechbrain.inference.eval.EncoderDecoderASRSpeechEvaluator
     source: !ref <eval_asr_source>
+    sample_rate: !ref <eval_sample_rate>
 
 eval_summary:
   mos:
