@@ -124,22 +124,23 @@ class TokotronEvaluator:
         ---------
         batch : speechbrain.dataio.batch.PaddedBatch
             the batch to be evaluated"""
-        batch = batch.to(self.device)
-        tokens, tokens_length = batch.tokens
-        self.modules.model.vocoder.device = self.device
-        infer_out = self.modules.model.infer(
-            input_tokens=tokens, input_length=tokens_length
-        )
-        self.save_samples(batch, infer_out)
-        for evaluator_key, evaluator in self.evaluators.items():
-            result = evaluator.evaluate(
-                wavs=infer_out.wav,
-                length=infer_out.wav_length,
-                text=batch.label_norm_eval
+        with torch.no_grad():
+            batch = batch.to(self.device)
+            tokens, tokens_length = batch.tokens
+            self.modules.model.vocoder.device = self.device
+            infer_out = self.modules.model.infer(
+                input_tokens=tokens, input_length=tokens_length
             )
-            details = undo_batch(result.details)
-            self.write_result(evaluator_key, batch, details)
-            self.details[evaluator_key].extend(details)
+            self.save_samples(batch, infer_out)
+            for evaluator_key, evaluator in self.evaluators.items():
+                result = evaluator.evaluate(
+                    wavs=infer_out.wav,
+                    length=infer_out.wav_length,
+                    text=batch.label_norm_eval
+                )
+                details = undo_batch(result.details)
+                self.write_result(evaluator_key, batch, details)
+                self.details[evaluator_key].extend(details)
 
     def write_result(self, evaluator_key, batch, details):
         """Outputs the result details to the report for the specified evaluator
