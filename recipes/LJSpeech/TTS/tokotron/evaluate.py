@@ -64,6 +64,7 @@ class TokotronEvaluator:
         ckpt = self.hparams.checkpointer.recover_if_possible()
         if not ckpt:
             raise ValueError("Unable to recover the checkpoint")
+        self.modules.model.eval()
         loader = sb.dataio.dataloader.make_dataloader(dataset, batch_size=self.hparams.batch_size)
         loader_it = iter(loader)
         self.create_reports()
@@ -260,11 +261,16 @@ def descriptive_statistics(items, key):
     key : str
         """
     values = torch.tensor([item[key] for item in items])
+    q1, median, q3 = values.quantile([0.25, 0.5, 0.75])
     stats = {
         "mean": values.mean(),
         "std": values.std(),
         "min": values.min(),
         "max": values.max(),
+        "median": median,
+        "q1": q1,
+        "q3": q3,
+        "iqr": q3 - q1,
     }
     return {
         f"{key}_{stat_key}": value.item()
