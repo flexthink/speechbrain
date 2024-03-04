@@ -688,7 +688,7 @@ class UnitHifiganGenerator(HifiganGenerator):
         var_pred_hidden_dim=128,
         var_pred_kernel_size=3,
         var_pred_dropout=0.5,
-        num_heads=1
+        num_heads=1,
         multi_speaker=False,
         normalize_speaker_embeddings=False,
     ):

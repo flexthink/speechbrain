@@ -18,6 +18,8 @@ from speechbrain.tokenizers.discrete_SSL_tokenizer import DiscreteSSLTokenizer
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_LAYERS = [7]
+
 
 class DiscreteSSL(nn.Module):
     """This lobe enables the integration of HuggingFace and SpeechBrain
@@ -77,6 +79,7 @@ class DiscreteSSL(nn.Module):
         kmeans_dataset,
         kmeans_repo_id="speechbrain/SSL_Quantization",
         num_clusters=128,
+        SSL_layers=None
     ):
 
         super().__init__()
@@ -98,6 +101,16 @@ class DiscreteSSL(nn.Module):
         self.num_clusters = num_clusters
 
         self.tokenizer = DiscreteSSLTokenizer(self.num_clusters)
+        if SSL_layers is None:
+            SSL_layers = DEFAULT_LAYERS
+        elif isinstance(SSL_layers, str):
+            SSL_layers = [
+                int(layer)
+                for layer in SSL_layers.split(",")
+            ]
+        elif isinstance(SSL_layers, int):
+            SSL_layers = [SSL_layers]
+        self.SSL_layers = SSL_layers
 
     def load_kmeans(
         self, repo_id, kmeans_dataset, encoder_name, num_clusters, cache_dir
@@ -147,9 +160,9 @@ class DiscreteSSL(nn.Module):
         self,
         wav,
         wav_lens=None,
-        SSL_layers=[7],
-        deduplicates=[False],
-        bpe_tokenizers=[None],
+        SSL_layers=None,
+        deduplicates=None,
+        bpe_tokenizers=None,
     ):
         """Takes an input waveform and return its corresponding wav2vec encoding.
 
@@ -175,9 +188,19 @@ class DiscreteSSL(nn.Module):
             A (Batch x Seq x num_SSL_layers) tensor of audio tokens after applying deduplication and subwording if necessary.
         """
 
+        if SSL_layers is None:
+            SSL_layers = self.SSL_layers
+        if deduplicates is None:
+            deduplicates = [False] * len(SSL_layers)
+        if bpe_tokenizers is None:
+            bpe_tokenizers = [None] * len(SSL_layers)
+
         assert (
             len(deduplicates) == len(SSL_layers) == len(bpe_tokenizers)
         ), f"length of SSL_layers,deduplicates,bpe_tokenizers should be the same!!!"
+
+        if wav.dim() == 3:
+            wav = wav.squeeze(1)
 
         embeddings = []
         token_ids = []
@@ -221,3 +244,9 @@ class DiscreteSSL(nn.Module):
             org_tokens, SSL_layers, deduplicates, bpe_tokenizers
         )
         return org_tokens, org_embedding, processed_tokens
+
+    def encode(self, wav, wav_lens=None):
+        tokens, emb, _ = self(wav, wav_lens)
+        if tokens.dim() < 3:
+            tokens = tokens.unsqueeze(-1)
+        return tokens, emb

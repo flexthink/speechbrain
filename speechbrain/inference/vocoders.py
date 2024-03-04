@@ -291,11 +291,13 @@ class UnitHIFIGAN(Pretrained):
     HPARAMS_NEEDED = ["generator"]
 
     def __init__(self, *args, **kwargs):
+        squeeze_channel = kwargs.pop("squeeze_channel", True)
         super().__init__(*args, **kwargs)
         self.infer = self.hparams.generator.inference
         self.first_call = True
         # Temporary fix for mapping indices from the range [0, k] to [1, k+1]
         self.tokenize = True
+        self.squeeze_channel = squeeze_channel
 
     def decode_batch(self, units):
         """Computes waveforms from a batch of discrete units
@@ -359,7 +361,7 @@ class UnitHIFIGAN(Pretrained):
 
     def forward(self, units, length=None):
         "Decodes the input units"
-        if units.dim() > 2:
+        if self.squeeze_channel and units.dim() > 2:
             units = units.squeeze(-1)
         wav = self.decode_batch(units)
         if length is not None:

@@ -32,7 +32,8 @@ freeze_token_model: True
 token_model_src: facebook/hubert-base-ls960
 g2p_src: flexthink/soundchoice-g2p
 token_model_kmeans_src: speechbrain/SSL_Quantization
-token_model_kmeans_file_name: LJSpeech_hubert_k512_L7.pt
+token_model_kmeans_dataset: LJSpeech
+token_model_layers: 7
 vocoder_src: chaanks/hifigan-unit-hubert-l7-k512-ljspeech-ljspeech
 
 splits: ["train", "valid", "test"]
@@ -103,12 +104,19 @@ compression_model_src: flexthink/tokensquish-baseline
 
 
 # Token model (pretrained)
-token_model: !new:speechbrain.lobes.models.huggingface_transformers.discrete_hubert.DiscreteHuBERT
+ssl_model: !new:speechbrain.lobes.models.huggingface_transformers.hubert.HuBERT
     source: !ref <token_model_src>
     save_path: !ref <pretrained_model_save_folder>
+    freeze: !ref <freeze_token_model>
+    output_all_hiddens: True
+
+token_model: !new:speechbrain.lobes.models.huggingface_transformers.discrete_ssl.DiscreteSSL
+    ssl_model: !ref <ssl_model>
     kmeans_repo_id: !ref <token_model_kmeans_src>
-    kmeans_filename: !ref <token_model_kmeans_file_name>
-    kmeans_cache_dir: !ref <pretrained_model_save_folder>
+    kmeans_dataset: !ref <token_model_kmeans_dataset>
+    num_clusters: !ref <audio_num_tokens>
+    save_path: !ref <pretrained_model_save_folder>
+    SSL_layers: !ref <token_model_layers>
 
 # Dataloader options
 train_dataloader_opts:
@@ -181,6 +189,7 @@ compression_model: !name:speechbrain.inference.compression.TokenSquish.from_hpar
 vocoder: !apply:speechbrain.inference.vocoders.UnitHIFIGAN.from_hparams
   source: !ref <vocoder_src>
   savedir: !ref <pretrained_model_save_folder>/unithifigan-hubert
+  squeeze_channel: False
 
 model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel # yamllint disable-line rule:line-length
     input_num_tokens: !ref <input_num_tokens>

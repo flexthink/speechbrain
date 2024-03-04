@@ -32,9 +32,9 @@ freeze_token_model: True
 token_model_src: facebook/wav2vec2-large-lv60
 g2p_src: flexthink/soundchoice-g2p
 token_model_kmeans_src: speechbrain/SSL_Quantization
-token_model_kmeans_file_name: LJSpeech_wav2vec_k512_L7.pt
-vocoder_src: chaanks/hifigan-unit-wav2vec2-l7-k512-ljspeech-ljspeech
-ssl_layer_num: 7
+token_model_kmeans_dataset: LJSpeech
+token_model_layers: 7
+vocoder_src: chaanks/hifigan-unit-wavlm-ll60k-l3-7-12-18-23-k1000-ljspeech-ljspeech
 
 splits: ["train", "valid", "test"]
 split_ratio: [90, 5, 5]
@@ -98,14 +98,19 @@ compression_model_src: flexthink/tokensquish-baseline
 
 
 # Token model (pretrained)
-token_model: !new:speechbrain.lobes.models.huggingface_transformers.discrete_wav2vec2.DiscreteWav2Vec2
+ssl_model: !new:speechbrain.lobes.models.huggingface_transformers.wavlm.WavLM
     source: !ref <token_model_src>
     save_path: !ref <pretrained_model_save_folder>
-    kmeans_repo_id: !ref <token_model_kmeans_src>
-    kmeans_filename: !ref <token_model_kmeans_file_name>
-    kmeans_cache_dir: !ref <pretrained_model_save_folder>
     freeze: !ref <freeze_token_model>
-    ssl_layer_num: !ref <ssl_layer_num>
+    output_all_hiddens: True
+
+token_model: !new:speechbrain.lobes.models.huggingface_transformers.discrete_wav2vec2.DiscreteWav2Vec2
+    ssl_model: !ref <ssl_model>
+    kmeans_repo_id: !ref <token_model_kmeans_src>
+    kmeans_dataset: !ref <token_model_kmeans_dataset>
+    num_clusters: !ref <audio_num_tokens>
+    save_path: !ref <pretrained_model_save_folder>
+    SSL_layers: !ref <token_model_layers>
 
 # Dataloader options
 train_dataloader_opts:
