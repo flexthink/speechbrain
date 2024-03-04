@@ -525,7 +525,6 @@ def _map_tokens_item(tokens, char_map):
 
 class LazyInit(nn.Module):
     """A lazy initialization wrapper
-    
     Arguments
     ---------
     init : callable
