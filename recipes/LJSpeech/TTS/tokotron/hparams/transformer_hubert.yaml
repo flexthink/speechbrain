@@ -35,6 +35,8 @@ token_model_kmeans_src: speechbrain/SSL_Quantization
 token_model_kmeans_dataset: LJSpeech
 token_model_layers: 7
 vocoder_src: chaanks/hifigan-unit-hubert-l7-k512-ljspeech-ljspeech
+vocoder_available_layers: [3, 7, 12, 18, 23]
+
 
 splits: ["train", "valid", "test"]
 split_ratio: [90, 5, 5]
@@ -186,10 +188,16 @@ attention_type: regularMHA
 compression_model: !name:speechbrain.inference.compression.TokenSquish.from_hparams
     source: !ref <compression_model_src>
 
-vocoder: !apply:speechbrain.inference.vocoders.UnitHIFIGAN.from_hparams
+hifigan: !apply:speechbrain.inference.vocoders.UnitHIFIGAN.from_hparams
   source: !ref <vocoder_src>
   savedir: !ref <pretrained_model_save_folder>/unithifigan-hubert
-  squeeze_channel: False
+
+vocoder: !new:speechbrain.inference.vocoders.HierarchicalUnitWrapper
+  model: !ref <hifigan>
+  available_layers: !ref <vocoder_available_layers>
+  layers: !ref <token_model_layers>
+  num_units: !ref <audio_num_tokens>
+
 
 model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel # yamllint disable-line rule:line-length
     input_num_tokens: !ref <input_num_tokens>

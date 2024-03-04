@@ -372,3 +372,70 @@ class UnitHIFIGAN(Pretrained):
         result = super().to(device)
         self.device = device
         return result
+
+
+class HierarchicalUnitWrapper(torch.nn.Module):
+    """A wrapper for models similar to UnitHiFiGan that combine multiple layers with offsets
+
+    Arguments
+    ---------
+    model : torch.nn.Module | Pretrained
+        A model
+    available_layers : list
+        The list of available layers
+    num_units : int
+        The total number of units/tokens available
+    layers : list
+        The layers that will be used. If omitted, all layers will be used
+    """
+    def __init__(self, model, available_layers, num_units, layers=None):
+        super().__init__()
+        self.model = model
+        self.device = next(iter(param for param in model.parameters())).device
+        self.available_layers = _parse_layer_list(available_layers)
+        if layers is None:
+            self.layers = self.available_layers
+        else:
+            self.layers = _parse_layer_list(layers)
+        layers_set = set(self.layers)
+        available_layers_set = set(available_layers)
+        if not layers_set.issubset(available_layers_set):
+            unavailable_layers = ",".join(
+                str(layer) for layer in (layers_set - available_layers_set))
+            raise ValueError(f"Layers {unavailable_layers} are not supported")
+        self.num_units = num_units
+        self.offset = self.compute_offset()
+
+    def compute_offset(self):
+        _, layers_idx = torch.where(
+            torch.tensor(self.available_layers, device=self.device).unsqueeze(0)
+            == torch.tensor(self.layers).unsqueeze(1)
+        )
+        offset = torch.tensor(layers_idx, device=self.device) * self.num_units
+        return offset[None, None, :]
+
+    def forward(self, units, length):
+        return self.model(units + self.offset.to(units.device), length)
+    
+
+def _parse_layer_list(layers):
+    """Parses an argument with a list of layers. If the argument is a string, the function
+    assumes it is comma-separated
+
+    Arguments
+    ---------
+    layers : str | enumerable
+        A list of layers
+
+    Returns
+    -------
+    layers : list
+        Layers, as a list of integers
+    """
+    if isinstance(layers, str):
+        layers = [
+            int(layer) for layer in layers.split(",")
+        ]
+    elif not isinstance(layers, list):
+        layers = list(layers)
+    return layers
