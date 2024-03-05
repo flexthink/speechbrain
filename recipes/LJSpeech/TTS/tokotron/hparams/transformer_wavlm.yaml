@@ -188,6 +188,7 @@ compression_model: !name:speechbrain.inference.compression.TokenSquish.from_hpar
 hifigan: !apply:speechbrain.inference.vocoders.UnitHIFIGAN.from_hparams
   source: !ref <vocoder_src>
   savedir: !ref <pretrained_model_save_folder>/unithifigan-wavlm
+  squeeze_channel: False
 
 vocoder: !new:speechbrain.inference.vocoders.HierarchicalUnitWrapper
   model: !ref <hifigan>
