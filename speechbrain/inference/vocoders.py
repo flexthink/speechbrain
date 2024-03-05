@@ -436,6 +436,8 @@ def _parse_layer_list(layers):
         layers = [
             int(layer) for layer in layers.split(",")
         ]
+    elif isinstance(layers, int):
+        layers = [layers]
     elif not isinstance(layers, list):
         layers = list(layers)
     return layers
