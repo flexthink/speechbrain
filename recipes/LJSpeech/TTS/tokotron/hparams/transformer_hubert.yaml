@@ -14,6 +14,8 @@ train_log: !ref <output_folder>/train_log.txt
 data_folder: !PLACEHOLDER # e.g., /path/to/LibriSpeech
 prepare_save_folder: !ref <data_folder>/prepared
 pretrained_model_save_folder: !ref <prepare_save_folder>
+vocoder_model_name: unithifigan-hubert
+vocoder_model_path: !ref <pretrained_model_save_folder>/<vocoder_model_name>
 prepare_archive_path: null
 prepare_skip_ignore_folders: False
 train_json: !ref <prepare_save_folder>/train.json
@@ -190,7 +192,7 @@ compression_model: !name:speechbrain.inference.compression.TokenSquish.from_hpar
 
 hifigan: !apply:speechbrain.inference.vocoders.UnitHIFIGAN.from_hparams
   source: !ref <vocoder_src>
-  savedir: !ref <pretrained_model_save_folder>/unithifigan-hubert
+  savedir: !ref <vocoder_model_path>
   squeeze_channel: False
 
 vocoder: !new:speechbrain.inference.vocoders.HierarchicalUnitWrapper
