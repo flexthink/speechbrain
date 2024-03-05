@@ -119,6 +119,7 @@ class TokotronBrain(sb.Brain):
             The currently-starting epoch. This is passed
             `None` during the test stage.
         """
+        self.modules.vocoder.device = self.device
         self.create_perfect_samples()
         self.loss_metric = sb.utils.metric_stats.MultiMetricStats(
             metric=self.hparams.compute_cost, batch_eval=True,
