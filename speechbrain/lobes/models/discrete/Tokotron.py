@@ -28,6 +28,7 @@ from speechbrain.nnet.losses import kldiv_loss, distance_diff_loss
 from speechbrain.nnet.loss.guidedattn_loss import GuidedAttentionLoss
 from speechbrain.nnet.embedding import MultiEmbedding
 from speechbrain.dataio.dataio import length_to_mask
+from enum import Enum
 from collections import namedtuple
 from tqdm.auto import tqdm
 
@@ -77,6 +78,11 @@ TokotronInfernceOutput = namedtuple(
 )
 
 IGNORE_IN_STATE_DICT = {"vocoder", "compression_model"}
+
+
+class EosMode(Enum):
+    GATE = "gate"
+    TOKEN = "token"
 
 
 class TokotronTransformerDecoder(nn.Module):
@@ -148,6 +154,7 @@ class TokotronTransformerDecoder(nn.Module):
         gate_threshold=0.5,
         gate_offset=0,
         show_inference_progress=True,
+        audio_token_shift=0
     ):
         super().__init__()
         self.num_tokens = num_tokens
@@ -197,6 +204,7 @@ class TokotronTransformerDecoder(nn.Module):
         if self.audio_emb_freeze:
             for parameter in self.audio_emb.parameters():
                 parameter.requires_grad_(False)
+        self.audio_token_shift = audio_token_shift
 
     def forward(
         self,
@@ -239,7 +247,7 @@ class TokotronTransformerDecoder(nn.Module):
                 tgt_length * tgt_max_len, tgt_max_len
             ).logical_not()
 
-        audio_emb = self.audio_emb(tgt)
+        audio_emb = self.audio_emb(tgt + self.audio_token_shift)
 
         batch_size, audio_max_len, heads, audio_dim = audio_emb.shape
         audio_emb_combined = audio_emb.reshape(
@@ -290,8 +298,31 @@ class TokotronTransformerDecoder(nn.Module):
             The embedding tensor with which to initialize
         """
         self.audio_emb.initialize(emb)
+    
 
-    def infer(self, enc_out, length):
+class TokotronTransformerAutoregressiveInference(nn.Module):
+    def __init__(
+            self,
+            decoder,
+            gate_offset,
+            gate_threshold,
+            tokens_per_step,
+            bos_idx,
+            max_steps,
+            audio_token_shift,
+            show_inference_progress=True,
+    ):
+        super().__init__()
+        self.decoder = decoder
+        self.gate_offset = gate_offset
+        self.gate_threshold = gate_threshold
+        self.tokens_per_step = tokens_per_step
+        self.bos_idx = bos_idx
+        self.max_steps = max_steps
+        self.audio_token_shift = audio_token_shift
+        self.show_inference_progress = show_inference_progress
+
+    def forward(self, enc_out, length):
         """Performs autoregressive inference
 
         Arguments
@@ -329,12 +360,12 @@ class TokotronTransformerDecoder(nn.Module):
             )
             audio_tokens = bos
             audio_tokens_length = torch.ones(batch_size, device=enc_out.device)
-            steps_range = range(self.infer_max_decoder_steps)
+            steps_range = range(self.max_steps)
 
             # Initialize the gate activation index
             seq_gate_idx = (
                 torch.ones(batch_size, device=enc_out.device)
-                * self.max_decoder_steps
+                * self.max_steps
             )
 
             # Initialize an indicator that tells whether the gate has activated
@@ -346,7 +377,7 @@ class TokotronTransformerDecoder(nn.Module):
                 steps_range = tqdm(steps_range, desc="Inference")
             for idx in steps_range:
                 # One autoregressive step
-                step_out = self.forward(
+                step_out = self.decoder.forward(
                     enc_out=enc_out,
                     src_length=length,
                     tgt=audio_tokens,
@@ -396,10 +427,10 @@ class TokotronTransformerDecoder(nn.Module):
 
             # Length = gate activation index + the offset, not exceeding
             length_abs = (seq_gate_idx + gate_offset).clip(
-                max=self.infer_max_decoder_steps
+                max=self.max_steps
             )
             max_inferred_len = length_abs.max().int()
-            audio_tokens_out = audio_tokens_out[:, :max_inferred_len]
+            audio_tokens_out = audio_tokens_out[:, :max_inferred_len] - self.audio_token_shift
             # Compute relative lengths
             length = length_abs.float() / audio_tokens_out.size(1)
 
@@ -411,6 +442,31 @@ class TokotronTransformerDecoder(nn.Module):
             alignments=step_out.alignments,
             p_eos=step_out.gate_out.sigmoid(),
         )
+    
+
+# TODO: Work in progress
+class TokotronSearchInferenceWrapper(nn.Module):
+    def __init__(self, decoder):
+        super().__init__()
+        self.decoder = decoder
+    
+    def decode(self, memory, enc_states, enc_lens):
+        self.decoder.decode()
+
+# TODO: Work in progress
+class TokotronSearchInference(nn.Module):
+    def __init__(self, decoder, search):
+        super().__init__()
+        self.decoder = decoder
+
+    def search(self, enc_out, length):
+        device = enc_out.device
+        hyps, audio_length, scores, log_probs  = self.search(enc_out, length)
+        return TokotronDecoderInfernceOutput(
+            length=torch.tensor(audio_length).to(device)
+        )
+
+
 
 
 class TokotronTransformerModel(nn.Module):
@@ -470,6 +526,9 @@ class TokotronTransformerModel(nn.Module):
         The vocoder module
     compression_model : nn.Module
         The token compression model to be used
+    eos_mode : EosMode
+        the way teh end of sequence is computed
+
     """
 
     def __init__(
@@ -497,10 +556,15 @@ class TokotronTransformerModel(nn.Module):
         show_inference_progress=True,
         vocoder=None,
         compression_model=None,
+        eos_mode=EosMode.GATE
     ):
         super().__init__()
         self.in_emb = Embedding(
             num_embeddings=input_num_tokens, embedding_dim=d_model,
+        )
+        self.eos_mode = EosMode(eos_mode)
+        self.audio_token_shift = (
+            1 if eos_mode == EosMode.TOKEN else 0
         )
         self.encoder = TransformerEncoder(
             num_layers=enc_num_layers,
@@ -513,7 +577,7 @@ class TokotronTransformerModel(nn.Module):
             normalize_before=True,
         )
         self.decoder = TokotronTransformerDecoder(
-            num_tokens=audio_num_tokens,
+            num_tokens=audio_num_tokens + self.audio_token_shift,
             tokens_per_step=audio_tokens_per_step,
             d_model=d_model,
             d_ffn=d_ffn,
@@ -544,6 +608,17 @@ class TokotronTransformerModel(nn.Module):
                 d_model, max_audio_length
             )
         self.compression_model = compression_model
+
+        self.inference = TokotronTransformerAutoregressiveInference(
+            decoder=self.decoder,
+            gate_offset=self.gate_offset,
+            gate_threshold=gate_threshold,
+            tokens_per_step=audio_tokens_per_step,
+            bos_idx=bos_idx,
+            max_steps=infer_max_audio_length,
+            audio_token_shift=self.audio_token_shift,
+            show_inference_progress=self.show_inference_progress,
+        )        
 
     def __setattr__(self, name, value):
         """Prevents the vocoder from being saved in state_dict() - it is not typically fine-tuned
@@ -731,7 +806,8 @@ class TokotronTransformerModel(nn.Module):
             src_key_padding_mask=src_key_padding_mask,
             pos_embs=pos_embs_encoder,
         )
-        dec_out = self.decoder.infer(enc_out, input_length)
+        #dec_out = self.decoder.infer(enc_out, input_length)
+        dec_out = self.inference(enc_out, input_length)
         audio_tokens, audio_length = dec_out.audio_tokens, dec_out.length
         wav, wav_length = None, None
         if self.compression_model is not None:
