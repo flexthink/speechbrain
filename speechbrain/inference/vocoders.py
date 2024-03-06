@@ -387,8 +387,10 @@ class HierarchicalUnitWrapper(torch.nn.Module):
         The total number of units/tokens available
     layers : list
         The layers that will be used. If omitted, all layers will be used
+    offset : int, optional
+        The offset added globally to all layers
     """
-    def __init__(self, model, available_layers, num_units, layers=None):
+    def __init__(self, model, available_layers, num_units, layers=None, offset=0):
         super().__init__()
         self.model = model
         self.device = next(iter(param for param in model.parameters())).device
@@ -404,7 +406,10 @@ class HierarchicalUnitWrapper(torch.nn.Module):
                 str(layer) for layer in (layers_set - available_layers_set))
             raise ValueError(f"Layers {unavailable_layers} are not supported")
         self.num_units = num_units
-        self.offset = self.compute_offset()
+        self.layer_offset = self.compute_offset()
+        self.offset = offset
+        if hasattr(self.model, "tokenize"):
+            self.model.tokenize = False
 
     def compute_offset(self):
         _, layers_idx = torch.where(
@@ -415,7 +420,12 @@ class HierarchicalUnitWrapper(torch.nn.Module):
         return offset[None, None, :]
 
     def forward(self, units, length):
-        return self.model(units + self.offset.to(units.device), length)
+        units_with_offset = (
+            units
+            + self.layer_offset.to(units.device)
+            + self.offset
+        )
+        return self.model(units_with_offset, length)
     
 
 def _parse_layer_list(layers):

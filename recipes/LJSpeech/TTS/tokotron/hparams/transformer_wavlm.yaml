@@ -36,6 +36,7 @@ g2p_src: flexthink/soundchoice-g2p
 token_model_kmeans_src: speechbrain/SSL_Quantization
 token_model_kmeans_dataset: LJSpeech
 token_model_layers: 7
+token_offset: 1
 vocoder_src: chaanks/hifigan-unit-wavlm-ll60k-l3-7-12-18-23-k1000-ljspeech-ljspeech
 vocoder_available_layers: [3, 7, 12, 18, 23]
 
@@ -197,6 +198,7 @@ vocoder: !new:speechbrain.inference.vocoders.HierarchicalUnitWrapper
   available_layers: !ref <vocoder_available_layers>
   layers: !ref <token_model_layers>
   num_units: !ref <audio_num_tokens>
+  offset: !ref <token_offset>
 
 model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel # yamllint disable-line rule:line-length
     input_num_tokens: !ref <input_num_tokens>
