@@ -19,6 +19,7 @@ from speechbrain.lobes.models.transformer.Transformer import (
     PositionalEncoding,
     get_lookahead_mask,
 )
+from speechbrain.dataio.dataio import clean_padding_
 from speechbrain.nnet.RNN import LSTM, GRU, AttentionalRNNDecoder
 from speechbrain.nnet.attention import RelPosEncXL
 from speechbrain.nnet.embedding import Embedding
@@ -743,6 +744,7 @@ class TokotronTransformerModel(nn.Module):
                 wav, wav_length = vocoder_out, dec_out.length
             if wav.dim() == 3:
                 wav = wav.squeeze(1)
+            clean_padding_(wav, wav_length)
         return TokotronInfernceOutput(
             audio_tokens=audio_tokens,
             length=audio_length,
@@ -1076,6 +1078,7 @@ class TokotronRNNModel(nn.Module):
                 wav, wav_length = vocoder_out, audio_length
             if wav.dim() == 3:
                 wav = wav.squeeze(1)
+            clean_padding_(wav, wav_length)
 
         return TokotronInfernceOutput(
             audio_tokens=dec_out.audio_tokens,
