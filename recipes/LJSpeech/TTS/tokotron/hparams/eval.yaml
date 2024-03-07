@@ -10,6 +10,8 @@ evaluators:
   asr: !name:speechbrain.inference.eval.EncoderDecoderASRSpeechEvaluator
     source: !ref <eval_asr_source>
     sample_rate: !ref <eval_sample_rate>
+    overrides:
+      lm_weight: 0.0
 
 eval_summary:
   mos:
