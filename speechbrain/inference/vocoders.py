@@ -50,6 +50,7 @@ class HIFIGAN(Pretrained):
     HPARAMS_NEEDED = ["generator"]
 
     def __init__(self, *args, **kwargs):
+        self.feat_input = kwargs.pop("feat_input", False)
         super().__init__(*args, **kwargs)
         self.infer = self.hparams.generator.inference
         self.first_call = True
@@ -132,9 +133,16 @@ class HIFIGAN(Pretrained):
             waveform = self.infer(spectrogram.unsqueeze(0).to(self.device))
         return waveform.squeeze(0)
 
-    def forward(self, spectrogram):
+    def forward(self, spectrogram, length=None):
         "Decodes the input spectrograms"
-        return self.decode_batch(spectrogram)
+
+        if self.feat_input:
+            spectrogram = spectrogram.squeeze(2)
+            spectrogram = spectrogram.transpose(-1, -2)
+        wav = self.decode_batch(spectrogram)
+        if length is not None:
+            clean_padding_(wav, length)
+        return wav
 
 
 class DiffWaveVocoder(Pretrained):
@@ -392,7 +400,7 @@ class HierarchicalUnitWrapper(torch.nn.Module):
     """
     def __init__(self, model, available_layers, num_units, layers=None, offset=0):
         super().__init__()
-        self.model = model
+        self.model = model if isinstance(model, torch.nn.Module) else model()
         self.device = next(iter(param for param in model.parameters())).device
         self.available_layers = _parse_layer_list(available_layers)
         if layers is None:

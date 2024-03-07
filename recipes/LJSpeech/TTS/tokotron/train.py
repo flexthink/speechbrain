@@ -28,6 +28,7 @@ from speechbrain.utils.audio_tokens import (
     use_silence_padding,
     feature_pad_to,
 )
+from speechbrain.lobes.models.discrete.Tokotron import RepresentationMode
 
 logger = logging.getLogger(__name__)
 
@@ -55,14 +56,14 @@ class TokotronBrain(sb.Brain):
         """
         batch = batch.to(self.device)
         tokens, tokens_length = batch.tokens
-        audio_tokens, audio_tokens_length = batch.audio_tokens_bos
+        audio, audio_length = batch.audio_bos
         if self.compression:
-            audio_tokens = self.compression_model.compress(audio_tokens)
+            audio = self.compression_model.compress(audio)
         predictions = self.modules.model(
             input_tokens=tokens,
             input_length=tokens_length,
-            audio_tokens=audio_tokens,
-            audio_length=audio_tokens_length,
+            audio=audio,
+            audio_length=audio_length,
         )
 
         return predictions
@@ -87,21 +88,21 @@ class TokotronBrain(sb.Brain):
             A one-element tensor used for backpropagating the gradient.
         """
         batch = batch.to(self.device)
-        audio_tokens, audio_tokens_length = batch.audio_tokens_pad
+        audio, audio_length = batch.audio_pad
         if self.compression:
-            audio_tokens = self.compression_model.compress(audio_tokens)
+            audio = self.compression_model.compress(audio)
         loss_details = self.hparams.compute_cost(
             predictions=predictions,
-            audio_tokens=audio_tokens,
-            audio_length=audio_tokens_length,
+            audio=audio,
+            audio_length=audio_length,
             input_tokens=batch.tokens.data,
             input_length=batch.tokens.lengths,
         )
         self.loss_metric.append(
             batch.uttid,
             predictions=predictions,
-            audio_tokens=audio_tokens,
-            audio_length=audio_tokens_length,
+            audio=audio,
+            audio_length=audio_length,
             input_tokens=batch.tokens.data,
             input_length=batch.tokens.lengths,
             reduction="batch",
@@ -135,6 +136,7 @@ class TokotronBrain(sb.Brain):
             )
         # Load the compression model only if compression is enables
         self.compression = getattr(self.hparams, "compression", False)
+
         if self.compression:
             self.compression_model = self.hparams.compression_model(
                 run_opts={"device": self.device}
@@ -213,7 +215,7 @@ class TokotronBrain(sb.Brain):
                 ids=batch.uttid,
                 audio=infer_out.wav,
                 length_pred=infer_out.wav_length,
-                length=batch.audio_tokens_pad.lengths,
+                length=batch.audio_pad.lengths,
                 alignments=infer_out.alignments,
                 p_eos=infer_out.p_eos,
             )
@@ -227,7 +229,7 @@ class TokotronBrain(sb.Brain):
             )
             for batch in sample_loader:
                 batch = batch.to(self.device)
-                sample_tokens, length = batch.audio_tokens_pad
+                sample_tokens, length = batch.audio_pad
                 vocoder_out = self.modules.vocoder(
                     sample_tokens, length
                 )
@@ -286,6 +288,9 @@ def dataio_prepare(hparams):
 
     # Define datasets from json data manifest file
     # Define datasets sorted by ascending lengths for efficiency
+    representation_mode = RepresentationMode(
+        hparams.get("representation_mode", RepresentationMode.DISCRETE)
+    )
     datasets = {}
     data_folder = hparams["data_folder"]
     data_info = {
@@ -308,27 +313,33 @@ def dataio_prepare(hparams):
         """Processes the transcriptions to generate proper labels"""
         return label_encoder.encode_sequence_torch(label)
 
-    silence_token, _ = get_silence_token(
+    silence_token, silence_emb = get_silence_token(
         hparams["token_model"],
-        extract_emb=False
-    )
-    silence_token = silence_token.cpu()
-    silence_padding_len = int(math.ceil(hparams["silence_padding"]))
-    bos_width = hparams.get("bos_width", 1)
-    audio_bos = (
-        torch.ones(bos_width, hparams["audio_tokens_per_step"]) * hparams["bos_index"]
+        extract_emb=representation_mode == RepresentationMode.CONTINUOUS
     )
 
-    @sb.utils.data_pipeline.takes("audio_tokens")
-    @sb.utils.data_pipeline.provides("audio_tokens_pad", "audio_tokens_bos")
-    def audio_pipeline(audio_tokens):
-        audio_tokens = torch.from_numpy(audio_tokens)
-        audio_tokens_pad = feature_pad_to(
-            audio_tokens, len(audio_tokens) + silence_padding_len, silence_token
+    silence_padding = silence_token if representation_mode == RepresentationMode.DISCRETE else silence_emb
+    
+    silence_padding = silence_padding.cpu()
+    silence_padding_len = int(math.ceil(hparams["silence_padding"]))
+    bos_width = hparams.get("bos_width", 1)
+    audio_features = "audio_tokens" if representation_mode == RepresentationMode.DISCRETE else "audio_emb"
+    audio_bos_prefix = (
+        torch.ones(bos_width, hparams["audio_tokens_per_step"]) * hparams["bos_index"]
+    )
+    if representation_mode == RepresentationMode.CONTINUOUS:
+        audio_bos_prefix = audio_bos_prefix.unsqueeze(-1).repeat(1, 1, hparams["audio_dim"])
+
+    @sb.utils.data_pipeline.takes(audio_features)
+    @sb.utils.data_pipeline.provides("audio_pad", "audio_bos")
+    def audio_pipeline(audio):
+        audio = torch.from_numpy(audio)
+        audio_pad = feature_pad_to(
+            audio, len(audio) + silence_padding_len, silence_padding
         )
-        yield audio_tokens_pad
-        audio_tokens_bos = torch.cat([audio_bos, audio_tokens_pad], dim=0)
-        yield audio_tokens_bos
+        yield audio_pad
+        audio_bos = torch.cat([audio_bos_prefix, audio_pad], dim=0)
+        yield audio_bos
 
     dynamic_items = [text_pipeline, tokens_pipeline, audio_pipeline]
 
@@ -342,8 +353,8 @@ def dataio_prepare(hparams):
             output_keys=[
                 "uttid",
                 "tokens",
-                "audio_tokens_pad",
-                "audio_tokens_bos",
+                "audio_pad",
+                "audio_bos",
             ],
         )
 
@@ -351,7 +362,7 @@ def dataio_prepare(hparams):
             dataset=dynamic_dataset,
             save_path=Path(hparams["prepare_save_folder"]) / "features",
             id_key="uttid",
-            features=["audio_tokens"],
+            features=[audio_features],
         )
 
         datasets[dataset] = dynamic_dataset
@@ -556,6 +567,10 @@ if __name__ == "__main__":
     from ljspeech_prepare import prepare_ljspeech
 
     # Data preparation, to be run on only one process.
+    representation_mode = RepresentationMode(
+        hparams.get("representation_mode", RepresentationMode.DISCRETE)
+    )
+    audio_features = "audio_tokens" if representation_mode == RepresentationMode.DISCRETE else "audio_emb"
     if not hparams["skip_prep"]:
         with hparams["freezer"]:
             run_on_main(
@@ -566,7 +581,7 @@ if __name__ == "__main__":
                     "splits": hparams["splits"],
                     "split_ratio": hparams["split_ratio"],
                     "seed": hparams["seed"],
-                    "extract_features": ["audio_tokens"],
+                    "extract_features": [audio_features],
                     "extract_features_opts": hparams["extract_features_opts"],
                     "extract_phonemes": hparams["input"] == "phonemes",
                     "model_name": "tokotron",
@@ -582,7 +597,7 @@ if __name__ == "__main__":
 
     # Apply overfit test settings
     datasets = apply_overfit_test(hparams, datasets)
-    token_keys = ["audio_tokens_pad", "audio_tokens_bos"]
+    token_keys = ["audio_pad", "audio_bos"]
 
     # Trainer initialization
     tts_brain = TokotronBrain(

@@ -24,12 +24,13 @@ from speechbrain.nnet.RNN import LSTM, GRU, AttentionalRNNDecoder
 from speechbrain.nnet.attention import RelPosEncXL
 from speechbrain.nnet.embedding import Embedding
 from speechbrain.nnet.linear import Linear
-from speechbrain.nnet.losses import kldiv_loss, distance_diff_loss
+from speechbrain.nnet.losses import kldiv_loss, mse_loss, distance_diff_loss
 from speechbrain.nnet.loss.guidedattn_loss import GuidedAttentionLoss
 from speechbrain.nnet.embedding import MultiEmbedding
 from speechbrain.dataio.dataio import length_to_mask
 from collections import namedtuple
 from tqdm.auto import tqdm
+from enum import Enum
 
 TokotronOutput = namedtuple(
     "TokotronOutput",
@@ -79,6 +80,11 @@ TokotronInfernceOutput = namedtuple(
 IGNORE_IN_STATE_DICT = {"vocoder", "compression_model"}
 
 
+class RepresentationMode(Enum):
+    DISCRETE = "discrete"
+    CONTINUOUS = "continuous"
+
+
 class TokotronTransformerDecoder(nn.Module):
     """The Tokotron decoder - can be used in a standalone model or as
     a component of a larger model
@@ -124,6 +130,10 @@ class TokotronTransformerDecoder(nn.Module):
         probabilities before actual EOS
     show_inference_progress : bool, optional
         Whether to show inference progress in the console
+    representation_mode : RepresentationMode | str, optional
+        the type of representations to be used (discrete or continuous)
+    audio_dim : int, optional
+        The continuous audio inout dimension
     """
 
     def __init__(
@@ -148,10 +158,16 @@ class TokotronTransformerDecoder(nn.Module):
         gate_threshold=0.5,
         gate_offset=0,
         show_inference_progress=True,
+        representation_mode=RepresentationMode.DISCRETE,
+        audio_dim=512,
     ):
         super().__init__()
         self.num_tokens = num_tokens
         self.tokens_per_step = tokens_per_step
+        self.representation_mode = RepresentationMode(
+            representation_mode
+        )
+        self.audio_dim = audio_dim
         self.dec = TransformerDecoder(
             d_model=d_model,
             d_ffn=d_ffn,
@@ -164,18 +180,25 @@ class TokotronTransformerDecoder(nn.Module):
         self.tgt_in_proj = Linear(
             input_size=audio_emb_size * tokens_per_step, n_neurons=d_model,
         )
+        self.out_dim = num_tokens if self.representation_mode == RepresentationMode.DISCRETE else audio_dim
         self.out_proj = Linear(
-            input_size=d_model, n_neurons=num_tokens * tokens_per_step,
+            input_size=d_model, n_neurons=self.out_dim * tokens_per_step,
         )
         self.gate = Linear(input_size=d_model, n_neurons=1)
         if audio_emb is None:
-            audio_emb = MultiEmbedding(
-                num_embeddings=num_tokens,
-                embedding_dim=audio_emb_size,
-                num_heads=tokens_per_step,
-                normalized=True,
-                d_model=d_model,
-            )
+            if self.representation_mode == RepresentationMode.DISCRETE:
+                audio_emb = MultiEmbedding(
+                    num_embeddings=num_tokens,
+                    embedding_dim=audio_emb_size,
+                    num_heads=tokens_per_step,
+                    normalized=True,
+                    d_model=d_model,
+                )
+            else:
+                audio_emb = Linear(
+                    input_size=audio_dim,
+                    n_neurons=audio_emb_size,
+                )
         self.positional_encoding = PositionalEncoding(
             d_model, max_decoder_steps
         )
@@ -268,7 +291,7 @@ class TokotronTransformerDecoder(nn.Module):
         lin_out = self.out_proj(dec_out)
         batch_size, audio_max_len, _ = lin_out.shape
         lin_out_heads = lin_out.reshape(
-            batch_size, audio_max_len, self.tokens_per_step, self.num_tokens,
+            batch_size, audio_max_len, self.tokens_per_step, self.out_dim,
         )
         gate_out = self.gate(dec_out).squeeze(-1)
         return TokotronDecoderOutput(
@@ -325,6 +348,8 @@ class TokotronTransformerDecoder(nn.Module):
                 batch_size,
                 self.tokens_per_step,
                 self.bos_idx,
+                representation_mode=self.representation_mode,
+                audio_dim=self.audio_dim,
                 device=enc_out.device,
             )
             audio_tokens = bos
@@ -352,7 +377,9 @@ class TokotronTransformerDecoder(nn.Module):
                     tgt=audio_tokens,
                     tgt_length=audio_tokens_length,
                 )
-                audio_tokens_out = step_out.out.argmax(-1)
+                audio_tokens_out = step_out.out
+                if self.representation_mode == RepresentationMode.DISCRETE:
+                    audio_tokens_out = audio_tokens_out.argmax(-1)                               
 
                 # The model outputs predictions without BOS. Add the BOS back for the
                 # following step
@@ -497,6 +524,8 @@ class TokotronTransformerModel(nn.Module):
         show_inference_progress=True,
         vocoder=None,
         compression_model=None,
+        representation_mode=RepresentationMode.DISCRETE,
+        audio_dim=512,
     ):
         super().__init__()
         self.in_emb = Embedding(
@@ -532,6 +561,8 @@ class TokotronTransformerModel(nn.Module):
             gate_threshold=gate_threshold,
             gate_offset=gate_offset,
             show_inference_progress=show_inference_progress,
+            representation_mode=representation_mode,
+            audio_dim=audio_dim
         )
         self.bos_idx = bos_idx
         self.vocoder = vocoder
@@ -607,7 +638,7 @@ class TokotronTransformerModel(nn.Module):
         self.decoder.show_inference_progress = value
 
     def forward(
-        self, input_tokens, input_length, audio_tokens, audio_length,
+        self, input_tokens, input_length, audio, audio_length,
     ):
         """Computes the forward pass, for training
 
@@ -618,8 +649,9 @@ class TokotronTransformerModel(nn.Module):
             characters or phonemes
         input_length : torch.Tensor
             a 1-D tensor of relative input lengths
-        audio_tokens : torch.Tensor
-            a (Batch x Length) tensor of output audio tokens (e.g. encodec)
+        audio : torch.Tensor
+            a (Batch x Length x Head) tensor of output audio tokens (e.g. encodec)
+            or a (Batch x Length x Head x Dim) tensor of discrete representations
         audio_length : torch.Tensor
             a 1-D tensor of relative output lengths"""
 
@@ -635,7 +667,7 @@ class TokotronTransformerModel(nn.Module):
         )
         dec_out = self.decoder(
             enc_out=enc_out,
-            tgt=audio_tokens,
+            tgt=audio,
             tgt_length=audio_length,
             src_length=input_length,
             src_key_padding_mask=src_key_padding_mask,
@@ -986,7 +1018,7 @@ class TokotronRNNModel(nn.Module):
         self.decoder.show_inference_progress = value
 
     def forward(
-        self, input_tokens, input_length, audio_tokens, audio_length,
+        self, input_tokens, input_length, audio, audio_length,
     ):
         """Computes the forward pass, for training
 
@@ -997,8 +1029,9 @@ class TokotronRNNModel(nn.Module):
             characters or phonemes
         input_length : torch.Tensor
             a 1-D tensor of relative input lengths
-        audio_tokens : torch.Tensor
-            a (Batch x Length) tensor of output audio tokens (e.g. encodec)
+        audio : torch.Tensor
+            a (Batch x Length) tensor of output audio tokens (e.g. encodec) 
+            or a (Batch x Length x Dim) continuous representation
         audio_length : torch.Tensor
             a 1-D tensor of relative output lengths"""
 
@@ -1006,7 +1039,7 @@ class TokotronRNNModel(nn.Module):
         enc_out, _ = self.encoder(src)
         dec_out = self.decoder(
             enc_out=enc_out,
-            tgt=audio_tokens,
+            tgt=audio,
             tgt_length=audio_length,
             src_length=input_length,
         )
@@ -1485,7 +1518,7 @@ class TokotronRNNDecoder(nn.Module):
 _rnn_modules = {"gru": GRU, "lstm": LSTM}
 
 
-def get_bos(batch_size, tokens_per_step, bos_idx, device="cpu"):
+def get_bos(batch_size, tokens_per_step, bos_idx, audio_dim=None, representation_mode=RepresentationMode.CONTINUOUS, device="cpu"):
     """Constructs a beginning-of-sequence (BOS) sequence for
     autoregressive inference
 
@@ -1500,7 +1533,11 @@ def get_bos(batch_size, tokens_per_step, bos_idx, device="cpu"):
     -------
     seq: torch.Tensor
         the target sequence"""
-    return torch.ones(batch_size, 1, tokens_per_step, device=device) * bos_idx
+    if representation_mode == RepresentationMode.DISCRETE:
+        bos = torch.ones(batch_size, 1, tokens_per_step, device=device) * bos_idx
+    else:
+        bos = torch.ones(batch_size, 1, tokens_per_step, audio_dim, device=device) * bos_idx
+    return bos
 
 
 def get_gate_targets(lengths, out_len):
@@ -1588,6 +1625,9 @@ class TokotronLoss(nn.Module):
 
     seq_cost : float
         The type of sequence loss to be used
+
+    representation_mode : RepresentationMode
+        the type of representations being used (discrete or continuous)
     """
 
     def __init__(
@@ -1600,6 +1640,7 @@ class TokotronLoss(nn.Module):
         gate_max_weight=1.0,
         silence_padding=0,
         seq_cost=None,
+        representation_mode=RepresentationMode.DISCRETE
     ):
         super().__init__()
         self.guided_attention_weight = guided_attention_weight
@@ -1608,15 +1649,20 @@ class TokotronLoss(nn.Module):
         self.gate_gamma = gate_gamma
         self.gate_max_weight = gate_max_weight
         self.silence_padding = silence_padding
+        self.representation_mode = RepresentationMode(representation_mode)
         if seq_cost is None:
-            seq_cost = kldiv_loss
+            seq_cost = (
+                kldiv_loss 
+                if self.representation_mode == RepresentationMode.DISCRETE
+                else mse_loss
+            )
         self.seq_cost = seq_cost
         self.attn_cost = GuidedAttentionLoss(sigma=guided_attention_sigma,)
 
     def forward(
         self,
         predictions,
-        audio_tokens,
+        audio,
         audio_length,
         input_tokens,
         input_length,
@@ -1628,10 +1674,17 @@ class TokotronLoss(nn.Module):
         p_seq_reshaped = (
             p_seq.transpose(1, 2).reshape(batch_size * heads, out_len, tok_dim)
         )[:, :max_len]
-        tok_len = audio_tokens.size(1)
-        audio_tokens_reshaped = audio_tokens.transpose(1, 2).reshape(
-            batch_size * heads, tok_len
-        )[:, :max_len]
+        tok_len = audio.size(1)
+        if self.representation_mode == RepresentationMode.DISCRETE:
+            audio_reshaped = audio.transpose(1, 2).reshape(
+                batch_size * heads, tok_len
+            )
+        else:
+            audio_dim = audio.size(-1)
+            audio_reshaped = audio.transpose(1, 2).reshape(
+                batch_size * heads, tok_len, audio_dim
+            )
+        audio_reshaped = audio_reshaped[:, :max_len]
         lengths_reshaped = (
             audio_length
             .unsqueeze(-1)
@@ -1640,7 +1693,7 @@ class TokotronLoss(nn.Module):
         )
         seq_loss = self.seq_cost(
             p_seq_reshaped,
-            audio_tokens_reshaped,
+            audio_reshaped,
             length=lengths_reshaped,
             reduction=reduction,
         )
