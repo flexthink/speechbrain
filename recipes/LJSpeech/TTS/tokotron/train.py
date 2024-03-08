@@ -120,8 +120,11 @@ class TokotronBrain(sb.Brain):
             The currently-starting epoch. This is passed
             `None` during the test stage.
         """
-        if hasattr(self.modules.vocoder, "model"):
-            self.modules.vocoder.model.device = self.device
+        vocoder = self.modules.vocoder
+        if hasattr(vocoder, "model"):
+            vocoder.model.device = self.device
+        else:
+            vocoder.device = self.device
         self.create_perfect_samples()
         self.loss_metric = sb.utils.metric_stats.MultiMetricStats(
             metric=self.hparams.compute_cost, batch_eval=True,
