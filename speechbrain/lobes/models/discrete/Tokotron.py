@@ -27,6 +27,7 @@ from speechbrain.nnet.linear import Linear
 from speechbrain.nnet.losses import kldiv_loss, mse_loss, distance_diff_loss
 from speechbrain.nnet.loss.guidedattn_loss import GuidedAttentionLoss
 from speechbrain.nnet.embedding import MultiEmbedding
+from speechbrain.nnet.normalization import BatchNorm1d
 from speechbrain.dataio.dataio import length_to_mask
 from collections import namedtuple
 from tqdm.auto import tqdm
@@ -1640,7 +1641,8 @@ class TokotronLoss(nn.Module):
         gate_max_weight=1.0,
         silence_padding=0,
         seq_cost=None,
-        representation_mode=RepresentationMode.DISCRETE
+        representation_mode=RepresentationMode.DISCRETE,
+        audio_dim=512,
     ):
         super().__init__()
         self.guided_attention_weight = guided_attention_weight
@@ -1658,6 +1660,12 @@ class TokotronLoss(nn.Module):
             )
         self.seq_cost = seq_cost
         self.attn_cost = GuidedAttentionLoss(sigma=guided_attention_sigma,)
+        if representation_mode == RepresentationMode.DISCRETE:
+            self.norm = nn.Identity
+        else:
+            self.norm = BatchNorm1d(
+                input_size=audio_dim
+            )
 
     def forward(
         self,
@@ -1691,9 +1699,11 @@ class TokotronLoss(nn.Module):
             .expand(batch_size, heads)
             .reshape(batch_size * heads)
         )
+        p_seq_norm = self.norm(p_seq_reshaped)
+        audio_norm = self.norm(audio_reshaped)
         seq_loss = self.seq_cost(
-            p_seq_reshaped,
-            audio_reshaped,
+            p_seq_norm,
+            audio_norm,
             length=lengths_reshaped,
             reduction=reduction,
         )
