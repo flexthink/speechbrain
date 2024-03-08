@@ -1661,7 +1661,7 @@ class TokotronLoss(nn.Module):
         self.seq_cost = seq_cost
         self.attn_cost = GuidedAttentionLoss(sigma=guided_attention_sigma,)
         if representation_mode == RepresentationMode.DISCRETE:
-            self.norm = nn.Identity
+            self.norm = nn.Identity()
         else:
             self.norm = BatchNorm1d(
                 input_size=audio_dim
