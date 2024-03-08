@@ -243,6 +243,7 @@ model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel 
 modules:
     model: !ref <model>
     vocoder: !ref <vocoder>
+    compute_cost: !ref <compute_cost>
 
 # define two optimizers here for two-stage training
 opt_class: !name:torch.optim.Adam
