@@ -172,7 +172,9 @@ d_ffn: 2048
 transformer_dropout: 0.2
 target_dropout: 0.2
 activation: !name:torch.nn.GELU
+representation_mode: discrete
 audio_num_tokens: 512
+audio_dim: 1024
 audio_emb_size: 128
 audio_emb_freeze: True
 audio_emb_pretrained: False
@@ -191,18 +193,28 @@ attention_type: regularMHA
 compression_model: !name:speechbrain.inference.compression.TokenSquish.from_hparams
     source: !ref <compression_model_src>
 
-hifigan: !apply:speechbrain.inference.vocoders.UnitHIFIGAN.from_hparams
-  source: !ref <vocoder_src>
-  savedir: !ref <vocoder_model_path>
-  squeeze_channel: False
 
-vocoder: !new:speechbrain.inference.vocoders.HierarchicalUnitWrapper
-  model: !ref <hifigan>
+vocoder_discrete: !name:speechbrain.inference.vocoders.HierarchicalUnitWrapper
+  model: !name:speechbrain.inference.vocoders.UnitHIFIGAN.from_hparams
+    source: !ref <vocoder_src>
+    savedir: !ref <vocoder_model_path>
+    squeeze_channel: False
   available_layers: !ref <vocoder_available_layers>
   layers: !ref <token_model_layers>
   num_units: !ref <audio_num_tokens>
   offset: !ref <token_offset>
 
+vocoder_continuous: !name:speechbrain.inference.vocoders.HIFIGAN.from_hparams
+    source: !ref <vocoder_src>
+    savedir: !ref <vocoder_model_path>
+    feat_input: True
+
+vocoder: !apply:speechbrain.utils.hparams.choice
+    value: !ref <representation_mode>
+    apply: True
+    choices:
+        discrete: !ref <vocoder_discrete>
+        continuous: !ref <vocoder_continuous>
 
 model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel # yamllint disable-line rule:line-length
     input_num_tokens: !ref <input_num_tokens>
@@ -224,6 +236,8 @@ model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel 
     audio_emb_freeze: !ref <audio_emb_freeze>
     max_audio_length: !ref <max_audio_length>
     infer_max_audio_length: !ref <infer_max_audio_length>
+    representation_mode: !ref <representation_mode>
+    audio_dim: !ref <audio_dim>
 
 
 modules:
@@ -242,6 +256,7 @@ compute_cost: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronLoss
     gate_gamma: !ref <gate_loss_gamma>
     gate_max_weight: !ref <gate_loss_max_weight>
     silence_padding: !ref <silence_padding>
+    representation_mode: !ref <representation_mode>
 
 lr_annealing: !new:speechbrain.nnet.schedulers.NoamScheduler
     lr_initial: !ref <lr>
