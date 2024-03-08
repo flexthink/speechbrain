@@ -39,7 +39,8 @@ class TokotronEvaluator:
         self.device = device
         modules = self.hparams.modules
         self.modules = ModuleDict(modules).to(self.device)
-        self.output_folder = Path(self.hparams.output_folder) / "eval"
+
+        self.output_folder = Path(self.hparams.output_folder) / f"eval_{self.hparams.eval_dataset}"
         self.samples_folder = self.output_folder / "samples"
         self.samples_folder.mkdir(parents=True, exist_ok=True)
         evaluators = hparams.get("evaluators", {})
