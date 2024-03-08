@@ -143,7 +143,7 @@ class DiscreteSSL(nn.Module):
         )
         files = Path(
             os.path.join(kmeans_dir, kmeans_dataset, encoder_name)
-        ).glob("*.pt")
+        ).glob(f"*_k{num_clusters}*.pt")
         for file in files:
             layer_ids.append(
                 int(file.name.split("/")[-1].split("_")[-1].split(".")[0][1:])
