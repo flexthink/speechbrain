@@ -4,6 +4,13 @@ eval_dataset: valid
 eval_suffix: ""
 eval_sample_rate: 16000
 eval_asr_type: encoder_decoder
+evaluations: mos,asr
+output_folder: !PLACEHOLDER
+utmos_batch_size: 8
+utmos_model_path: null
+utmos_ckpt_name: epoch=3-step=7459.ckpt
+utmos_ckpt_path: !ref <utmos_model_path>/<utmos_ckpt_name>
+
 
 eval_asr: !apply:speechbrain.utils.hparams.choice
   value: !ref <eval_asr_type>
@@ -23,8 +30,17 @@ evaluators:
     sample_rate: !ref <eval_sample_rate>
   asr: !ref <eval_asr>
 
+bulk_evaluators:
+  utmos: !name:speechbrain.inference.eval.UTMOSSpeechEvaluator
+    model_path: !ref <utmos_model_path>
+    output_folder: !ref <output_folder>
+    ckpt_path: !ref <utmos_ckpt_path>
+    batch_size: !ref <utmos_batch_size>
+
 eval_summary:
   mos:
     descriptive: ["score"]
   asr:
     descriptive: ["wer", "cer", "wer_ref", "cer_ref", "dwer", "dcer"]
+  utmos:
+    descriptive: ["utmos"]
