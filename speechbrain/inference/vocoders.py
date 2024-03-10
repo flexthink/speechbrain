@@ -76,7 +76,9 @@ class HIFIGAN(Pretrained):
             self.hparams.generator.remove_weight_norm()
             self.first_call = False
         with torch.no_grad():
-            waveform = self.infer(spectrogram.to(self.device))
+            waveform = self.infer(
+                spectrogram.to(self.device)
+            )
 
         # Mask the noise caused by padding during batch inference
         if mel_lens is not None and hop_len is not None:
@@ -135,6 +137,7 @@ class HIFIGAN(Pretrained):
     def forward(self, spectrogram):
         "Decodes the input spectrograms"
         return self.decode_batch(spectrogram)
+
 
 
 class DiffWaveVocoder(Pretrained):
@@ -311,6 +314,10 @@ class UnitHIFIGAN(Pretrained):
             Batch of mel-waveforms [batch, 1, time]
         """
         # Remove weight norm for inference if it's the first call
+        waveform, _ = self.decode_batch_with_details(units)
+        return waveform
+
+    def decode_batch_with_details(self, units):
         if self.first_call:
             self.hparams.generator.remove_weight_norm()
             self.first_call = False
@@ -326,8 +333,9 @@ class UnitHIFIGAN(Pretrained):
             # Avoid changing the input in-place
             units = units + 1
         with torch.no_grad():
-            waveform = self.infer(units.to(self.device))
+            waveform = self.hparams.generator.inference_with_details(units.to(self.device))
         return waveform
+    
 
     def decode_unit(self, units):
         """Computes waveforms from a single sequence of discrete units
@@ -418,7 +426,7 @@ class HierarchicalUnitWrapper(torch.nn.Module):
         )
         offset = torch.tensor(layers_idx, device=self.device) * self.num_units
         return offset[None, None, :]
-
+    
     def forward(self, units, length):
         units_with_offset = (
             units
@@ -426,6 +434,17 @@ class HierarchicalUnitWrapper(torch.nn.Module):
             + self.offset
         )
         return self.model(units_with_offset, length)
+    
+    def decode_batch_with_details(self, units):
+        units_with_offset = (
+            units
+            + self.layer_offset.to(units.device)
+            + self.offset
+        )
+        return self.model.decode_batch_with_details(
+            units_with_offset,
+        )
+
     
 
 def _parse_layer_list(layers):

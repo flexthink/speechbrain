@@ -782,15 +782,22 @@ class UnitHifiganGenerator(HifiganGenerator):
             u = torch.cat([u, spk], dim=1)
 
         return super().forward(u), (log_dur_pred, log_dur)
-
-    @torch.no_grad()
-    def inference(self, x, spk=None):
+    
+    def inference_with_details(self, x, spk=None):
         """The inference function performs duration prediction and runs the forward method.
 
         Arguments
         ---------
         x : torch.Tensor (batch, time)
             feature input tensor.
+
+        Returns
+        -------
+        wav : torch.Tensor
+            the waveforrm
+
+        details : dict
+            details
         """
         x = self.unit_embedding(x)
 
@@ -821,7 +828,12 @@ class UnitHifiganGenerator(HifiganGenerator):
             spk = self._upsample(spk, x.shape[-1])
             x = torch.cat([x, spk], dim=1)
 
-        return super().forward(x)
+        return super().forward(x), {"attn": attn_weights}
+
+    @torch.no_grad()
+    def inference(self, x, spk=None):
+        wav, _ = self.inference_with_details(x, spk)
+        return wav
 
 
 ##################################
