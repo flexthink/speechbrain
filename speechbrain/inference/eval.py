@@ -321,13 +321,30 @@ class ASRSpeechEvaluator(SpeechEvaluator):
             )
             # Redundant: it is the same
             del details["target_ref"]
-            details["dwer"] = details["wer"] - details["wer_ref"]
-            details["dcer"] = details["cer"] - details["cer_ref"]
+            details.update(
+                self.compute_diff_rate(details, device=wavs.device)
+            )
 
         return SpeechEvaluationResult(
             score=details["wer"],
             details=details,
-        )    
+        )
+
+    def compute_diff_rate(self, details, device):
+        ids = range(1, len(details["pred"]) + 1)
+        wer_metric, cer_metric = init_asr_metrics()
+        wer_metric.append(ids, details["pred"], details["pred_ref"])
+        cer_metric.append(ids, details["pred"], details["pred_ref"])
+        dwer = torch.tensor(
+            [score["WER"] for score in wer_metric.scores],
+            device=device
+        )
+        dcer = torch.tensor(
+            [score["WER"] for score in cer_metric.scores],
+            device=device
+        )
+        return {"dwer": dwer, "dcer": dcer}
+
 
 class EncoderDecoderASRSpeechEvaluator(ASRSpeechEvaluator):
     """A speech evaluator implementation based on ASR.
