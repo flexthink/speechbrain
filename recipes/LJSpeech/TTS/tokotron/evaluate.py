@@ -49,15 +49,30 @@ class TokotronEvaluator:
             self.modules.vocoder,
             "decode_batch_with_details"
         )
+        self.enabled_evaluators = set(self.hparams.evaluations.split(","))
         evaluators = hparams.get("evaluators", {})
         if evaluators:
             self.evaluators = {
                 key: evaluator_f(run_opts={"device": device})
                 for key, evaluator_f in evaluators.items()
+                if key in self.enabled_evaluators
             }
         else:
-            logger.warn("No evaluators were defined - this run will produce samples only")
             self.evaluators = {}
+
+        bulk_evaluators = getattr(self.hparams, "bulk_evaluators", {})
+        if bulk_evaluators:
+            self.bulk_evaluators = {
+                key: evaluator_f()
+                for key, evaluator_f in bulk_evaluators.items()
+                if key in self.enabled_evaluators
+            }
+        else:
+            self.bulk_evaluators = {}
+
+        if not self.evaluators and not self.bulk_evaluators:
+            logger.warn("No evaluators were defined - this run will produce samples only")
+
         self.attention = []
 
     def evaluate(self, dataset):
@@ -78,14 +93,19 @@ class TokotronEvaluator:
         self.create_reports()
         self.modules.model.show_inference_progress = False
         self.item_ids = []
+        details_keys = list(self.evaluators.keys()) + list(self.bulk_evaluators.keys())
         self.details = {
             evaluator_key: []
-            for evaluator_key in self.evaluators
+            for evaluator_key in details_keys
         }
+        self.sample_text = []
+        self.sample_file_names = []
+        self.ref_file_names = []
         logger.info("Starting evaluation")
         batch_count = math.ceil(len(dataset) / self.hparams.batch_size)
         for batch in tqdm(loader_it, desc="Evaluation", total=batch_count):
             self.evaluate_batch(batch)
+        self.evaluate_bulk()
         self.write_summary()
         self.write_attn()
         logger.info("Evaluation done")
@@ -94,7 +114,7 @@ class TokotronEvaluator:
         """Creates report files and report writers"""
         self.report_files = {}
         self.report_writers = {}
-        for evaluator_key in self.evaluators:
+        for evaluator_key in self.enabled_evaluators:
             columns = self.get_report_columns(evaluator_key)
             file_name = self.output_folder / f"{evaluator_key}.csv"
             report_file = open(file_name, "w")
@@ -105,12 +125,12 @@ class TokotronEvaluator:
 
     def get_report_columns(self, evaluator_key):
         """Returns the columns for the specified evaluator
-        
+
         Arguments
         ---------
         evaluator_key : str
             the identifier of the evaluator
-            
+
         Returns
         -------
         columns : list[str]
@@ -118,14 +138,29 @@ class TokotronEvaluator:
         """
         bogus_wavs = torch.randn(2, 10000, device=self.device)
         bogus_length = torch.tensor([1., 1.], device=self.device)
-        evaluator = self.evaluators[evaluator_key]
-        result = evaluator.evaluate(
-            wavs=bogus_wavs,
-            length=bogus_length,
-            text="BOGUS",
-            wavs_ref=bogus_wavs,
-            length_ref=bogus_length,
-        )
+        if evaluator_key in self.evaluators:
+            evaluator = self.evaluators[evaluator_key]
+            result = evaluator.evaluate(
+                wavs=bogus_wavs,
+                length=bogus_length,
+                text=["BOGUS"] * len(bogus_wavs),
+                wavs_ref=bogus_wavs,
+                length_ref=bogus_length,
+            )
+        else:
+            bogus_file_name = self.output_folder / "bogus.wav"
+            evaluator = self.bulk_evaluators[evaluator_key]
+            sb.dataio.dataio.write_audio(
+                str(bogus_file_name),
+                bogus_wavs[0],
+                samplerate=self.hparams.model_sample_rate,
+            )
+            result = evaluator.evaluate_files(
+                file_names=[bogus_file_name],
+                text=["BOGUS"],
+                file_names_ref=[bogus_file_name],
+            )
+
         return ["uttid"] + list(result.details.keys())
 
     def evaluate_batch(self, batch):
@@ -159,6 +194,7 @@ class TokotronEvaluator:
                 self.attention.append(details["attn"])
 
             self.save_samples(batch, wav, infer_out.length)
+            self.item_ids.extend(batch.uttid)
             for evaluator_key, evaluator in self.evaluators.items():
                 result = evaluator.evaluate(
                     wavs=wav,
@@ -170,23 +206,34 @@ class TokotronEvaluator:
                     sample_rate=self.hparams.model_sample_rate
                 )
                 details = undo_batch(result.details)
-                self.write_result(evaluator_key, batch, details)
+                self.write_result(evaluator_key, batch.uttid, details)
                 self.details[evaluator_key].extend(details)
 
-    def write_result(self, evaluator_key, batch, details):
+    def evaluate_bulk(self):
+        for evaluator_key, evaluator in self.bulk_evaluators.items():
+            result = evaluator.evaluate_files(
+                file_names=self.sample_file_names,
+                text=self.sample_text,
+                file_names_ref=self.ref_file_names,
+            )
+            self.details[evaluator_key].append(result.details)
+            details = undo_batch(result.details)
+            self.write_result(evaluator_key, self.item_ids, details)
+
+    def write_result(self, evaluator_key, uttid, details):
         """Outputs the result details to the report for the specified evaluator
 
         Arguments
         ---------
         evaluator_key : str
             The evaluator key
-        batch : speechbrain.dataio.batch.PaddedBatch
-            The batch evaluation
+        batch : list
+            The list of IDs
         details : list
             a list of evaluation details, one dictionary per item
         """
         writer = self.report_writers[evaluator_key]
-        for uttid, details_item in zip(batch.uttid, details):
+        for uttid, details_item in zip(uttid, details):
             report_details = {
                 "uttid": uttid,
                 **details_item,
@@ -217,6 +264,7 @@ class TokotronEvaluator:
             sb.dataio.dataio.write_audio(
                 file_name, infer_wav_cut, samplerate=self.hparams.model_sample_rate
             )
+            self.sample_file_names.append(file_name)
 
     def write_summary(self):
         """Outputs summarized statistics"""
@@ -247,7 +295,8 @@ class TokotronEvaluator:
         """Computes the summarized statistics"""
         return {
             f"{evaluator_key}_{stat_key}": value
-            for evaluator_key in self.evaluators
+            for evaluator_key in self.enabled_evaluators
+            if evaluator_key in self.details
             for metric_key in self.hparams.eval_summary[evaluator_key]["descriptive"]
             for stat_key, value in descriptive_statistics(
                 items=self.details[evaluator_key],
@@ -372,8 +421,9 @@ if __name__ == "__main__":
             "Using evaluation hyperparameters from %s",
             eval_hparams_file
         )
+        eval_overrides = f"{overrides}\noutput_folder: {hparams['output_folder']}"
         eval_hparams = load_hyperpyyaml(
-            eval_hparams_file, overrides, overrides_must_match=False
+            eval_hparams_file, eval_overrides, overrides_must_match=False
         )
         hparams.update(eval_hparams)
     else:

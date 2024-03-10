@@ -13,10 +13,17 @@ from speechbrain.decoders.seq2seq import S2SWhisperGreedySearch
 from speechbrain.dataio.batch import PaddedBatch
 from speechbrain.utils.metric_stats import ErrorRateStats
 from collections import namedtuple
+from pathlib import Path
+import os
 import torch
 import torchaudio
 import re
 import string
+import logging
+import shutil
+import subprocess
+
+logger = logging.getLogger(__name__)
 
 RE_PUNCTUATION = re.compile(
     "|".join(
@@ -577,3 +584,71 @@ def init_asr_metrics():
     wer_metric = ErrorRateStats()
     cer_metric = ErrorRateStats(split_tokens=True)
     return wer_metric, cer_metric
+
+
+class BulkSpeechEvaluator:
+    def evaluate_files(self, file_names, text=None, file_names_ref=None):
+        raise NotImplementedError()
+
+
+class UTMOSSpeechEvaluator(BulkSpeechEvaluator):
+    def __init__(
+        self,
+        model_path,
+        output_folder,
+        ckpt_path,
+        python="python",
+        batch_size=8
+    ):
+        self.output_folder = Path(output_folder)
+        rand = torch.randint(1, 999999999, (1,)).item()
+        self.eval_path = (self.output_folder / f"eval_{rand}").absolute()
+        self.model_path = Path(model_path).absolute()
+        script = self.model_path / "predict.py"
+        self.script = script
+        self.ckpt_path = Path(ckpt_path).absolute()
+        self.batch_size = batch_size
+        self.python = python
+
+    def evaluate_files(self, file_names, text, file_names_ref=None):
+        current_path = os.getcwd()
+        try:
+            self.eval_path.mkdir(parents=True, exist_ok=True)
+            logger.info("Copying the files to '%s'", self.eval_path)
+            for file_name in file_names:
+                target_file_name = self.eval_path / Path(file_name).name
+                shutil.copy(file_name, target_file_name)
+
+            logger.info("Running evaluation")
+            result_path = self.eval_path / "result.txt"
+            os.chdir(self.model_path)
+            output = subprocess.check_output(
+                [
+                    self.python,
+                    str(self.script),
+                    "--mode",
+                    "predict_dir",
+                    "--bs",
+                    str(self.batch_size),
+                    "--inp_dir",
+                    str(self.eval_path),
+                    "--out_path",
+                    result_path,
+                    "--ckpt_path",
+                    str(self.ckpt_path),
+                ]
+            )
+            logger.info("Evaluation finished, output: %s", output)
+            file_names = [path.name for path in self.eval_path.glob("*.wav")]
+            with open(result_path) as result_path:
+                scores = [float(line.strip()) for line in result_path]
+            score_map = dict(zip(file_names, scores))
+            scores_ordered = [
+                score_map[Path(file_name).name]
+                for file_name in file_names
+            ]
+            return SpeechEvaluationResult(scores_ordered, {"utmos": scores_ordered})
+        finally:
+            os.chdir(current_path)
+            shutil.rmtree(self.eval_path)
+
