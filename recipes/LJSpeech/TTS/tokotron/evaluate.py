@@ -39,8 +39,9 @@ class TokotronEvaluator:
         self.device = device
         modules = self.hparams.modules
         self.modules = ModuleDict(modules).to(self.device)
-
-        self.output_folder = Path(self.hparams.output_folder) / f"eval_{self.hparams.eval_dataset}"
+        suffix = f"_{self.hparams.eval_suffix}" if self.hparams.eval_suffix else ""
+        eval_folder = f"eval_{self.hparams.eval_dataset}{suffix}"
+        self.output_folder = Path(self.hparams.output_folder) / eval_folder
         self.samples_folder = self.output_folder / "samples"
         self.samples_folder.mkdir(parents=True, exist_ok=True)
         self.modules.model.vocoder = None
@@ -69,8 +70,8 @@ class TokotronEvaluator:
         """
         logger.info("Recovering the checkpoint")
         ckpt = self.hparams.checkpointer.recover_if_possible()
-        if not ckpt:
-            raise ValueError("Unable to recover the checkpoint")
+#        if not ckpt:
+#            raise ValueError("Unable to recover the checkpoint")
         self.modules.model.eval()
         loader = sb.dataio.dataloader.make_dataloader(dataset, batch_size=self.hparams.batch_size)
         loader_it = iter(loader)
@@ -122,6 +123,8 @@ class TokotronEvaluator:
             wavs=bogus_wavs,
             length=bogus_length,
             text="BOGUS",
+            wavs_ref=bogus_wavs,
+            length_ref=bogus_length,
         )
         return ["uttid"] + list(result.details.keys())
 
@@ -161,6 +164,9 @@ class TokotronEvaluator:
                     wavs=wav,
                     length=length,
                     text=batch.label_norm_eval,
+                    wavs_ref=batch.sig.data,
+                    length_ref=batch.sig.lengths,
+                    sample_rate_ref=self.hparams.sample_rate,
                     sample_rate=self.hparams.model_sample_rate
                 )
                 details = undo_batch(result.details)
@@ -169,7 +175,7 @@ class TokotronEvaluator:
 
     def write_result(self, evaluator_key, batch, details):
         """Outputs the result details to the report for the specified evaluator
-        
+
         Arguments
         ---------
         evaluator_key : str
@@ -200,7 +206,7 @@ class TokotronEvaluator:
         length: torch.Tensor
             relative lengths
         """
-        wav_length_abs = (length *  wav.size(1)).int()
+        wav_length_abs = (length * wav.size(1)).int()
         for item_id, infer_wav, wav_length in zip(
             batch.uttid, wav, wav_length_abs
         ):
@@ -297,6 +303,25 @@ def label_norm_pipeline(label):
     return label
 
 
+@sb.utils.data_pipeline.takes("wav")
+@sb.utils.data_pipeline.provides("sig")
+def audio_ref_pipeline(wav):
+    """The audio loading pipeline for references
+
+    Arguments
+    ---------
+    wav : str
+        The file path
+
+    Returns
+    -------
+    sig : torch.Tensor
+        The waveform
+    """
+    sig = sb.dataio.dataio.read_audio(wav)
+    return sig
+
+
 def descriptive_statistics(items, key):
     """Computes descriptive statistics for the summary
     
@@ -387,11 +412,10 @@ if __name__ == "__main__":
     # Select the dataset to use in evaluation
     eval_dataset_key = hparams.get("eval_dataset", "valid")
     eval_dataset = datasets[eval_dataset_key]
-    eval_dataset.add_dynamic_item(
-        label_norm_pipeline
-    )
+    eval_dataset.add_dynamic_item(label_norm_pipeline)
+    eval_dataset.add_dynamic_item(audio_ref_pipeline)
     eval_dataset.set_output_keys(
-        ["uttid", "label_norm_eval", "tokens"]
+        ["uttid", "label_norm_eval", "tokens", "sig"]
     )
 
     # Create the evaluator
