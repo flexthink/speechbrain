@@ -340,8 +340,10 @@ class ASRSpeechEvaluator(SpeechEvaluator):
     def compute_diff_rate(self, details, device):
         ids = range(1, len(details["pred"]) + 1)
         wer_metric, cer_metric = init_asr_metrics()
-        wer_metric.append(ids, details["pred"], details["pred_ref"])
-        cer_metric.append(ids, details["pred"], details["pred_ref"])
+        pred = self._replace_blanks(details["pred"])
+        pred_ref = self._replace_blanks(details["pred_ref"])
+        wer_metric.append(ids, pred, pred_ref)
+        cer_metric.append(ids, pred, pred_ref)
         dwer = torch.tensor(
             [score["WER"] for score in wer_metric.scores],
             device=device
@@ -351,6 +353,9 @@ class ASRSpeechEvaluator(SpeechEvaluator):
             device=device
         )
         return {"dwer": dwer, "dcer": dcer}
+
+    def _replace_blanks(self, preds):
+        return [" " if item == "" else item for item in preds]
 
 
 class EncoderDecoderASRSpeechEvaluator(ASRSpeechEvaluator):
