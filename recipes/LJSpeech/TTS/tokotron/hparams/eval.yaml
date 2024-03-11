@@ -1,9 +1,13 @@
 eval_mos_source: flexthink/ttseval-wavlm-transformer
-eval_asr_source: speechbrain/asr-transformer-transformerlm-librispeech
 eval_dataset: valid
 eval_suffix: ""
 eval_sample_rate: 16000
 eval_asr_type: encoder_decoder
+eval_asr_source: !apply:speechbrain.utils.hparams.choice
+  value: !ref <eval_asr_type>
+  choices:
+    encoder_decoder: speechbrain/asr-transformer-transformerlm-librispeech
+    whisper: openai/whisper-small
 evaluations: mos,asr
 output_folder: !PLACEHOLDER
 utmos_batch_size: 8
