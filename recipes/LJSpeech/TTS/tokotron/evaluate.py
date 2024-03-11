@@ -152,7 +152,7 @@ class TokotronEvaluator:
             evaluator = self.bulk_evaluators[evaluator_key]
             sb.dataio.dataio.write_audio(
                 str(bogus_file_name),
-                bogus_wavs[0],
+                bogus_wavs[0].cpu(),
                 samplerate=self.hparams.model_sample_rate,
             )
             result = evaluator.evaluate_files(
