@@ -422,7 +422,7 @@ if __name__ == "__main__":
             eval_hparams_file
         )
         eval_hparams = load_hyperpyyaml(
-            eval_hparams_file, eval_overrides, overrides_must_match=False
+            eval_hparams_file, overrides, overrides_must_match=False
         )
         hparams.update(eval_hparams)
     else:
