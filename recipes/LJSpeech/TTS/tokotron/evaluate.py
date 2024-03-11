@@ -270,7 +270,7 @@ class TokotronEvaluator:
         """Outputs summarized statistics"""
         summary = self.compute_summary()
         file_name = self.output_folder / "summary.json"
-        with open(file_name, "w") as output_file:
+        with open(file_name, "wb") as output_file:
             json.dump(summary, output_file, indent=4)
 
     def write_attn(self):
