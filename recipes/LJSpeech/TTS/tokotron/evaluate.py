@@ -238,7 +238,9 @@ class TokotronEvaluator:
                 "uttid": uttid,
                 **details_item,
             }
-            writer.writerow(flatten(report_details))
+            writer.writerow(
+                ascii_only(flatten(report_details))
+            )
         self.report_files[evaluator_key].flush()
 
     def save_samples(self, batch, wav, length):
@@ -270,7 +272,7 @@ class TokotronEvaluator:
         """Outputs summarized statistics"""
         summary = self.compute_summary()
         file_name = self.output_folder / "summary.json"
-        with open(file_name, "wb") as output_file:
+        with open(file_name, "w") as output_file:
             json.dump(summary, output_file, indent=4)
 
     def write_attn(self):
@@ -329,6 +331,18 @@ RE_PUNCTUATION = re.compile(
         re.escape(char) for char in string.punctuation
     )
 )
+
+RE_NON_ASCII = re.compile(r'[^\x00-\x7F]+')
+
+
+def ascii_only(values):
+    return {
+        key: RE_NON_ASCII.sub('', value) if isinstance(value, str)
+        else value
+        for key, value in values.items()
+    }
+
+
 
 
 @sb.utils.data_pipeline.takes("label_norm")
