@@ -602,18 +602,21 @@ class UTMOSSpeechEvaluator(BulkSpeechEvaluator):
         model_path,
         output_folder,
         ckpt_path,
+        script="predict.py",
         python="python",
+        use_python=True,
         batch_size=8
     ):
         self.output_folder = Path(output_folder)
         rand = torch.randint(1, 999999999, (1,)).item()
         self.eval_path = (self.output_folder / f"eval_{rand}").absolute()
         self.model_path = Path(model_path).absolute()
-        script = self.model_path / "predict.py"
+        script = self.model_path / script
         self.script = script
         self.ckpt_path = Path(ckpt_path).absolute()
         self.batch_size = batch_size
         self.python = python
+        self.use_python = use_python
 
     def evaluate_files(self, file_names, text, file_names_ref=None):
         current_path = os.getcwd()
@@ -627,22 +630,23 @@ class UTMOSSpeechEvaluator(BulkSpeechEvaluator):
             logger.info("Running evaluation")
             result_path = self.eval_path / "result.txt"
             os.chdir(self.model_path)
-            output = subprocess.check_output(
-                [
-                    self.python,
-                    str(self.script),
-                    "--mode",
-                    "predict_dir",
-                    "--bs",
-                    str(self.batch_size),
-                    "--inp_dir",
-                    str(self.eval_path),
-                    "--out_path",
-                    result_path,
-                    "--ckpt_path",
-                    str(self.ckpt_path),
-                ]
-            )
+            cmd = [
+                str(self.script),
+                "--mode",
+                "predict_dir",
+                "--bs",
+                str(self.batch_size),
+                "--inp_dir",
+                str(self.eval_path),
+                "--out_path",
+                result_path,
+                "--ckpt_path",
+                str(self.ckpt_path),
+            ]
+            if self.use_python:
+                cmd = [self.python] + cmd   
+
+            output = subprocess.check_output(cmd)
             logger.info("Evaluation finished, output: %s", output)
             file_names = [path.name for path in self.eval_path.glob("*.wav")]
             with open(result_path) as result_path:
