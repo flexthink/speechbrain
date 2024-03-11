@@ -421,7 +421,6 @@ if __name__ == "__main__":
             "Using evaluation hyperparameters from %s",
             eval_hparams_file
         )
-        eval_overrides = f"{overrides}\noutput_folder: {hparams['output_folder']}"
         eval_hparams = load_hyperpyyaml(
             eval_hparams_file, eval_overrides, overrides_must_match=False
         )
