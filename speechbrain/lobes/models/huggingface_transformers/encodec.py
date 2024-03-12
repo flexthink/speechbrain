@@ -27,6 +27,8 @@ DEFAULT_SAMPLE_RATE = 24000
 
 logger = logging.getLogger(__name__)
 
+BANDWIDTH_INCREMENT = 0.75
+
 
 class Encodec(HFTransformersInterface):
     """An wrapper for the HuggingFace encodec model
@@ -43,6 +45,8 @@ class Encodec(HFTransformersInterface):
         The encoding bandwidth, in kbps (optional)
         Supported bandwidths:
         1.5, 3.0, 6.0, 12.0, 24.0
+    num_heads : int
+        The number of tokens per step - another way to define the bandwidth
     flat_embeddings : bool
         If set to True, embeddings will be flattened into
         (Batch x Length x (Heads * Embedding))
@@ -86,6 +90,7 @@ class Encodec(HFTransformersInterface):
         save_path=None,
         sample_rate=None,
         bandwidth=1.5,
+        num_heads=None,
         flat_embeddings=False,
         freeze=True,
         renorm_embeddings=True,
@@ -94,11 +99,15 @@ class Encodec(HFTransformersInterface):
         if not sample_rate:
             sample_rate = DEFAULT_SAMPLE_RATE
         self.sample_rate = sample_rate
-        self.bandwidth = bandwidth
         self.flat_embeddings = flat_embeddings
-        self.num_heads = self.model.quantizer.get_num_quantizers_for_bandwidth(
-            bandwidth
-        )
+        if num_heads is None:
+            self.bandwidth = bandwidth
+            self.num_heads = self.model.quantizer.get_num_quantizers_for_bandwidth(
+                bandwidth
+            )
+        else:
+            self.num_heads = num_heads
+            self.bandwidth = num_heads * BANDWIDTH_INCREMENT
         self.num_tokens = self.model.config.codebook_size
         quantizer_layers = self.model.quantizer.layers[: self.num_heads]
         vocabulary = torch.stack(
