@@ -136,6 +136,12 @@ class TokotronTransformerDecoder(nn.Module):
         the type of representations to be used (discrete or continuous)
     audio_dim : int, optional
         The continuous audio inout dimension
+    audio_clip_min : int
+        The minimum value for audio representations from the base model. Used for
+        continuous representations only
+    audio_clip_max : int
+        The maximum value for audio representations from the base model. Used for
+        continuous representations only        
     """
 
     def __init__(
@@ -162,6 +168,8 @@ class TokotronTransformerDecoder(nn.Module):
         show_inference_progress=True,
         representation_mode=RepresentationMode.DISCRETE,
         audio_dim=512,
+        audio_clip_min=-10.0,
+        audio_clip_max=10.0,
     ):
         super().__init__()
         self.num_tokens = num_tokens
@@ -224,6 +232,8 @@ class TokotronTransformerDecoder(nn.Module):
         if self.audio_emb_freeze:
             for parameter in self.audio_emb.parameters():
                 parameter.requires_grad_(False)
+        self.audio_clip_min = audio_clip_min
+        self.audio_clip_max = audio_clip_max
 
     def forward(
         self,
@@ -265,7 +275,8 @@ class TokotronTransformerDecoder(nn.Module):
             tgt_key_padding_mask = length_to_mask(
                 tgt_length * tgt_max_len, tgt_max_len
             ).logical_not()
-
+        if self.representation_mode == RepresentationMode.CONTINUOUS:
+            tgt = tgt.clip(min=self.audio_clip_min, max=self.audio_clip_max)
         if self.tgt_norm is not None:
             tgt = self.tgt_norm(tgt, tgt_length)
 
@@ -506,6 +517,16 @@ class TokotronTransformerModel(nn.Module):
         The vocoder module
     compression_model : nn.Module
         The token compression model to be used
+    representation_mode : RepresentationMode | str, optional
+        the type of representations to be used (discrete or continuous)
+    audio_dim : int, optional
+        The continuous audio inout dimension
+    audio_clip_min : int
+        The minimum value for audio representations from the base model. Used for
+        continuous representations only
+    audio_clip_max : int
+        The maximum value for audio representations from the base model. Used for
+        continuous representations only
     """
 
     def __init__(
@@ -535,6 +556,8 @@ class TokotronTransformerModel(nn.Module):
         compression_model=None,
         representation_mode=RepresentationMode.DISCRETE,
         audio_dim=512,
+        audio_clip_min=-10.0,
+        audio_clip_max=10.0
     ):
         super().__init__()
         self.in_emb = Embedding(
@@ -571,7 +594,9 @@ class TokotronTransformerModel(nn.Module):
             gate_offset=gate_offset,
             show_inference_progress=show_inference_progress,
             representation_mode=representation_mode,
-            audio_dim=audio_dim
+            audio_dim=audio_dim,
+            audio_clip_min=audio_clip_min,
+            audio_clip_max=audio_clip_max,
         )
         self.bos_idx = bos_idx
         self.vocoder = vocoder
@@ -1637,6 +1662,14 @@ class TokotronLoss(nn.Module):
 
     representation_mode : RepresentationMode
         the type of representations being used (discrete or continuous)
+
+    audio_clip_min : int
+        The minimum value for audio representations from the base model. Used for
+        continuous representations only
+    audio_clip_max : int
+        The maximum value for audio representations from the base model. Used for
+        continuous representations only
+
     """
 
     def __init__(
@@ -1650,6 +1683,8 @@ class TokotronLoss(nn.Module):
         silence_padding=0,
         seq_cost=None,
         representation_mode=RepresentationMode.DISCRETE,
+        audio_clip_min=-10.0,
+        audio_clip_max=10.0,
     ):
         super().__init__()
         self.guided_attention_weight = guided_attention_weight
@@ -1667,6 +1702,8 @@ class TokotronLoss(nn.Module):
             )
         self.seq_cost = seq_cost
         self.attn_cost = GuidedAttentionLoss(sigma=guided_attention_sigma,)
+        self.audio_clip_min = audio_clip_min
+        self.audio_clip_max = audio_clip_max
 
     def forward(
         self,
@@ -1692,6 +1729,10 @@ class TokotronLoss(nn.Module):
             audio_dim = audio.size(-1)
             audio_reshaped = audio.transpose(1, 2).reshape(
                 batch_size * heads, tok_len, audio_dim
+            )
+            audio_reshaped = audio_reshaped.clip(
+                min=self.audio_clip_min,
+                max=self.audio_clip_max,
             )
         audio_reshaped = audio_reshaped[:, :max_len]
         lengths_reshaped = (

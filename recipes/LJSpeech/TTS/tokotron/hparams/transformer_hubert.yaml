@@ -178,6 +178,8 @@ audio_dim: 1024
 audio_emb_size: 128
 audio_emb_freeze: True
 audio_emb_pretrained: False
+audio_clip_min: -10.0
+audio_clip_max: 10.0
 text_num_tokens: 39
 phn_num_tokens: 52
 input_num_tokens: !apply:speechbrain.utils.hparams.choice
@@ -238,6 +240,8 @@ model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel 
     infer_max_audio_length: !ref <infer_max_audio_length>
     representation_mode: !ref <representation_mode>
     audio_dim: !ref <audio_dim>
+    audio_clip_min: !ref <audio_clip_min>
+    audio_clip_max: !ref <audio_clip_max>
 
 
 modules:
@@ -258,6 +262,8 @@ compute_cost: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronLoss
     gate_max_weight: !ref <gate_loss_max_weight>
     silence_padding: !ref <silence_padding>
     representation_mode: !ref <representation_mode>
+    audio_clip_min: !ref <audio_clip_min>
+    audio_clip_max: !ref <audio_clip_max>
 
 lr_annealing: !new:speechbrain.nnet.schedulers.NoamScheduler
     lr_initial: !ref <lr>
