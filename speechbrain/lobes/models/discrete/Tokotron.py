@@ -28,6 +28,7 @@ from speechbrain.nnet.losses import kldiv_loss, mse_loss, distance_diff_loss
 from speechbrain.nnet.loss.guidedattn_loss import GuidedAttentionLoss
 from speechbrain.nnet.embedding import MultiEmbedding
 from speechbrain.nnet.normalization import BatchNorm1d
+from speechbrain.processing.features import GlobalNorm
 from speechbrain.dataio.dataio import length_to_mask
 from collections import namedtuple
 from tqdm.auto import tqdm
@@ -218,6 +219,8 @@ class TokotronTransformerDecoder(nn.Module):
         self.gate_threshold = gate_threshold
         self.gate_offset = gate_offset
         self.show_inference_progress = show_inference_progress
+        if self.representation_mode == RepresentationMode.CONTINUOUS:
+            self.tgt_norm = GlobalNorm()
         if self.audio_emb_freeze:
             for parameter in self.audio_emb.parameters():
                 parameter.requires_grad_(False)
@@ -263,6 +266,9 @@ class TokotronTransformerDecoder(nn.Module):
                 tgt_length * tgt_max_len, tgt_max_len
             ).logical_not()
 
+        if self.tgt_norm is not None:
+            tgt = self.tgt_norm(tgt, tgt_length)
+
         audio_emb = self.audio_emb(tgt)
 
         batch_size, audio_max_len, heads, audio_dim = audio_emb.shape
@@ -290,6 +296,8 @@ class TokotronTransformerDecoder(nn.Module):
         )
 
         lin_out = self.out_proj(dec_out)
+        if self.tgt_norm is not None:
+            lin_out = self.tgt_norm.denormalize(lin_out)
         batch_size, audio_max_len, _ = lin_out.shape
         lin_out_heads = lin_out.reshape(
             batch_size, audio_max_len, self.tokens_per_step, self.out_dim,
@@ -1642,7 +1650,6 @@ class TokotronLoss(nn.Module):
         silence_padding=0,
         seq_cost=None,
         representation_mode=RepresentationMode.DISCRETE,
-        audio_dim=512,
     ):
         super().__init__()
         self.guided_attention_weight = guided_attention_weight
@@ -1654,18 +1661,12 @@ class TokotronLoss(nn.Module):
         self.representation_mode = RepresentationMode(representation_mode)
         if seq_cost is None:
             seq_cost = (
-                kldiv_loss 
+                kldiv_loss
                 if self.representation_mode == RepresentationMode.DISCRETE
                 else mse_loss
             )
         self.seq_cost = seq_cost
         self.attn_cost = GuidedAttentionLoss(sigma=guided_attention_sigma,)
-        if representation_mode == RepresentationMode.DISCRETE:
-            self.norm = nn.Identity()
-        else:
-            self.norm = BatchNorm1d(
-                input_size=audio_dim
-            )
 
     def forward(
         self,
@@ -1699,11 +1700,9 @@ class TokotronLoss(nn.Module):
             .expand(batch_size, heads)
             .reshape(batch_size * heads)
         )
-        p_seq_norm = self.norm(p_seq_reshaped)
-        audio_norm = self.norm(audio_reshaped)
         seq_loss = self.seq_cost(
-            p_seq_norm,
-            audio_norm,
+            p_seq_reshaped,
+            audio_reshaped,
             length=lengths_reshaped,
             reduction=reduction,
         )

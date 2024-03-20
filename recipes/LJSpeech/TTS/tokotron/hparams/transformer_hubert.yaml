@@ -258,7 +258,6 @@ compute_cost: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronLoss
     gate_max_weight: !ref <gate_loss_max_weight>
     silence_padding: !ref <silence_padding>
     representation_mode: !ref <representation_mode>
-    audio_dim: !ref <audio_dim>
 
 lr_annealing: !new:speechbrain.nnet.schedulers.NoamScheduler
     lr_initial: !ref <lr>
