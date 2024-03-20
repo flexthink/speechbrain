@@ -74,6 +74,12 @@ class TokotronEvaluator:
             logger.warn("No evaluators were defined - this run will produce samples only")
 
         self.attention = []
+        self.compression = getattr(self.hparams, "compression", False)
+        if self.compression:
+            self.compression_model = self.hparams.compression_model(
+                run_opts={"device": self.device}
+            )
+            self.modules.model.compression_model = self.compression_model
 
     def evaluate(self, dataset):
         """Runs evaluation on a dataset
