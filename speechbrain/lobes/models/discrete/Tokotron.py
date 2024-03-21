@@ -142,6 +142,8 @@ class TokotronTransformerDecoder(nn.Module):
     audio_clip_max : int
         The maximum value for audio representations from the base model. Used for
         continuous representations only        
+    use_tgt_norm : bool
+        Whether or not targets should be normalized
     """
 
     def __init__(
@@ -170,6 +172,7 @@ class TokotronTransformerDecoder(nn.Module):
         audio_dim=512,
         audio_clip_min=-10.0,
         audio_clip_max=10.0,
+        use_tgt_norm=False
     ):
         super().__init__()
         self.num_tokens = num_tokens
@@ -227,8 +230,11 @@ class TokotronTransformerDecoder(nn.Module):
         self.gate_threshold = gate_threshold
         self.gate_offset = gate_offset
         self.show_inference_progress = show_inference_progress
-        if self.representation_mode == RepresentationMode.CONTINUOUS:
+        self.use_tgt_norm = use_tgt_norm
+        if self.representation_mode == RepresentationMode.CONTINUOUS and self.use_tgt_norm:
             self.tgt_norm = GlobalNorm()
+        else:
+            self.tgt_norm = None
         if self.audio_emb_freeze:
             for parameter in self.audio_emb.parameters():
                 parameter.requires_grad_(False)
@@ -527,6 +533,8 @@ class TokotronTransformerModel(nn.Module):
     audio_clip_max : int
         The maximum value for audio representations from the base model. Used for
         continuous representations only
+    use_tgt_norm : bool
+        Whether or not targets should be normalized
     """
 
     def __init__(
@@ -557,7 +565,8 @@ class TokotronTransformerModel(nn.Module):
         representation_mode=RepresentationMode.DISCRETE,
         audio_dim=512,
         audio_clip_min=-10.0,
-        audio_clip_max=10.0
+        audio_clip_max=10.0,
+        use_tgt_norm=False,
     ):
         super().__init__()
         self.in_emb = Embedding(
@@ -597,6 +606,7 @@ class TokotronTransformerModel(nn.Module):
             audio_dim=audio_dim,
             audio_clip_min=audio_clip_min,
             audio_clip_max=audio_clip_max,
+            use_tgt_norm=use_tgt_norm,
         )
         self.bos_idx = bos_idx
         self.vocoder = vocoder

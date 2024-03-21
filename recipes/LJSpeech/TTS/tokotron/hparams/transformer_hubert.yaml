@@ -180,6 +180,7 @@ audio_emb_freeze: True
 audio_emb_pretrained: False
 audio_clip_min: -10.0
 audio_clip_max: 10.0
+use_tgt_norm: False
 text_num_tokens: 39
 phn_num_tokens: 52
 input_num_tokens: !apply:speechbrain.utils.hparams.choice
@@ -242,6 +243,7 @@ model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel 
     audio_dim: !ref <audio_dim>
     audio_clip_min: !ref <audio_clip_min>
     audio_clip_max: !ref <audio_clip_max>
+    use_tgt_norm: !ref <use_tgt_norm>
 
 
 modules:
