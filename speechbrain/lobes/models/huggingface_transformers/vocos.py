@@ -37,6 +37,8 @@ except ImportError:
 
 DEFAULT_SAMPLE_RATE = 24000
 BANDWIDTHS = [1.5, 3.0, 6.0, 12.0]
+DEFAULT_BANDWIDTH = 1.5
+BANDWIDTH_INCREMENT = 0.75
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,9 @@ class Vocos(nn.Module):
         The bandwidth value
         Supported:
         1.5, 3.0, 6.0, 12.0
+    num_heads : int
+        The number of tokens per step, an alternative way to specify
+        a bandwidth
     freeze : bool
         Whether or not parameters should be
         frozen
@@ -75,7 +80,13 @@ class Vocos(nn.Module):
     """
 
     def __init__(
-        self, source, save_path, revision=None, bandwidth=1.5, freeze=True,
+        self,
+        source,
+        save_path,
+        revision=None,
+        bandwidth=None,
+        num_heads=None,
+        freeze=True,
     ):
         super().__init__()
         self.source = source
@@ -83,9 +94,12 @@ class Vocos(nn.Module):
         self.revision = revision
         self.model = self._load_model()
         self.freeze = freeze
-        self.bandwidth = bandwidth
+        if num_heads is None:
+            self.bandwidth = bandwidth or DEFAULT_BANDWIDTH
+        else:
+            self.bandwidth = num_heads * BANDWIDTH_INCREMENT
         self.bandwidth_id = (
-            (torch.tensor(BANDWIDTHS) - bandwidth).abs().argmin().item()
+            (torch.tensor(BANDWIDTHS) - self.bandwidth).abs().argmin().item()
         )
         if self.freeze:
             logger.warning("huggingface_Vocos - Vocos is frozen.")

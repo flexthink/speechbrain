@@ -103,6 +103,7 @@ compression_model_src: flexthink/tokensquish-baseline
 token_model: !new:speechbrain.lobes.models.huggingface_transformers.Encodec
     source: !ref <token_model_src>
     save_path: !ref <pretrained_model_save_folder>
+    num_heads: !ref <audio_tokens_per_step>
     flat_embeddings: True
 
 # Dataloader options
@@ -175,6 +176,7 @@ compression_model: !name:speechbrain.inference.compression.TokenSquish.from_hpar
 vocoder: !new:speechbrain.lobes.models.huggingface_transformers.vocos.Vocos
     source: !ref <vocoder_src>
     save_path: !ref <pretrained_model_save_folder>
+    num_heads: !ref <audio_tokens_per_step>
 
 model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel # yamllint disable-line rule:line-length
     input_num_tokens: !ref <input_num_tokens>
