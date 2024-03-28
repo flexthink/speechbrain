@@ -20,6 +20,7 @@ import torch
 import sys
 from pathlib import Path
 from hyperpyyaml import load_hyperpyyaml
+from speechbrain.lobes.models.discrete.Tokotron import EosMode
 from speechbrain.dataio.dataset import FilteredSortedDynamicItemDataset
 from speechbrain.utils.distributed import run_on_main
 from speechbrain.dataio.preparation import add_prepared_features
@@ -321,6 +322,7 @@ def dataio_prepare(hparams):
     silence_token = silence_token.cpu()
     silence_padding_len = int(math.ceil(hparams["silence_padding"]))
     bos_width = hparams.get("bos_width", 1)
+    eos_width = hparams.get("eos_width", 1)
     audio_bos = (
         torch.ones(bos_width, hparams["audio_tokens_per_step"]) * hparams["bos_index"]
     )

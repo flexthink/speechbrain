@@ -64,6 +64,8 @@ overfit_test_epoch_data_count: 1000
 pad_index: 0
 bos_index: 0
 bos_width: 1
+eos_index: 0
+eos_width: 1
 
 # stages related parameters
 lr: 0.001
@@ -76,6 +78,16 @@ gate_threshold: 0.5
 gate_loss_beta: 0.2
 gate_loss_gamma: 0.01
 gate_loss_max_weight: 1.
+
+# Inference parameters
+inference_mode: autoregressive
+eos_mode: token
+
+# Beam Search-specific parameters
+min_decode_ratio: 1.0
+max_decode_ratio: 10.0
+beam_size: 5
+
 
 # Feature parameters
 sample_rate: 22050
@@ -200,6 +212,20 @@ vocoder: !new:speechbrain.inference.vocoders.HierarchicalUnitWrapper
   num_units: !ref <audio_num_tokens>
   offset: !ref <token_offset>
 
+inference_search: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronSearchInference
+  bos_index: !ref <bos_index>
+  eos_index: !ref <eos_index>
+  min_decode_ratio: !ref <min_decode_ratio>
+  max_decode_ratio: !ref <max_decode_ratio>
+  beam_size: !ref <beam_size>
+  using_eos_threshold: False
+  length_normalization: True
+
+inference: !apply:speechbrain.utils.hparams.choice
+  value: !ref <inference_mode>
+  choices:
+    search: !ref <inference_search>
+    
 model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel # yamllint disable-line rule:line-length
     input_num_tokens: !ref <input_num_tokens>
     audio_num_tokens: !ref <audio_num_tokens>
@@ -219,8 +245,9 @@ model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel 
     audio_emb_size: !ref <audio_emb_size>
     audio_emb_freeze: !ref <audio_emb_freeze>
     max_audio_length: !ref <max_audio_length>
+    inference: !ref <inference>
+    eos_mode: !ref <eos_mode>
     infer_max_audio_length: !ref <infer_max_audio_length>
-
 
 modules:
     model: !ref <model>
@@ -238,6 +265,10 @@ compute_cost: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronLoss
     gate_gamma: !ref <gate_loss_gamma>
     gate_max_weight: !ref <gate_loss_max_weight>
     silence_padding: !ref <silence_padding>
+    eos_mode: !ref <eos_mode>
+    eos_index: !ref <eos_index>
+    eos_width: !ref <eos_width>
+    audio_tokens_per_step: !ref <audio_tokens_per_step>
 
 lr_annealing: !new:speechbrain.nnet.schedulers.NoamScheduler
     lr_initial: !ref <lr>
