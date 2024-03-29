@@ -176,12 +176,12 @@ class TokotronTransformerDecoder(nn.Module):
             input_size=audio_emb_size * tokens_per_step, n_neurons=d_model,
         )
         self.out_proj = Linear(
-            input_size=d_model, n_neurons=num_tokens * tokens_per_step,
+            input_size=d_model, n_neurons=(num_tokens + audio_token_shift) * tokens_per_step,
         )
         self.gate = Linear(input_size=d_model, n_neurons=1)
         if audio_emb is None:
             audio_emb = MultiEmbedding(
-                num_embeddings=num_tokens,
+                num_embeddings=num_tokens + audio_token_shift,
                 embedding_dim=audio_emb_size,
                 num_heads=tokens_per_step,
                 normalized=True,
@@ -292,9 +292,9 @@ class TokotronTransformerDecoder(nn.Module):
             enc_out, tgt, src_length, src_key_padding_mask, tgt_length, tgt_key_padding_mask, pos_embs_src
         )
         lin_out = self.out_proj(dec_out)
-        batch_size, audio_max_len, _ = lin_out.shape
+        batch_size, audio_max_len, num_tokens = lin_out.shape
         lin_out_heads = lin_out.reshape(
-            batch_size, audio_max_len, self.tokens_per_step, self.num_tokens,
+            batch_size, audio_max_len, self.tokens_per_step, num_tokens // self.tokens_per_step,
         )
         gate_out = self.gate(dec_out).squeeze(-1)
         return TokotronDecoderOutput(
@@ -636,7 +636,7 @@ class TokotronSearchInference(nn.Module):
                     decoder.out_proj, self.tokens_per_step
                 )
             ],
-            num_tokens=decoder.num_tokens,
+            num_tokens=decoder.num_tokens + self.audio_token_shift,
             **self.search_kwargs
         )
 
