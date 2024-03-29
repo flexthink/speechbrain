@@ -698,7 +698,7 @@ class TokotronSearchInference(nn.Module):
             length = (
                 length.reshape(self.tokens_per_step, batch_size)
                 .min(dim=0)
-            )
+            ).values
             audio_tokens = audio_tokens - self.audio_token_shift
 
             return TokotronDecoderInfernceOutput(
