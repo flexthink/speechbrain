@@ -797,7 +797,7 @@ class TokotronForwardInference(nn.Module):
                 dec_self_attn=dec_out.dec_self_attn,
                 dec_attn=dec_out.dec_attn,
                 alignments=get_alignments(dec_out.dec_attn),
-                p_eos=None,
+                p_eos=gate_act,
             )
 
 
