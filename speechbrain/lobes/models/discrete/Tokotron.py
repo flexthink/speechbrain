@@ -155,6 +155,7 @@ class TokotronTransformerDecoder(nn.Module):
         max_decoder_steps=1000,
         infer_max_decoder_steps=None,
         bos_idx=0,
+        bos_width=1,
         gate_threshold=0.5,
         gate_offset=0,
         show_inference_progress=True,
@@ -202,6 +203,7 @@ class TokotronTransformerDecoder(nn.Module):
         self.use_tgt_padding_mask = use_tgt_padding_mask
         self.audio_emb_freeze = audio_emb_freeze
         self.bos_idx = bos_idx
+        self.bos_width = bos_width
         self.gate_threshold = gate_threshold
         self.gate_offset = gate_offset
         self.show_inference_progress = show_inference_progress
@@ -236,7 +238,7 @@ class TokotronTransformerDecoder(nn.Module):
                 tgt_length * tgt_max_len, tgt_max_len
             ).logical_not()
 
-        audio_emb = self.audio_emb(tgt + self.audio_token_shift)
+        audio_emb = self.audio_emb(tgt)
 
         batch_size, audio_max_len, heads, audio_dim = audio_emb.shape
         audio_emb_combined = audio_emb.reshape(
@@ -288,8 +290,16 @@ class TokotronTransformerDecoder(nn.Module):
         pos_embs_src : dict
             Source positional embeddings
         """
+        tgt_shift = torch.zeros((1, tgt.size(1), 1), device=tgt.device)
+        tgt_shift[:, self.bos_width:, :] += self.audio_token_shift
         dec_out, dec_self_attn, dec_attn = self.decode(
-            enc_out, tgt, src_length, src_key_padding_mask, tgt_length, tgt_key_padding_mask, pos_embs_src
+            enc_out,
+            tgt + tgt_shift,
+            src_length,
+            src_key_padding_mask,
+            tgt_length,
+            tgt_key_padding_mask,
+            pos_embs_src
         )
         lin_out = self.out_proj(dec_out)
         batch_size, audio_max_len, num_tokens = lin_out.shape
