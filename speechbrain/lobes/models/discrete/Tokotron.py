@@ -89,6 +89,11 @@ class EosMode(Enum):
     TOKEN = "token"
 
 
+class DecoderMode(Enum):
+    AUTOREGRESSIVE = "autoregressive"
+    FORWARD = "forward"
+
+
 class TokotronTransformerDecoder(nn.Module):
     """The Tokotron decoder - can be used in a standalone model or as
     a component of a larger model
@@ -159,7 +164,8 @@ class TokotronTransformerDecoder(nn.Module):
         gate_threshold=0.5,
         gate_offset=0,
         show_inference_progress=True,
-        audio_token_shift=0
+        audio_token_shift=0,
+        multihead_input=True
     ):
         super().__init__()
         self.num_tokens = num_tokens
@@ -173,8 +179,11 @@ class TokotronTransformerDecoder(nn.Module):
             activation=activation,
             dropout=dropout,
         )
+        in_proj_size = audio_emb_size
+        if multihead_input:
+            in_proj_size *= tokens_per_step
         self.tgt_in_proj = Linear(
-            input_size=audio_emb_size * tokens_per_step, n_neurons=d_model,
+            input_size=in_proj_size, n_neurons=d_model,
         )
         self.out_proj = Linear(
             input_size=d_model, n_neurons=(num_tokens + audio_token_shift) * tokens_per_step,
@@ -211,6 +220,7 @@ class TokotronTransformerDecoder(nn.Module):
             for parameter in self.audio_emb.parameters():
                 parameter.requires_grad_(False)
         self.audio_token_shift = audio_token_shift
+        self.multihead_input = multihead_input
 
     def decode(
         self,
@@ -239,11 +249,13 @@ class TokotronTransformerDecoder(nn.Module):
             ).logical_not()
 
         audio_emb = self.audio_emb(tgt)
-
-        batch_size, audio_max_len, heads, audio_dim = audio_emb.shape
-        audio_emb_combined = audio_emb.reshape(
-            batch_size, audio_max_len, heads * audio_dim
-        )
+        if self.multihead_input:
+            batch_size, audio_max_len, heads, audio_dim = audio_emb.shape
+            audio_emb_combined = audio_emb.reshape(
+                batch_size, audio_max_len, heads * audio_dim
+            )
+        else:
+            audio_emb_combined = audio_emb
         tgt = self.tgt_in_proj(audio_emb_combined)
         tgt = F.dropout(tgt, self.target_dropout, training=self.training)
 
@@ -711,6 +723,84 @@ class TokotronSearchInference(nn.Module):
             )
 
 
+class TokotronForwardInference(nn.Module):
+    """A beam search-based inference implementation
+
+    All keyword arguments will be passed on to the underlying
+    beam search
+
+    Arguments
+    ---------
+    scale_factor : float
+        The scaling factor for encoder representations
+    gate_threshold : float
+        The threshold for gate activation
+    min_length : int
+        The minimum length for generating sequences, in tokens
+    """
+    def __init__(self, scale_factor=5.0, gate_threshold=0.5, min_length=16):
+        super().__init__()
+        self.scale_factor = scale_factor
+        self.gate_threshold = gate_threshold
+        self.min_length = min_length
+        self.decoder = None
+        self.gate = None
+
+    def bind(self, model=None):
+        """Binds this inference implementation to a model
+
+        Arguments
+        ---------
+        model : TokotronTransformerModel
+            The transformer model
+        """
+        self.decoder = model.decoder
+
+    def decode(self, enc_out, length):
+        """"Decodes the encoder representation using Beam Search
+
+        Arguments
+        ---------
+        enc_out : torch.Tensor
+            Encoder output
+        length : torch.Tensor
+            Encoder output lengths
+        
+        Returns
+        -------
+        output : TokotronDecoderInfernceOutput
+            The inference output
+        """
+        with torch.no_grad():
+            max_len = enc_out.size(1)
+            src_key_padding_mask = length_to_mask(
+                length * max_len, max_len,
+            ).logical_not()
+            tgt = scale(enc_out, self.scale_factor)
+            dec_out = self.decoder(
+                enc_out=enc_out,
+                tgt=tgt,
+                tgt_length=length,
+                src_length=length,
+                src_key_padding_mask=src_key_padding_mask,
+                pos_embs_src=None,
+            )
+            gate_act = dec_out.gate_out.sigmoid() > self.gate_threshold
+            infer_length_abs = gate_act.max(dim=1).indices.clip(
+                min=self.min_length)
+            infer_length_max = infer_length_abs.max()
+            audio_tokens = dec_out.out[:, :infer_length_max].argmax(-1)
+            infer_length = infer_length_abs / infer_length_max
+            return TokotronDecoderInfernceOutput(
+                audio_tokens=audio_tokens,
+                length=infer_length,
+                dec_self_attn=dec_out.dec_self_attn,
+                dec_attn=dec_out.dec_attn,
+                alignments=get_alignments(dec_out.dec_attn),
+                p_eos=None,
+            )
+
+
 class TokotronTransformerModel(nn.Module):
     """An end-to-end Tokotron model receiving characters or phonemes
     as inputs and outputting audio tokens
@@ -775,7 +865,11 @@ class TokotronTransformerModel(nn.Module):
     audio_token_shift : int, optional
         The number by which token indices will be shifted (used to introduce
         additional tokens)
-
+    decoder_mode : DecoderMode | str, optional
+        The decoding mode (autoregressive or forward)
+    scale_factor : float, optional
+        forward decoding only - the scaling factor for
+        targets in non-autoregressive inference
     """
 
     def __init__(
@@ -806,6 +900,8 @@ class TokotronTransformerModel(nn.Module):
         eos_mode=EosMode.GATE,
         inference=None,
         audio_token_shift=0,
+        decoder_mode=DecoderMode.AUTOREGRESSIVE,
+        scale_factor=5.0
     ):
         super().__init__()
         self.in_emb = Embedding(
@@ -825,6 +921,11 @@ class TokotronTransformerModel(nn.Module):
             activation=activation,
             normalize_before=True,
         )
+        self.decoder_mode = DecoderMode(decoder_mode)
+        audio_emb = None
+        if self.decoder_mode == DecoderMode.FORWARD:
+            audio_emb = nn.Identity()
+            audio_emb_size = d_model
         self.decoder = TokotronTransformerDecoder(
             num_tokens=audio_num_tokens + self.audio_token_shift,
             tokens_per_step=audio_tokens_per_step,
@@ -837,6 +938,7 @@ class TokotronTransformerModel(nn.Module):
             dropout=dropout,
             target_dropout=target_dropout,
             use_tgt_padding_mask=use_tgt_padding_mask,
+            audio_emb=audio_emb,
             audio_emb_size=audio_emb_size,
             audio_emb_freeze=audio_emb_freeze,
             max_decoder_steps=max_audio_length,
@@ -846,6 +948,7 @@ class TokotronTransformerModel(nn.Module):
             gate_offset=gate_offset,
             show_inference_progress=show_inference_progress,
             audio_token_shift=audio_token_shift,
+            multihead_input=self.decoder_mode == DecoderMode.AUTOREGRESSIVE
         )
         self.bos_idx = bos_idx
         self.vocoder = vocoder
@@ -873,6 +976,7 @@ class TokotronTransformerModel(nn.Module):
             inference = inference()
         self.inference = inference
         self.inference.bind(self)
+        self.scale_factor = scale_factor
 
     def __setattr__(self, name, value):
         """Prevents the vocoder from being saved in state_dict() - it is not typically fine-tuned
@@ -962,10 +1066,17 @@ class TokotronTransformerModel(nn.Module):
             src_key_padding_mask=src_key_padding_mask,
             pos_embs=pos_embs_encoder,
         )
+        if self.decoder_mode == DecoderMode.AUTOREGRESSIVE:
+            tgt = audio_tokens
+            tgt_length = audio_length
+        else:
+            tgt = scale(enc_out, self.scale_factor)
+            tgt_length = input_length
+
         dec_out = self.decoder(
             enc_out=enc_out,
-            tgt=audio_tokens,
-            tgt_length=audio_length,
+            tgt=tgt,
+            tgt_length=tgt_length,
             src_length=input_length,
             src_key_padding_mask=src_key_padding_mask,
             pos_embs_src=pos_embs_encoder,
@@ -1513,6 +1624,7 @@ class TokotronRNNDecoder(nn.Module):
         bos_idx=0,
         gate_threshold=0.5,
         gate_offset=0,
+        multihead_input=True,
         show_inference_progress=True,
     ):
         super().__init__()
@@ -1993,7 +2105,7 @@ class TokotronLoss(nn.Module):
             .reshape(batch_size * heads)
         )
         seq_loss = self.seq_cost(
-            p_seq_reshaped,
+            p_seq_reshaped[:, :tok_len],
             audio_tokens_reshaped,
             length=lengths_reshaped,
             reduction=reduction,
@@ -2048,3 +2160,20 @@ def _filter_state_dict(state_dict):
             for ignored_key in IGNORE_IN_STATE_DICT
         )
     }
+
+
+def scale(seq, factor):
+    """Scales representations by a factor, in the time dimension only.
+    Used in non-autoregressive inference
+    
+    Arguments
+    ---------
+    seq : torch.Tensor
+        The sequence to be scaled
+    factor : torch.Tensor
+        The factor by which teh """
+    return F.interpolate(
+        seq.unsqueeze(1),
+        scale_factor=(factor, 1),
+        mode="nearest",
+    ).squeeze(1)

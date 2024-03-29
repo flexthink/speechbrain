@@ -66,7 +66,7 @@ bos_index: 0
 bos_width: 1
 eos_index: 0
 eos_width: 1
-audio_token_shift: 1
+audio_token_shift: 0
 
 # stages related parameters
 lr: 0.001
@@ -83,6 +83,8 @@ gate_loss_max_weight: 1.
 # Inference parameters
 inference_mode: autoregressive
 eos_mode: token
+decoder_mode: autoregressive
+scale_factor: 4
 
 # Beam Search-specific parameters
 min_decode_ratio: 1.0
@@ -223,10 +225,15 @@ inference_search: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronSearch
   length_normalization: True
   audio_token_shift: !ref <audio_token_shift>
 
+inference_forward: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronForwardInference
+  scale_factor: !ref <scale_factor>
+  gate_threshold: !ref <gate_threshold>
+
 inference: !apply:speechbrain.utils.hparams.choice
   value: !ref <inference_mode>
   choices:
     search: !ref <inference_search>
+    forward: !ref <inference_forward>
     
 model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel # yamllint disable-line rule:line-length
     input_num_tokens: !ref <input_num_tokens>
@@ -251,6 +258,8 @@ model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel 
     eos_mode: !ref <eos_mode>
     infer_max_audio_length: !ref <infer_max_audio_length>
     audio_token_shift: !ref <audio_token_shift>
+    decoder_mode: !ref <decoder_mode>
+    scale_factor: !ref <scale_factor>
 
 modules:
     model: !ref <model>
