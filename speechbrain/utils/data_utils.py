@@ -869,12 +869,12 @@ def concat_padded_features(
 
     out_shape = list(first_item.shape)
     out_shape[dim] = total_length
-    out = torch.zeros(out_shape).to(first_item.device)
+    out = torch.zeros(out_shape, dtype=first_item.dtype).to(first_item.device)
     for item, item_in_start, item_in_end, item_out_start, item_out_end in zip(
         feats, in_start, in_end, out_start, out_end
     ):
-        in_mask = _boundaries_to_mask(item, item_in_start, item_in_end, dim)
-        out_mask = _boundaries_to_mask(out, item_out_start, item_out_end, dim)
+        in_mask = _boundaries_to_mask(item, item_in_start, item_in_end, dim).bool()
+        out_mask = _boundaries_to_mask(out, item_out_start, item_out_end, dim).bool()
         out[out_mask] = item[in_mask]
 
     out_lens = out_end[-1, :].float() / total_length
@@ -964,7 +964,7 @@ def _lens_to_boundaries(
 
         start = effective_lengths_zpad.cumsum(dim=0)[:-1, :]
     else:
-        start = torch.zeros(*lengths.shape).to(lengths.device)
+        start = torch.zeros(*lengths.shape, dtype=torch.int).to(lengths.device)
     start += start_offset
     end = start + lengths - end_offset
     return start, end

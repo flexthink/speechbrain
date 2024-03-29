@@ -335,7 +335,7 @@ class TokotronTransformerAutoregressiveInference(nn.Module):
         the Beginning-of-Sequence index
     max_steps : int, optional
         The maximum number of decoder steps used during training
-    audio_token_shift : int
+    audio_token_shift : int, optional
         The number by which token indices will be shifted (used to introduce
         additional tokens)
     """
@@ -612,9 +612,10 @@ class TokotronSearchInference(nn.Module):
     All keyword arguments will be passed on to the underlying
     beam search
     """
-    def __init__(self, **kwargs):
+    def __init__(self, audio_token_shift=1, **kwargs):
         super().__init__()
         self.search_kwargs = kwargs
+        self.audio_token_shift = audio_token_shift
         self.decoder, self.search, self.tokens_per_step = None, None, None
 
     def bind(self, model=None):
@@ -680,7 +681,7 @@ class TokotronSearchInference(nn.Module):
             audio_tokens, length = tokens_batch.hyps
             _, audio_max_len = audio_tokens.shape
             audio_tokens = (
-                audio_tokens 
+                audio_tokens
                 .reshape(self.tokens_per_step, batch_size, audio_max_len)
                 .permute(1, 2, 0)
             )
@@ -688,6 +689,7 @@ class TokotronSearchInference(nn.Module):
                 length.reshape(self.tokens_per_step, batch_size)
                 .min(dim=0)
             )
+            audio_tokens = audio_tokens - self.audio_token_shift
 
             return TokotronDecoderInfernceOutput(
                 audio_tokens=audio_tokens,
@@ -760,6 +762,9 @@ class TokotronTransformerModel(nn.Module):
         the way the end of sequence is computed
     inference : TokotronInference, optional
         the inference method to be used
+    audio_token_shift : int, optional
+        The number by which token indices will be shifted (used to introduce
+        additional tokens)
 
     """
 
@@ -790,6 +795,7 @@ class TokotronTransformerModel(nn.Module):
         compression_model=None,
         eos_mode=EosMode.GATE,
         inference=None,
+        audio_token_shift=0,
     ):
         super().__init__()
         self.in_emb = Embedding(
@@ -829,6 +835,7 @@ class TokotronTransformerModel(nn.Module):
             gate_threshold=gate_threshold,
             gate_offset=gate_offset,
             show_inference_progress=show_inference_progress,
+            audio_token_shift=audio_token_shift,
         )
         self.bos_idx = bos_idx
         self.vocoder = vocoder
@@ -1935,7 +1942,7 @@ class TokotronLoss(nn.Module):
         self.eos_width = eos_width
         if self.eos_mode == EosMode.TOKEN:
             audio_eos = (
-                torch.ones(eos_width, audio_tokens_per_step) * eos_index
+                torch.ones(eos_width, audio_tokens_per_step).long() * eos_index
             )
             self.register_buffer("audio_eos", audio_eos)
 
