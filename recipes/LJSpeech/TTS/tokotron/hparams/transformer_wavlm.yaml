@@ -116,6 +116,7 @@ gate_offset: !apply:speechbrain.nnet.losses.distance_diff_loss_ramp
     max_weight: !ref <gate_loss_max_weight>
 
 silence_padding: !ref <gate_offset>
+use_silence_padding: True
 
 # Compression model
 compression: false
@@ -228,6 +229,7 @@ inference_search: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronSearch
 inference_forward: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronForwardInference
   scale_factor: !ref <scale_factor>
   gate_threshold: !ref <gate_threshold>
+  eos_mode: !ref <eos_mode>
 
 inference: !apply:speechbrain.utils.hparams.choice
   value: !ref <inference_mode>

@@ -738,13 +738,22 @@ class TokotronForwardInference(nn.Module):
     min_length : int
         The minimum length for generating sequences, in tokens
     """
-    def __init__(self, scale_factor=5.0, gate_threshold=0.5, min_length=16):
+    def __init__(
+        self,
+        scale_factor=5.0,
+        gate_threshold=0.5,
+        min_length=16,
+        eos_mode=EosMode.GATE,
+        eos_index=0,
+    ):
         super().__init__()
         self.scale_factor = scale_factor
         self.gate_threshold = gate_threshold
         self.min_length = min_length
         self.decoder = None
         self.gate = None
+        self.eos_mode = EosMode(eos_mode)
+        self.eos_index = eos_index
 
     def bind(self, model=None):
         """Binds this inference implementation to a model
@@ -785,20 +794,61 @@ class TokotronForwardInference(nn.Module):
                 src_key_padding_mask=src_key_padding_mask,
                 pos_embs_src=None,
             )
-            gate_act = dec_out.gate_out.sigmoid() > self.gate_threshold
-            infer_length_abs = gate_act.max(dim=1).indices.clip(
-                min=self.min_length)
+            if self.eos_mode == EosMode.GATE:
+                p_eos, eos = self.get_length_gate(dec_out)
+            else:
+                p_eos, eos = self.get_length_token(dec_out)
+
+            infer_length_abs = eos.max(dim=1).indices.clip(
+                min=self.min_length
+            )
             infer_length_max = infer_length_abs.max()
-            audio_tokens = dec_out.out[:, :infer_length_max].argmax(-1)
             infer_length = infer_length_abs / infer_length_max
+
+            audio_tokens = dec_out.out[:, :infer_length_max].argmax(-1)
             return TokotronDecoderInfernceOutput(
                 audio_tokens=audio_tokens,
                 length=infer_length,
                 dec_self_attn=dec_out.dec_self_attn,
                 dec_attn=dec_out.dec_attn,
                 alignments=get_alignments(dec_out.dec_attn),
-                p_eos=gate_act,
+                p_eos=p_eos,
             )
+
+    def get_length_gate(self, dec_out):
+        """Infers lengths using the gate module
+        
+        Arguments
+        ---------
+        dec_out : TokotronDecoderOutput
+            The decoder output
+        
+        Returns
+        -------
+        p_eos : torch.Tensor
+            EOS probabilities (as estimated by the gate)
+        eos : torch.Tensor
+            a Boolean tensor where positions indicate whether
+            the gate has activated
+        """
+        p_eos = dec_out.gate_out.sigmoid()
+        eos = p_eos > self.gate_threshold
+        return p_eos, eos
+
+    def get_length_token(self, dec_out):
+        """Infers lengths using an EOS token
+        
+        Arguments
+        ---------
+        dec_out : TokotronDecoderOutput
+            The decoder output
+        eos : torch.Tensor
+            A Boolean tensor indicating whether EOS has been reached
+        """
+        p_seq = dec_out.out[:, :, 0].softmax(dim=-1)
+        p_eos = p_seq[:, :, self.eos_index].softmax(-1)
+        eos = p_seq.argmax(dim=-1) == self.eos_index
+        return p_eos, eos
 
 
 class TokotronTransformerModel(nn.Module):
