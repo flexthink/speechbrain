@@ -315,14 +315,23 @@ def dataio_prepare(hparams):
         """Processes the transcriptions to generate proper labels"""
         return label_encoder.encode_sequence_torch(label)
 
-    silence_token, _ = get_silence_token(
-        hparams["token_model"],
-        extract_emb=False
-    )
+    use_silence_padding = hparams.get("use_silence_padding", True)
+    if use_silence_padding:
+        silence_token, _ = get_silence_token(
+            hparams["token_model"],
+            extract_emb=False
+        )
+    else:
+        silence_token = (
+            torch.ones(
+                hparams["audio_tokens_per_step"],
+                dtype=torch.int64
+            )
+            * hparams["eos_index"]
+        )
     silence_token = silence_token.cpu()
     silence_padding_len = int(math.ceil(hparams["silence_padding"]))
     bos_width = hparams.get("bos_width", 1)
-    eos_width = hparams.get("eos_width", 1)
     audio_bos = (
         torch.ones(bos_width, hparams["audio_tokens_per_step"]) * hparams["bos_index"]
     )
@@ -611,10 +620,14 @@ if __name__ == "__main__":
         datasets["train"],
         datasets["valid"],
         train_loader_kwargs=use_silence_padding(
-            hparams["train_dataloader_opts"], silence_token, token_keys
+            hparams["train_dataloader_opts"],
+            silence_token,
+            token_keys
         ),
         valid_loader_kwargs=use_silence_padding(
-            hparams["valid_dataloader_opts"], silence_token, token_keys
+            hparams["valid_dataloader_opts"],
+            silence_token,
+            token_keys
         ),
     )
 
