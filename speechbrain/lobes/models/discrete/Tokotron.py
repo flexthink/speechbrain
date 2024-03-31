@@ -799,10 +799,18 @@ class TokotronForwardInference(nn.Module):
             else:
                 p_eos, eos = self.get_length_token(dec_out)
 
-            infer_length_abs = eos.max(dim=1).indices.clip(
-                min=self.min_length
+            infer_length_abs = eos.max(dim=1).indices
+            infer_length_abs_nonzero = infer_length_abs[infer_length_abs > 0]
+            if len(infer_length_abs_nonzero) > 0:
+                infer_length_max = infer_length_abs_nonzero.max()
+            else:
+                infer_length_max = 0
+            if infer_length_max == 0:
+                infer_length_max = p_eos.size(1)
+            infer_length_abs = torch.where(
+                infer_length_abs == 0, infer_length_max, infer_length_abs
             )
-            infer_length_max = infer_length_abs.max()
+            infer_length_abs = infer_length_abs.clip(min=self.min_length)
             infer_length = infer_length_abs / infer_length_max
 
             audio_tokens = dec_out.out[:, :infer_length_max].argmax(-1)
