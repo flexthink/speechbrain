@@ -170,8 +170,8 @@ class TokotronTransformerDecoder(nn.Module):
         show_inference_progress=True,
         representation_mode=RepresentationMode.DISCRETE,
         audio_dim=512,
-        audio_clip_min=-10.0,
-        audio_clip_max=10.0,
+        audio_clip_min=None,
+        audio_clip_max=None,
         use_tgt_norm=False
     ):
         super().__init__()
@@ -281,8 +281,6 @@ class TokotronTransformerDecoder(nn.Module):
             tgt_key_padding_mask = length_to_mask(
                 tgt_length * tgt_max_len, tgt_max_len
             ).logical_not()
-        if self.representation_mode == RepresentationMode.CONTINUOUS:
-            tgt = tgt.clip(min=self.audio_clip_min, max=self.audio_clip_max)
         if self.tgt_norm is not None:
             tgt = self.tgt_norm(tgt, tgt_length)
 
@@ -453,6 +451,8 @@ class TokotronTransformerDecoder(nn.Module):
             )
             max_inferred_len = length_abs.max().int()
             audio_tokens_out = audio_tokens_out[:, :max_inferred_len]
+            if self.representation_mode == RepresentationMode.CONTINUOUS:
+                audio_tokens_out = bipolar_compression_inv(audio_tokens_out)
             # Compute relative lengths
             length = length_abs.float() / audio_tokens_out.size(1)
 
@@ -619,6 +619,7 @@ class TokotronTransformerModel(nn.Module):
                 d_model, max_audio_length
             )
         self.compression_model = compression_model
+        self.representation_mode = representation_mode
 
     def __setattr__(self, name, value):
         """Prevents the vocoder from being saved in state_dict() - it is not typically fine-tuned
@@ -702,6 +703,9 @@ class TokotronTransformerModel(nn.Module):
         src, src_key_padding_mask, pos_embs_encoder = self.process_inputs(
             input_tokens, input_length
         )
+
+        if self.representation_mode == RepresentationMode.CONTINUOUS:
+            audio = bipolar_compression(audio)
 
         enc_out, enc_self_attn = self.encoder(
             src=src,
@@ -1724,11 +1728,13 @@ class TokotronLoss(nn.Module):
         input_length,
         reduction="mean",
     ):
-        p_seq = predictions.out.log_softmax(dim=-1)
-        batch_size, out_len, heads, tok_dim = p_seq.shape
+        out = predictions.out
+        if self.representation_mode == RepresentationMode.DISCRETE:
+            out = out.log_softmax(dim=-1)
+        batch_size, out_len, heads, tok_dim = out.shape
         max_len = out_len - 1
-        p_seq_reshaped = (
-            p_seq.transpose(1, 2).reshape(batch_size * heads, out_len, tok_dim)
+        out_reshaped = (
+            out.transpose(1, 2).reshape(batch_size * heads, out_len, tok_dim)
         )[:, :max_len]
         tok_len = audio.size(1)
         if self.representation_mode == RepresentationMode.DISCRETE:
@@ -1740,6 +1746,7 @@ class TokotronLoss(nn.Module):
             audio_reshaped = audio.transpose(1, 2).reshape(
                 batch_size * heads, tok_len, audio_dim
             )
+            audio_reshaped = bipolar_compression(audio_reshaped)
             audio_reshaped = audio_reshaped.clip(
                 min=self.audio_clip_min,
                 max=self.audio_clip_max,
@@ -1752,7 +1759,7 @@ class TokotronLoss(nn.Module):
             .reshape(batch_size * heads)
         )
         seq_loss = self.seq_cost(
-            p_seq_reshaped,
+            out_reshaped,
             audio_reshaped,
             length=lengths_reshaped,
             reduction=reduction,
@@ -1794,3 +1801,19 @@ def _filter_state_dict(state_dict):
             for ignored_key in IGNORE_IN_STATE_DICT
         )
     }
+
+
+def bipolar_compression(x):
+    """The bipolar compression function
+    f(x) = sign(x) ln(|x| + 1)
+    """
+    return x.sign() * (x.abs() + 1).log()
+
+
+def bipolar_compression_inv(x):
+    """The inverse of bipolar_compression"""
+    return torch.where(
+        x >= 0,
+        x.exp() - 1.,
+        1. - (-x).exp()
+    )
