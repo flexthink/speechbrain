@@ -241,6 +241,8 @@ class TokotronTransformerDecoder(nn.Module):
                 parameter.requires_grad_(False)
         self.audio_clip_min = audio_clip_min
         self.audio_clip_max = audio_clip_max
+        self.d_model = d_model
+        self.d_model_sqrt = math.sqrt(d_model)
 
     def forward(
         self,
@@ -624,8 +626,6 @@ class TokotronTransformerModel(nn.Module):
             )
         self.compression_model = compression_model
         self.representation_mode = representation_mode
-        self.d_model = d_model
-        self.d_model_sqrt = math.sqrt(d_model)
 
     def __setattr__(self, name, value):
         """Prevents the vocoder from being saved in state_dict() - it is not typically fine-tuned
