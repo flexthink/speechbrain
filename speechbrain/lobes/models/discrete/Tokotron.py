@@ -25,7 +25,7 @@ from speechbrain.nnet.RNN import LSTM, GRU, AttentionalRNNDecoder
 from speechbrain.nnet.attention import RelPosEncXL
 from speechbrain.nnet.embedding import Embedding
 from speechbrain.nnet.linear import Linear
-from speechbrain.nnet.losses import kldiv_loss, mse_loss, distance_diff_loss
+from speechbrain.nnet.losses import kldiv_loss, mse_loss, l1_loss, distance_diff_loss
 from speechbrain.nnet.loss.guidedattn_loss import GuidedAttentionLoss
 from speechbrain.nnet.embedding import MultiEmbedding
 from speechbrain.nnet.normalization import BatchNorm1d
@@ -1636,6 +1636,14 @@ def get_alignments(attn):
     return torch.cat([item.unsqueeze(-1) for item in attn], dim=-1).mean(dim=-1)
 
 
+SEQ_COST_MAP = {
+    "l1": l1_loss,
+    "mse": mse_loss,
+    "l2": mse_loss,
+    "kldiv": kldiv_loss
+}
+
+
 TokotronLossDetails = namedtuple(
     "TokotronLossDetails", ["loss", "seq_loss", "gate_loss", "attn_loss"]
 )
@@ -1677,7 +1685,7 @@ class TokotronLoss(nn.Module):
     silence_padding : float
         The amount of silence padding added to sequences
 
-    seq_cost : float
+    seq_cost : str | callable 
         The type of sequence loss to be used
 
     representation_mode : RepresentationMode
@@ -1714,6 +1722,8 @@ class TokotronLoss(nn.Module):
         self.gate_max_weight = gate_max_weight
         self.silence_padding = silence_padding
         self.representation_mode = RepresentationMode(representation_mode)
+        if seq_cost in SEQ_COST_MAP:
+            seq_cost = SEQ_COST_MAP[seq_cost]
         if seq_cost is None:
             seq_cost = (
                 kldiv_loss

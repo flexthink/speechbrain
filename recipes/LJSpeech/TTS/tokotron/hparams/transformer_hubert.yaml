@@ -77,6 +77,7 @@ gate_threshold: 0.5
 gate_loss_beta: 0.2
 gate_loss_gamma: 0.01
 gate_loss_max_weight: 1.
+seq_cost: null
 
 # Feature parameters
 sample_rate: 22050
@@ -266,6 +267,7 @@ compute_cost: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronLoss
     representation_mode: !ref <representation_mode>
     audio_clip_min: !ref <audio_clip_min>
     audio_clip_max: !ref <audio_clip_max>
+    seq_cost: !ref <seq_cost>
 
 lr_annealing: !new:speechbrain.nnet.schedulers.NoamScheduler
     lr_initial: !ref <lr>
