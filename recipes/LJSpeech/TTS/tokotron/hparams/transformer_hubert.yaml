@@ -31,7 +31,7 @@ num_audio_samples: 32
 samples_interval: 5
 
 freeze_token_model: True
-token_model_src: facebook/hubert-base-ls960
+token_model_src: facebook/hubert-large-ll60k
 g2p_src: flexthink/soundchoice-g2p
 token_model_kmeans_src: speechbrain/SSL_Quantization
 token_model_kmeans_dataset: LJSpeech
@@ -178,8 +178,8 @@ audio_dim: 1024
 audio_emb_size: 128
 audio_emb_freeze: True
 audio_emb_pretrained: False
-audio_clip_min: -10.0
-audio_clip_max: 10.0
+audio_clip_min: null
+audio_clip_max: null
 use_tgt_norm: False
 text_num_tokens: 39
 phn_num_tokens: 52

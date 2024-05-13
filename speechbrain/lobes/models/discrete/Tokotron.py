@@ -11,6 +11,7 @@ Authors
 """
 
 import torch
+import math
 from torch import nn
 from torch.nn import functional as F
 from speechbrain.lobes.models.transformer.Transformer import (
@@ -291,6 +292,9 @@ class TokotronTransformerDecoder(nn.Module):
             batch_size, audio_max_len, heads * audio_dim
         )
         tgt = self.tgt_in_proj(audio_emb_combined)
+        if self.representation_mode == RepresentationMode.CONTINUOUS:
+            tgt = tgt * self.d_model_sqrt
+
         tgt = F.dropout(tgt, self.target_dropout, training=self.training)
 
         tgt_mask = get_lookahead_mask(tgt)
@@ -620,6 +624,8 @@ class TokotronTransformerModel(nn.Module):
             )
         self.compression_model = compression_model
         self.representation_mode = representation_mode
+        self.d_model = d_model
+        self.d_model_sqrt = math.sqrt(d_model)
 
     def __setattr__(self, name, value):
         """Prevents the vocoder from being saved in state_dict() - it is not typically fine-tuned
@@ -1747,10 +1753,11 @@ class TokotronLoss(nn.Module):
                 batch_size * heads, tok_len, audio_dim
             )
             audio_reshaped = bipolar_compression(audio_reshaped)
-            audio_reshaped = audio_reshaped.clip(
-                min=self.audio_clip_min,
-                max=self.audio_clip_max,
-            )
+            if self.audio_clip_min is not None or self.audio_clip_max is not None:
+                audio_reshaped = audio_reshaped.clip(
+                    min=self.audio_clip_min,
+                    max=self.audio_clip_max,
+                )
         audio_reshaped = audio_reshaped[:, :max_len]
         lengths_reshaped = (
             audio_length
