@@ -82,7 +82,7 @@ gate_loss_max_weight: 1.
 
 # Inference parameters
 inference_mode: autoregressive
-eos_mode: token
+eos_mode: gate
 decoder_mode: autoregressive
 scale_factor: 4
 
@@ -256,9 +256,9 @@ model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel 
     audio_emb_size: !ref <audio_emb_size>
     audio_emb_freeze: !ref <audio_emb_freeze>
     max_audio_length: !ref <max_audio_length>
+    infer_max_audio_length: !ref <infer_max_audio_length>
     inference: !ref <inference>
     eos_mode: !ref <eos_mode>
-    infer_max_audio_length: !ref <infer_max_audio_length>
     audio_token_shift: !ref <audio_token_shift>
     decoder_mode: !ref <decoder_mode>
     scale_factor: !ref <scale_factor>

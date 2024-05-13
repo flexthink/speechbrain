@@ -31,7 +31,7 @@ num_audio_samples: 32
 samples_interval: 5
 
 freeze_token_model: True
-token_model_src: facebook/hubert-base-ls960
+token_model_src: facebook/hubert-large-ll60k
 g2p_src: flexthink/soundchoice-g2p
 token_model_kmeans_src: speechbrain/SSL_Quantization
 token_model_kmeans_dataset: LJSpeech
@@ -65,6 +65,9 @@ overfit_test_epoch_data_count: 1000
 pad_index: 0
 bos_index: 0
 bos_width: 1
+eos_index: 0
+eos_width: 1
+audio_token_shift: 0
 
 # stages related parameters
 lr: 0.001
@@ -77,6 +80,20 @@ gate_threshold: 0.5
 gate_loss_beta: 0.2
 gate_loss_gamma: 0.01
 gate_loss_max_weight: 1.
+seq_cost: null
+
+# Inference parameters
+inference_mode: autoregressive
+eos_mode: gate
+decoder_mode: autoregressive
+scale_factor: 4
+
+
+# Beam Search-specific parameters
+min_decode_ratio: 1.0
+max_decode_ratio: 10.0
+beam_size: 5
+
 
 # Feature parameters
 sample_rate: 22050
@@ -172,10 +189,15 @@ d_ffn: 2048
 transformer_dropout: 0.2
 target_dropout: 0.2
 activation: !name:torch.nn.GELU
+representation_mode: discrete
 audio_num_tokens: 512
+audio_dim: 1024
 audio_emb_size: 128
 audio_emb_freeze: True
 audio_emb_pretrained: False
+audio_clip_min: null
+audio_clip_max: null
+use_tgt_norm: False
 text_num_tokens: 39
 phn_num_tokens: 52
 input_num_tokens: !apply:speechbrain.utils.hparams.choice
@@ -191,18 +213,49 @@ attention_type: regularMHA
 compression_model: !name:speechbrain.inference.compression.TokenSquish.from_hparams
     source: !ref <compression_model_src>
 
-hifigan: !apply:speechbrain.inference.vocoders.UnitHIFIGAN.from_hparams
-  source: !ref <vocoder_src>
-  savedir: !ref <vocoder_model_path>
-  squeeze_channel: False
 
-vocoder: !new:speechbrain.inference.vocoders.HierarchicalUnitWrapper
-  model: !ref <hifigan>
+vocoder_discrete: !name:speechbrain.inference.vocoders.HierarchicalUnitWrapper
+  model: !name:speechbrain.inference.vocoders.UnitHIFIGAN.from_hparams
+    source: !ref <vocoder_src>
+    savedir: !ref <vocoder_model_path>
+    squeeze_channel: False
   available_layers: !ref <vocoder_available_layers>
   layers: !ref <token_model_layers>
   num_units: !ref <audio_num_tokens>
   offset: !ref <token_offset>
 
+vocoder_continuous: !name:speechbrain.inference.vocoders.HIFIGAN.from_hparams
+    source: !ref <vocoder_src>
+    savedir: !ref <vocoder_model_path>
+    feat_input: True
+
+vocoder: !apply:speechbrain.utils.hparams.choice
+    value: !ref <representation_mode>
+    apply: True
+    choices:
+        discrete: !ref <vocoder_discrete>
+        continuous: !ref <vocoder_continuous>
+
+inference_search: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronSearchInference
+  bos_index: !ref <bos_index>
+  eos_index: !ref <eos_index>
+  min_decode_ratio: !ref <min_decode_ratio>
+  max_decode_ratio: !ref <max_decode_ratio>
+  beam_size: !ref <beam_size>
+  using_eos_threshold: False
+  length_normalization: True
+  audio_token_shift: !ref <audio_token_shift>
+
+inference_forward: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronForwardInference
+  scale_factor: !ref <scale_factor>
+  gate_threshold: !ref <gate_threshold>
+  eos_mode: !ref <eos_mode>
+
+inference: !apply:speechbrain.utils.hparams.choice
+  value: !ref <inference_mode>
+  choices:
+    search: !ref <inference_search>
+    forward: !ref <inference_forward>        
 
 model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel # yamllint disable-line rule:line-length
     input_num_tokens: !ref <input_num_tokens>
@@ -224,11 +277,21 @@ model: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronTransformerModel 
     audio_emb_freeze: !ref <audio_emb_freeze>
     max_audio_length: !ref <max_audio_length>
     infer_max_audio_length: !ref <infer_max_audio_length>
+    inference: !ref <inference>
+    eos_mode: !ref <eos_mode>    
+    representation_mode: !ref <representation_mode>
+    audio_dim: !ref <audio_dim>
+    audio_clip_min: !ref <audio_clip_min>
+    audio_clip_max: !ref <audio_clip_max>
+    use_tgt_norm: !ref <use_tgt_norm>
+    decoder_mode: !ref <decoder_mode>
+    scale_factor: !ref <scale_factor>    
 
 
 modules:
     model: !ref <model>
     vocoder: !ref <vocoder>
+    compute_cost: !ref <compute_cost>
 
 # define two optimizers here for two-stage training
 opt_class: !name:torch.optim.Adam
@@ -242,6 +305,13 @@ compute_cost: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronLoss
     gate_gamma: !ref <gate_loss_gamma>
     gate_max_weight: !ref <gate_loss_max_weight>
     silence_padding: !ref <silence_padding>
+    eos_mode: !ref <eos_mode>
+    eos_index: !ref <eos_index>
+    eos_width: !ref <eos_width>
+    representation_mode: !ref <representation_mode>
+    audio_clip_min: !ref <audio_clip_min>
+    audio_clip_max: !ref <audio_clip_max>
+    seq_cost: !ref <seq_cost>
 
 lr_annealing: !new:speechbrain.nnet.schedulers.NoamScheduler
     lr_initial: !ref <lr>
@@ -253,6 +323,7 @@ checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
         model: !ref <model>
         lr_scheduler: !ref <lr_annealing>
         counter: !ref <epoch_counter>
+        loss: !ref <compute_cost> # It might contain normalization
 
 freezer: !new:speechbrain.dataio.preparation.Freezer
     save_path: !ref <prepare_save_folder>

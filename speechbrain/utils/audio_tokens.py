@@ -32,11 +32,14 @@ def get_silence_token(model, sample_length=100000, extract_emb=True, device=None
 
     audio = torch.zeros(1, sample_length, device=device)
     length = torch.ones(1, device=device)
-    tokens, _ = model.encode(audio, length)
+    tokens, emb = model.encode(audio, length)
     silence_tokens = tokens.squeeze(0).mode(0).values
     silence_emb = None
     if extract_emb:
-        silence_emb = model.embeddings(silence_tokens[None, None, :]).squeeze()
+        if hasattr(model, "embeddings"):
+            silence_emb = model.embeddings(silence_tokens[None, None, :]).squeeze()
+        else:
+            silence_emb = emb.squeeze(0).mean(0)
     return silence_tokens, silence_emb
 
 
