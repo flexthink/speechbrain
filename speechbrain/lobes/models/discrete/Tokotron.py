@@ -91,9 +91,11 @@ class EosMode(Enum):
     GATE = "gate"
     TOKEN = "token"
 
+
 class DecoderMode(Enum):
     AUTOREGRESSIVE = "autoregressive"
     FORWARD = "forward"
+
 
 class RepresentationMode(Enum):
     DISCRETE = "discrete"
@@ -385,11 +387,11 @@ class TokotronTransformerDecoder(nn.Module):
             The embedding tensor with which to initialize
         """
         self.audio_emb.initialize(emb)
-    
+
 
 class TokotronTransformerAutoregressiveInference(nn.Module):
     """A greedy autoregressive inference implementation
-    
+
     Arguments
     ---------
     gate_offset : int, optional
@@ -579,7 +581,7 @@ class TokotronSearchWrapper(nn.Module):
     """A wrapper class to facilitate seach-based inference. It takes care of re-interpreting
     a multi-headed sequence as multiple samples, for compatibility, and for the retention
     of attention tensors
-    
+
     Arguments
     ---------
     decoder : TokotronTransformerDecoder
@@ -618,14 +620,14 @@ class TokotronSearchWrapper(nn.Module):
         self.dec_self_attn = dec_self_attn
         self.dec_attn = dec_attn
         return dec_out, dec_attn
-    
+
 
 class TokotronTransformerBeamSearcher(S2STransformerBeamSearcher):
     """A slight modification of S2STransformerBeamSearcher that uses an
     explicit number of tokens instead of trying to infer it from the
     weights of the linear layer. This is needed because Tokotron is
     multi-header and the final output layer outputs multiple output states
-    
+
     Arguments
     ---------
     num_tokens : int
@@ -704,7 +706,7 @@ class TokotronSearchInference(nn.Module):
 
     def bind(self, model=None):
         """Binds this inference implementation to a model
-        
+
         Arguments
         ---------
         model : TokotronTransformerModel
@@ -724,7 +726,7 @@ class TokotronSearchInference(nn.Module):
             **self.search_kwargs
         )
 
-    def decode(self, enc_out, length):
+    def forward(self, enc_out, length):
         """"Decodes the encoder representation using Beam Search
 
         Arguments
@@ -733,7 +735,7 @@ class TokotronSearchInference(nn.Module):
             Encoder output
         length : torch.Tensor
             Encoder output lengths
-        
+
         Returns
         -------
         output : TokotronDecoderInfernceOutput
@@ -807,6 +809,7 @@ class TokotronForwardInference(nn.Module):
         min_length=16,
         eos_mode=EosMode.GATE,
         eos_index=0,
+        representation_mode=RepresentationMode.DISCRETE
     ):
         super().__init__()
         self.scale_factor = scale_factor
@@ -816,6 +819,7 @@ class TokotronForwardInference(nn.Module):
         self.gate = None
         self.eos_mode = EosMode(eos_mode)
         self.eos_index = eos_index
+        self.representation_mode = representation_mode
 
     def bind(self, model=None):
         """Binds this inference implementation to a model
@@ -827,7 +831,7 @@ class TokotronForwardInference(nn.Module):
         """
         self.decoder = model.decoder
 
-    def decode(self, enc_out, length):
+    def forward(self, enc_out, length):
         """"Decodes the encoder representation using Beam Search
 
         Arguments
@@ -875,7 +879,9 @@ class TokotronForwardInference(nn.Module):
             infer_length_abs = infer_length_abs.clip(min=self.min_length)
             infer_length = infer_length_abs / infer_length_max
 
-            audio_tokens = dec_out.out[:, :infer_length_max].argmax(-1)
+            audio_tokens = dec_out.out[:, :infer_length_max]
+            if self.representation_mode == RepresentationMode.DISCRETE:
+                audio_tokens = audio_tokens.argmax(-1)
             return TokotronDecoderInfernceOutput(
                 audio_tokens=audio_tokens,
                 length=infer_length,
@@ -2365,7 +2371,7 @@ def _filter_state_dict(state_dict):
 def scale(seq, factor):
     """Scales representations by a factor, in the time dimension only.
     Used in non-autoregressive inference
-    
+
     Arguments
     ---------
     seq : torch.Tensor
@@ -2377,6 +2383,7 @@ def scale(seq, factor):
         scale_factor=(factor, 1),
         mode="nearest",
     ).squeeze(1)
+
 
 def bipolar_compression(x):
     """The bipolar compression function
