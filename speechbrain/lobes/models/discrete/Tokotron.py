@@ -391,7 +391,7 @@ class TokotronTransformerDecoder(nn.Module):
 
 class TokotronTransformerAutoregressiveInference(nn.Module):
     """A greedy autoregressive inference implementation
-
+    
     Arguments
     ---------
     gate_offset : int, optional
@@ -581,7 +581,7 @@ class TokotronSearchWrapper(nn.Module):
     """A wrapper class to facilitate seach-based inference. It takes care of re-interpreting
     a multi-headed sequence as multiple samples, for compatibility, and for the retention
     of attention tensors
-
+    
     Arguments
     ---------
     decoder : TokotronTransformerDecoder
@@ -620,14 +620,14 @@ class TokotronSearchWrapper(nn.Module):
         self.dec_self_attn = dec_self_attn
         self.dec_attn = dec_attn
         return dec_out, dec_attn
-
+    
 
 class TokotronTransformerBeamSearcher(S2STransformerBeamSearcher):
     """A slight modification of S2STransformerBeamSearcher that uses an
     explicit number of tokens instead of trying to infer it from the
     weights of the linear layer. This is needed because Tokotron is
     multi-header and the final output layer outputs multiple output states
-
+    
     Arguments
     ---------
     num_tokens : int
@@ -706,7 +706,7 @@ class TokotronSearchInference(nn.Module):
 
     def bind(self, model=None):
         """Binds this inference implementation to a model
-
+        
         Arguments
         ---------
         model : TokotronTransformerModel
@@ -726,7 +726,7 @@ class TokotronSearchInference(nn.Module):
             **self.search_kwargs
         )
 
-    def forward(self, enc_out, length):
+    def decode(self, enc_out, length):
         """"Decodes the encoder representation using Beam Search
 
         Arguments
@@ -735,7 +735,7 @@ class TokotronSearchInference(nn.Module):
             Encoder output
         length : torch.Tensor
             Encoder output lengths
-
+        
         Returns
         -------
         output : TokotronDecoderInfernceOutput
@@ -2276,6 +2276,10 @@ class TokotronLoss(nn.Module):
         out_reshaped = (
             out.transpose(1, 2).reshape(batch_size * heads, out_len, tok_dim)
         )[:, :max_len]
+        audio_length_abs = torch.minimum(
+            audio_length * audio.size(1), torch.tensor(max_len))
+        audio = audio[:, :max_len]
+        audio_length = audio_length_abs / max_len
         if self.eos_mode == EosMode.TOKEN:
             # NOTE: Shift only the tokens, but not EOS
             padding_lengths = torch.ones(batch_size, device=audio.device)
@@ -2318,12 +2322,10 @@ class TokotronLoss(nn.Module):
         )
         if reduction == "batch":
             seq_loss = seq_loss.reshape(batch_size, heads).mean(-1)
-        lengths_abs = audio_length * out_len
-
         attn_loss = self.attn_cost(
-            predictions.alignments,
+            predictions.alignments[:, :audio_len],
             input_lengths=input_length * input_tokens.size(1),
-            target_lengths=lengths_abs,
+            target_lengths=audio_length_abs,
             reduction=reduction,
         )
         if self.eos_mode == EosMode.GATE:
@@ -2331,7 +2333,7 @@ class TokotronLoss(nn.Module):
             # resulting in extra silence being output
             gate_loss = distance_diff_loss(
                 predictions.p_eos,
-                lengths_abs - self.silence_padding,
+                audio_length_abs - self.silence_padding,
                 beta=self.gate_beta,
                 gamma=self.gate_gamma,
                 max_weight=self.gate_max_weight,
@@ -2371,7 +2373,7 @@ def _filter_state_dict(state_dict):
 def scale(seq, factor):
     """Scales representations by a factor, in the time dimension only.
     Used in non-autoregressive inference
-
+    
     Arguments
     ---------
     seq : torch.Tensor
@@ -2383,7 +2385,6 @@ def scale(seq, factor):
         scale_factor=(factor, 1),
         mode="nearest",
     ).squeeze(1)
-
 
 def bipolar_compression(x):
     """The bipolar compression function
