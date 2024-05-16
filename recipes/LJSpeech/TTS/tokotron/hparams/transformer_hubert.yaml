@@ -250,6 +250,7 @@ inference_forward: !new:speechbrain.lobes.models.discrete.Tokotron.TokotronForwa
   scale_factor: !ref <scale_factor>
   gate_threshold: !ref <gate_threshold>
   eos_mode: !ref <eos_mode>
+  representation_mode: !ref <representation_mode>
 
 inference: !apply:speechbrain.utils.hparams.choice
   value: !ref <inference_mode>
