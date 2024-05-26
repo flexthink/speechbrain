@@ -66,7 +66,7 @@ class AttentionSeq2Seq(nn.Module):
         self.use_word_emb = use_word_emb
         self.word_emb_enc = word_emb_enc if use_word_emb else None
 
-    def forward(self, grapheme_encoded, phn_encoded=None, word_emb=None):
+    def forward(self, grapheme_encoded, phn_encoded=None, word_emb=None, **kwargs):
         """Computes the forward pass
 
         Arguments
@@ -347,7 +347,7 @@ class TransformerG2P(TransformerInterface):
         self.word_emb_enc = word_emb_enc
         self._reset_params()
 
-    def forward(self, grapheme_encoded, phn_encoded=None, word_emb=None):
+    def forward(self, grapheme_encoded, phn_encoded=None, word_emb=None, **kwargs):
         """Computes the forward pass
 
         Arguments
