@@ -178,7 +178,11 @@ class HFTransformersInterface(nn.Module):
         **kwargs
             Extra keyword arguments passed to `from_pretrained` function.
         """
-        is_sb, ckpt_file, is_local = self._check_model_source(source, save_path)
+
+        if os.environ.get("SB_HF_SKIP_SOURCE_CHECK"):
+            is_sb = False
+        else:
+            is_sb, ckpt_file, is_local = self._check_model_source(source, save_path)
 
         if is_sb or self.for_pretraining:
             self.model = self.auto_class.from_config(self.config)
