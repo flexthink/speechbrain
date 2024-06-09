@@ -302,8 +302,6 @@ class TokotronTransformerDecoder(nn.Module):
         else:
             audio_emb_combined = audio_emb
         tgt = self.tgt_in_proj(audio_emb_combined)
-        if self.representation_mode == RepresentationMode.CONTINUOUS:
-            tgt = tgt * self.d_model_sqrt        
         tgt = F.dropout(tgt, self.target_dropout, training=self.training)
 
         tgt_mask = get_lookahead_mask(tgt)
@@ -312,6 +310,8 @@ class TokotronTransformerDecoder(nn.Module):
         else:
             tgt = tgt + self.positional_encoding(tgt)
             pos_embs_tgt = None
+        if self.representation_mode == RepresentationMode.CONTINUOUS:
+            tgt = tgt * self.d_model_sqrt        
         (dec_out, dec_self_attn, dec_attn,) = self.dec(
             tgt=tgt,
             memory=enc_out,
@@ -1818,6 +1818,7 @@ class TokotronRNNDecoder(nn.Module):
         )
         self.out_proj = Linear(
             input_size=hidden_size, n_neurons=num_tokens * tokens_per_step,
+            bias=False
         )
         self.gate = Linear(input_size=hidden_size, n_neurons=1)
         self.audio_emb_freeze = audio_emb_freeze
