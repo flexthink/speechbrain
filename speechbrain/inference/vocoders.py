@@ -13,6 +13,7 @@ Authors:
  * Adel Moumen 2023
  * Pradnya Kandarkar 2023
 """
+
 import logging
 import torch
 from speechbrain.dataio.dataio import length_to_mask
@@ -26,10 +27,13 @@ logger = logging.getLogger(__name__)
 class HIFIGAN(Pretrained):
     """
     A ready-to-use wrapper for HiFiGAN (mel_spec -> waveform).
+
     Arguments
     ---------
-    hparams
-        Hyperparameters (from HyperPyYAML)
+    *args : tuple
+    **kwargs : dict
+        Arguments are forwarded to ``Pretrained`` parent class.
+
     Example
     -------
     >>> tmpdir_vocoder = getfixture('tmpdir') / "vocoder"
@@ -57,6 +61,7 @@ class HIFIGAN(Pretrained):
 
     def decode_batch(self, spectrogram, mel_lens=None, hop_len=None):
         """Computes waveforms from a batch of mel-spectrograms
+
         Arguments
         ---------
         spectrogram: torch.Tensor
@@ -67,6 +72,7 @@ class HIFIGAN(Pretrained):
         hop_len: int
             hop length used for mel-spectrogram extraction
             should be the same value as in the .yaml file
+
         Returns
         -------
         waveforms: torch.Tensor
@@ -89,9 +95,10 @@ class HIFIGAN(Pretrained):
 
     def mask_noise(self, waveform, mel_lens, hop_len):
         """Mask the noise caused by padding during batch inference
+
         Arguments
         ---------
-        wavform: torch.tensor
+        waveform: torch.tensor
             Batch of generated waveforms [batch, 1, time]
         mel_lens: torch.tensor
             A list of lengths of mel-spectrograms for the batch
@@ -99,6 +106,7 @@ class HIFIGAN(Pretrained):
         hop_len: int
             hop length used for mel-spectrogram extraction
             same value as in the .yaml file
+
         Returns
         -------
         waveform: torch.tensor
@@ -114,10 +122,12 @@ class HIFIGAN(Pretrained):
 
     def decode_spectrogram(self, spectrogram):
         """Computes waveforms from a single mel-spectrogram
+
         Arguments
         ---------
         spectrogram: torch.Tensor
             mel-spectrogram [mels, time]
+
         Returns
         -------
         waveform: torch.Tensor
@@ -147,16 +157,17 @@ class HIFIGAN(Pretrained):
         return wav
 
 
-
 class DiffWaveVocoder(Pretrained):
     """
     A ready-to-use inference wrapper for DiffWave as vocoder.
     The wrapper allows to perform generative tasks:
         locally-conditional generation: mel_spec -> waveform
+
     Arguments
     ---------
-    hparams
-        Hyperparameters (from HyperPyYAML)
+    *args : tuple
+    **kwargs : dict
+        Arguments are forwarded to ``Pretrained`` parent class.
     """
 
     HPARAMS_NEEDED = ["diffusion"]
@@ -177,6 +188,7 @@ class DiffWaveVocoder(Pretrained):
         fast_sampling_noise_schedule=None,
     ):
         """Generate waveforms from spectrograms
+
         Arguments
         ---------
         mel: torch.tensor
@@ -216,9 +228,10 @@ class DiffWaveVocoder(Pretrained):
 
     def mask_noise(self, waveform, mel_lens, hop_len):
         """Mask the noise caused by padding during batch inference
+
         Arguments
         ---------
-        wavform: torch.tensor
+        waveform: torch.tensor
             Batch of generated waveforms [batch, 1, time]
         mel_lens: torch.tensor
             A list of lengths of mel-spectrograms for the batch
@@ -226,6 +239,7 @@ class DiffWaveVocoder(Pretrained):
         hop_len: int
             hop length used for mel-spectrogram extraction
             same value as in the .yaml file
+
         Returns
         -------
         waveform: torch.tensor
@@ -247,6 +261,7 @@ class DiffWaveVocoder(Pretrained):
         fast_sampling_noise_schedule=None,
     ):
         """Computes waveforms from a single mel-spectrogram
+
         Arguments
         ---------
         spectrogram: torch.tensor
@@ -258,6 +273,7 @@ class DiffWaveVocoder(Pretrained):
             whether to do fast sampling
         fast_sampling_noise_schedule: list
             the noise schedules used for fast sampling
+
         Returns
         -------
         waveform: torch.tensor
@@ -310,47 +326,52 @@ class UnitHIFIGAN(Pretrained):
         self.tokenize = True
         self.squeeze_channel = squeeze_channel
 
-    def decode_batch(self, units):
+    def decode_batch(self, units, spk=None):
         """Computes waveforms from a batch of discrete units
         Arguments
         ---------
         units: torch.tensor
             Batch of discrete units [batch, codes]
+        spk: torch.tensor
+            Batch of speaker embeddings [batch, spk_dim]
         Returns
         -------
         waveforms: torch.tensor
             Batch of mel-waveforms [batch, 1, time]
         """
         # Remove weight norm for inference if it's the first call
-        waveform, _ = self.decode_batch_with_details(units)
+        waveform, _ = self.decode_batch_with_details(units, spk=spk)
         return waveform
 
-    def decode_batch_with_details(self, units):
+    def decode_batch_with_details(self, units, spk=None):
         if self.first_call:
             self.hparams.generator.remove_weight_norm()
             self.first_call = False
 
-        # Ensure that the units sequence has a length of at least 4
-        if units.size(1) < 4:
-            raise RuntimeError(
-                "The 'units' argument should have a length of at least 4 because of padding size."
+        # Ensure that the units sequence has a length of at least 3
+        if units.size(1) < 3:
+            logger.error(
+                "The 'units' argument should have a length of at least 3 because of padding size."
             )
+            quit()
 
         # Increment units if tokenization is enabled
         if self.tokenize:
-            # Avoid changing the input in-place
-            units = units + 1
+            units += 1
+        if spk is not None:
+            spk = spk.to(self.device)
         with torch.no_grad():
-            waveform = self.hparams.generator.inference_with_details(units.to(self.device))
+            waveform = self.infer(units.to(self.device), spk=spk)
         return waveform
-    
 
-    def decode_unit(self, units):
+    def decode_unit(self, units, spk=None):
         """Computes waveforms from a single sequence of discrete units
         Arguments
         ---------
         units: torch.tensor
             codes: [time]
+        spk: torch.tensor
+            spk: [spk_dim]
         Returns
         -------
         waveform: torch.tensor
@@ -363,27 +384,29 @@ class UnitHIFIGAN(Pretrained):
 
         # Ensure that the units sequence has a length of at least 4
         if units.size(0) < 4:
-            raise RuntimeError(
+            logger.error(
                 "The 'units' argument should have a length of at least 4 because of padding size."
             )
+            quit()
 
         # Increment units if tokenization is enabled
         if self.tokenize:
-            # Avoid changing the input in-place
             units = units + 1
+        if spk is not None:
+            spk = spk.unsqueeze(0).to(self.device)
         with torch.no_grad():
-            waveform = self.infer(units.unsqueeze(0).to(self.device))
+            waveform = self.infer(units.unsqueeze(0).to(self.device), spk=spk)
         return waveform.squeeze(0)
 
-    def forward(self, units, length=None):
+    def forward(self, units, length=None, spk=None):
         "Decodes the input units"
         if self.squeeze_channel and units.dim() > 2:
             units = units.squeeze(-1)
-        wav = self.decode_batch(units)
+        wav = self.decode_batch(units, spk=spk)
         if length is not None:
             clean_padding_(wav, length)
         return wav
-    
+
     def to(self, device):
         result = super().to(device)
         self.device = device
@@ -453,7 +476,6 @@ class HierarchicalUnitWrapper(torch.nn.Module):
             units_with_offset,
         )
 
-    
 
 def _parse_layer_list(layers):
     """Parses an argument with a list of layers. If the argument is a string, the function

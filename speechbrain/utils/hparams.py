@@ -25,6 +25,10 @@ def choice(value, choices, default=None, apply=False):
         be a callable, and the result of the call
         will be returned
 
+    Returns
+    -------
+    The selected option out of the choices
+
     Example
     -------
     model: !new:speechbrain.lobes.models.g2p.model.TransformerG2P

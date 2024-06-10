@@ -321,7 +321,7 @@ class HifiGanBrain(sb.Brain):
                     {"Epoch loaded": self.hparams.epoch_counter.current},
                     test_stats=self.last_loss_stats[sb.Stage.TEST],
                 )
-            self.run_inference_sample("Test")
+            self.run_inference_sample("Test", epoch)
 
     def run_inference_sample(self, name, epoch):
         """Produces a sample in inference mode.

@@ -7,7 +7,6 @@ Authors
 
 import json
 import os
-import shutil
 import random
 import logging
 import torchaudio
@@ -17,12 +16,11 @@ from tqdm import tqdm
 from types import SimpleNamespace
 from pathlib import Path
 from speechbrain.inference.text import GraphemeToPhoneme
-from speechbrain.utils.data_utils import get_all_files, download_file
+from speechbrain.utils.data_utils import get_all_files
 from speechbrain.dataio.batch import PaddedData
 from speechbrain.dataio.dataset import DynamicItemDataset
 from speechbrain.dataio.preparation import FeatureExtractor
 from torchaudio.functional import resample
-
 from speechbrain.utils.text_to_sequence import _g2p_keep_punctuations
 
 logger = logging.getLogger(__name__)
@@ -110,7 +108,6 @@ def prepare_libritts(
         )
         extract_features_folder = Path(save_folder) / "features"
 
-
     # If specific splits are provided, creates data manifest files accordingly
     if train_split:
         wav_list = prepare_split(data_folder, train_split)
@@ -166,9 +163,13 @@ def prepare_libritts(
         # Random split the signal list into train, valid, and test sets.
         data_split = split_sets(wav_list, split_ratio)
         # Creating json files
-        create_json(data_split["train"], save_json_train, sample_rate)
-        create_json(data_split["valid"], save_json_valid, sample_rate)
-        create_json(data_split["test"], save_json_test, sample_rate)
+        create_json(
+            data_split["train"], save_json_train, sample_rate, model_name
+        )
+        create_json(
+            data_split["valid"], save_json_valid, sample_rate, model_name
+        )
+        create_json(data_split["test"], save_json_test, sample_rate, model_name)
 
 
 def prepare_split(data_folder, split_list):
@@ -193,12 +194,10 @@ def prepare_split(data_folder, split_list):
 
     # For every subset of the dataset, if it doesn't exist, downloads it
     for subset_name in split_list:
-
         subset_folder = os.path.join(data_folder, subset_name)
         subset_archive = os.path.join(subset_folder, subset_name + ".tar.gz")
 
-        subset_data = os.path.join(subset_folder, "LibriTTS")
-        if not check_folders(subset_data):
+        if not check_folders(subset_folder):
             logger.info(
                 f"No data found for {subset_name}. Checking for an archive file."
             )
@@ -206,15 +205,16 @@ def prepare_split(data_folder, split_list):
                 logger.info(
                     f"No archive file found for {subset_name}. Downloading and unpacking."
                 )
-                subset_url = LIBRITTS_URL_PREFIX + subset_name + ".tar.gz"
-                download_file(subset_url, subset_archive)
-                logger.info(f"Downloaded data for subset {subset_name}.")
-            else:
-                logger.info(
-                    f"Found an archive file for {subset_name}. Unpacking."
-                )
+                quit()
+            #     subset_url = LIBRITTS_URL_PREFIX + subset_name + ".tar.gz"
+            #     download_file(subset_url, subset_archive)
+            #     logger.info(f"Downloaded data for subset {subset_name}.")
+            # else:
+            #     logger.info(
+            #         f"Found an archive file for {subset_name}. Unpacking."
+            #     )
 
-            shutil.unpack_archive(subset_archive, subset_folder)
+            # shutil.unpack_archive(subset_archive, subset_folder)
 
         # Collects all files matching the provided extension
         wav_list.extend(get_all_files(subset_folder, match_and=extension))
@@ -276,14 +276,18 @@ def create_json(
 
     # Processes all the wav files in the list
     for wav_file in tqdm(wav_list):
-
         # Reads the signal
         signal, sig_sr = torchaudio.load(wav_file)
         duration = signal.shape[1] / sig_sr
+
+        # TODO add better way to filter short utterances
+        if duration < 1.0:
+            continue
+
         # Manipulates path to get relative path and uttid
         path_parts = wav_file.split(os.path.sep)
         uttid, _ = os.path.splitext(path_parts[-1])
-        relative_path = os.path.join("{data_root}", *path_parts[-6:])
+        # relative_path = os.path.join("{data_root}", *path_parts[-4:])
 
         # Gets the path for the text files and extracts the input text
         normalized_text_path = os.path.join(
@@ -310,7 +314,7 @@ def create_json(
         # Creates an entry for the utterance
         json_dict[uttid] = {
             "uttid": uttid,
-            "wav": relative_path,
+            "wav": wav_file,
             "duration": duration,
             "spk_id": spk_id,
             "label": normalized_text,
@@ -318,7 +322,7 @@ def create_json(
         }
 
         # Characters are used for Tacotron2, phonemes may be needed for other models
-        if model_name != "Tacotron2":
+        if model_name not in ["Tacotron2", "HiFi-GAN"]:
             # Computes phoneme labels using SpeechBrain G2P and keeps the punctuations
             phonemes = _g2p_keep_punctuations(g2p, normalized_text)
             json_dict[uttid].update({"label_phoneme": phonemes})

@@ -3,6 +3,7 @@
 Authors
   * Aku Rouhe 2020
 """
+
 import collections
 import torch
 from speechbrain.utils.data_utils import (
@@ -163,6 +164,10 @@ class PaddedBatch:
 
     def __iter__(self):
         """Iterates over the different elements of the batch.
+
+        Returns
+        -------
+        Iterator over the batch.
 
         Example
         -------

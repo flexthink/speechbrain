@@ -17,8 +17,8 @@ class DiscreteSSLTokenizer:
 
     Arguments
     ---------
-    num_clusters:  (int)
-        determine the number of clusters of the  kmeans models..
+    num_clusters: List[int]
+        determine the number of clusters of the  kmeans models. It could be varying for each layer.
 
 
     Example
@@ -28,7 +28,7 @@ class DiscreteSSLTokenizer:
     >>> ssl_layer_num = [7,23]
     >>> deduplicate =[False, True]
     >>> bpe_tokenizers=[None, None]
-    >>> num_clusters = 1000
+    >>> num_clusters = [1000,2000]
     >>> tokenizer = DiscreteSSLTokenizer(num_clusters=num_clusters)
     >>> tokens= tokenizer.encode(inputs,SSL_layers=ssl_layer_num, deduplicates=deduplicate, bpe_tokenizers=bpe_tokenizers)
     >>> print(tokens.shape)
@@ -39,7 +39,7 @@ class DiscreteSSLTokenizer:
         self.num_clusters = num_clusters
 
     def textify(self, tokens):
-        """ Convert token ID to char to be used for training sentencepiece tokenizer.
+        """Convert token ID to char to be used for training sentencepiece tokenizer.
         Arguments
         ---------
         tokens : torch.Tensor
@@ -58,7 +58,7 @@ class DiscreteSSLTokenizer:
     def encode(
         self, input, SSL_layers=[7], deduplicates=[False], bpe_tokenizers=[None]
     ):
-        """Takes an input tokenized wavform and return its corresponding proccessed tokens.
+        """Takes an input tokenized wavform and return its corresponding processed tokens.
 
         Arguments
         ---------
@@ -77,7 +77,7 @@ class DiscreteSSLTokenizer:
         """
         assert input.shape[2] == len(
             SSL_layers
-        ), f"input shape:{input.shape} has conflicts with the length of provided SSL_layers: {len(SSL_layers)}. The second dimention of input should be the same  as number of layers!!!"
+        ), f"input shape:{input.shape} has conflicts with the length of provided SSL_layers: {len(SSL_layers)}. The second dimension of input should be the same  as number of layers!!!"
         token_ids = []
         for i, duplicate in enumerate(deduplicates):
             tokens = []
@@ -87,7 +87,11 @@ class DiscreteSSLTokenizer:
                     for row in input[:, :, i].cpu()
                 ]
                 layer_token_ids = [
-                    torch.tensor(row, dtype=torch.long, device=input.device,)
+                    torch.tensor(
+                        row,
+                        dtype=torch.long,
+                        device=input.device,
+                    )
                     for row in unique_token_ids
                 ]
                 tokens.extend(layer_token_ids)
@@ -100,14 +104,14 @@ class DiscreteSSLTokenizer:
                 token_ids.extend(
                     [
                         torch.LongTensor(bpe_tokenizers[i].encode_as_ids(row))
-                        + SSL_layers[i] * self.num_clusters
+                        + SSL_layers[i] * self.num_clusters[i]
                         for row in token_char
                     ]
                 )
             else:
                 token_ids.extend(
                     [
-                        row + SSL_layers[i] * self.num_clusters + 1
+                        row + SSL_layers[i] * self.num_clusters[i] + 1
                         for row in tokens
                     ]
                 )

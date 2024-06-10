@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 def accumulate_and_extract_features(
     batch, features_list, ssl_model, ssl_layer_num, device
 ):
-    """ Extract features (output of SSL model) and acculamte them on cpu to be used for clustering.
+    """Extract features (output of SSL model) and acculamte them on cpu to be used for clustering.
 
     Arguments
     ---------
@@ -155,7 +155,10 @@ def train(
     features_list = []
     iteration = 0
 
-    with tqdm(train_set, dynamic_ncols=True,) as t:
+    with tqdm(
+        train_set,
+        dynamic_ncols=True,
+    ) as t:
         for batch in t:
             # extract features from the SSL model
             accumulate_and_extract_features(

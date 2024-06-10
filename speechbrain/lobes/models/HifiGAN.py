@@ -436,7 +436,7 @@ class HifiganGenerator(torch.nn.Module):
         ):
             self.ups.append(
                 ConvTranspose1d(
-                    in_channels=upsample_initial_channel // (2 ** i),
+                    in_channels=upsample_initial_channel // (2**i),
                     out_channels=upsample_initial_channel // (2 ** (i + 1)),
                     kernel_size=k,
                     stride=u,
@@ -691,6 +691,7 @@ class UnitHifiganGenerator(HifiganGenerator):
         num_heads=1,
         multi_speaker=False,
         normalize_speaker_embeddings=False,
+        skip_token_embedding=False,
     ):
         super().__init__(
             in_channels,
@@ -732,6 +733,7 @@ class UnitHifiganGenerator(HifiganGenerator):
             )
         self.multi_speaker = multi_speaker
         self.normalize_speaker_embeddings = normalize_speaker_embeddings
+        self.skip_token_embedding = skip_token_embedding
 
     @staticmethod
     def _upsample(x, max_frames):
@@ -752,7 +754,10 @@ class UnitHifiganGenerator(HifiganGenerator):
         g : torch.Tensor (batch, 1, time)
             global conditioning input tensor.
         """
-        u = self.unit_embedding(x)
+        if self.skip_token_embedding:
+            u = x
+        else:
+            u = self.unit_embedding(x)
 
         batch_size, time, channel, emb_size = u.shape
         u_ = u.view(batch_size * time, channel, emb_size)
@@ -799,7 +804,8 @@ class UnitHifiganGenerator(HifiganGenerator):
         details : dict
             details
         """
-        x = self.unit_embedding(x)
+        if not self.skip_token_embedding:
+            x = self.unit_embedding(x)
 
         batch_size, time, channel, emb_size = x.shape
         x_ = x.view(batch_size * time, channel, emb_size)
@@ -1111,10 +1117,15 @@ class HifiganDiscriminator(nn.Module):
 
 def stft(x, n_fft, hop_length, win_length, window_fn="hann_window"):
     """computes the Fourier transform of short overlapping windows of the input"""
-    o = torch.stft(x.squeeze(1), n_fft, hop_length, win_length,)
+    o = torch.stft(
+        x.squeeze(1),
+        n_fft,
+        hop_length,
+        win_length,
+    )
     M = o[:, :, :, 0]
     P = o[:, :, :, 1]
-    S = torch.sqrt(torch.clamp(M ** 2 + P ** 2, min=1e-8))
+    S = torch.sqrt(torch.clamp(M**2 + P**2, min=1e-8))
     return S
 
 
@@ -1274,7 +1285,6 @@ class L1SpecLoss(nn.Module):
         y : torch.tensor
             real waveform tensor
         """
-
         y_hat_M = mel_spectogram(
             self.sample_rate,
             self.hop_length,
@@ -1340,7 +1350,9 @@ class MelganFeatureLoss(nn.Module):
     sample (Larsen et al., 2016, Kumar et al., 2019).
     """
 
-    def __init__(self,):
+    def __init__(
+        self,
+    ):
         super().__init__()
         self.loss_func = nn.L1Loss()
 
@@ -1377,7 +1389,9 @@ class MSEDLoss(nn.Module):
     and the samples synthesized from the generator to 0.
     """
 
-    def __init__(self,):
+    def __init__(
+        self,
+    ):
         super().__init__()
         self.loss_func = nn.MSELoss()
 
