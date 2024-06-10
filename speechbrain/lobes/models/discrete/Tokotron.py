@@ -311,7 +311,7 @@ class TokotronTransformerDecoder(nn.Module):
             tgt = tgt + self.positional_encoding(tgt)
             pos_embs_tgt = None
         if self.representation_mode == RepresentationMode.CONTINUOUS:
-            tgt = tgt * self.d_model_sqrt        
+            tgt = tgt * self.d_model_sqrt
         (dec_out, dec_self_attn, dec_attn,) = self.dec(
             tgt=tgt,
             memory=enc_out,
