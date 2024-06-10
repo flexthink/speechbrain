@@ -138,7 +138,7 @@ token_model: !new:speechbrain.lobes.models.huggingface_transformers.discrete_ssl
     kmeans_dataset: !ref <token_model_kmeans_dataset>
     num_clusters: !ref <audio_num_tokens>
     save_path: !ref <pretrained_model_save_folder>
-    SSL_layers: !ref <token_model_layers>
+    layers_num: !ref <token_model_layers>
 
 # Dataloader options
 train_dataloader_opts:

@@ -15,6 +15,7 @@ import os
 from glob import glob
 from torch import nn
 from speechbrain.tokenizers.discrete_SSL_tokenizer import DiscreteSSLTokenizer
+from speechbrain.utils.data_utils import as_list
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ class DiscreteSSL(nn.Module):
     ):
 
         super().__init__()
+        layers_num = as_list(layers_num, dtype=int)
         self.ssl_model = ssl_model
         model_name = ssl_model.__class__.__name__.lower()
         self.check_if_input_is_compatible(layers_num, num_clusters)
@@ -104,6 +106,7 @@ class DiscreteSSL(nn.Module):
             self.vocabularies.append(model.cluster_centers_)
 
         self.tokenizer = DiscreteSSLTokenizer(self.num_clusters)
+        self.layers_num = layers_num
 
     def check_if_input_is_compatible(self, layers_num, num_clusters):
         """check if layer_number and num_clusters is consisntent with each other.
@@ -210,7 +213,7 @@ class DiscreteSSL(nn.Module):
             A batch of audio signals to transform to features.
         wav_len : tensor
             The relative length of the wav given in SpeechBrain format.
-        SSL_layers: List[int] (default: [7]):
+        SSL_layers: List[int] (default: [layers_num]):
             determine which layers of SSL should be used to extract information.
         deduplicates: List[boolean] (default: [False]):
             determine to apply deduplication(remove duplicate subsequent tokens) on the tokens extracted for the corresponding layer.
@@ -227,7 +230,7 @@ class DiscreteSSL(nn.Module):
         """
 
         if SSL_layers is None:
-            SSL_layers = self.SSL_layers
+            SSL_layers = self.layers_num
         if deduplicates is None:
             deduplicates = [False] * len(SSL_layers)
         if bpe_tokenizers is None:
