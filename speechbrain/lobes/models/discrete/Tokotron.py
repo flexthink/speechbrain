@@ -2387,6 +2387,7 @@ def scale(seq, factor):
         mode="nearest",
     ).squeeze(1)
 
+
 def bipolar_compression(x):
     """The bipolar compression function
     f(x) = sign(x) ln(|x| + 1)

@@ -8,14 +8,18 @@ import torch
 import numpy as np
 import math
 import speechbrain as sb
+import concurrent.futures
 import logging
 import re
-from tarfile import TarFile
+import tarfile
+import shutil
+import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from speechbrain.dataio.dataloader import make_dataloader
 from speechbrain.dataio.dataset import DynamicItemDataset
-from speechbrain.dataio.batch import undo_batch
 from speechbrain.utils.data_pipeline import DataPipeline
+from speechbrain.dataio.batch import undo_batch
 from tqdm.auto import tqdm
 
 logger = logging.getLogger(__name__)
@@ -62,6 +66,9 @@ class FeatureExtractor:
         dataloader_opts=None,
         dynamic_items=None,
         description=None,
+        async_save=True,
+        async_save_batch_size=16,
+        async_save_concurrency=8,
     ):
         if not dataloader_opts:
             dataloader_opts = {}
@@ -80,44 +87,106 @@ class FeatureExtractor:
         self.pipeline = DataPipeline(
             static_data_keys=src_keys, dynamic_items=dynamic_items or []
         )
+        self.async_save = async_save
+        self._async_save_futures = {}
+        self.async_save_batch_size = async_save_batch_size
+        self.async_save_concurrency = async_save_concurrency
+        self.save_executor = None
         self.description = description
 
-    def extract(self, dataset, replacements=None):
+    def extract(self, dataset, data=None):
         """Runs the preprocessing operation
 
         Arguments
         ---------
         dataset : dict|speechbrain.dataio.dataset.DynamicItemDataset
             the dataset to be saved
-        replacements : dict, optional
-            (Optional dict), e.g., {"data_folder": "/home/speechbrain/data"}
-            This is used to recursively format all string values in the data.
+        data : dict
+            the raw data dictionary (to update with extra features)
         """
         if isinstance(dataset, dict):
             dataset = DynamicItemDataset(dataset)
         dataset.set_output_keys(self.src_keys + [self.id_key])
+        if self.async_save:
+            self._init_async_save()
+        try:
+            dataloader = make_dataloader(dataset, **self.dataloader_opts)
+            batch_size = self.dataloader_opts.get("batch_size", 1)
+            batch_count = int(math.ceil(len(dataset) / batch_size))
+            for batch in tqdm(dataloader, total=batch_count, desc=self.description):
+                batch = batch.to(self.device)
+                self.process_batch(batch, data)
+        finally:
+            if self.async_save:
+                self._finish_async_save()
 
-        dataloader = make_dataloader(dataset, **self.dataloader_opts)
-        batch_size = self.dataloader_opts.get("batch_size", 1)
-        batch_count = int(math.ceil(len(dataset) / batch_size))
-        for batch in tqdm(dataloader, total=batch_count, desc=self.description):
-            batch = batch.to(self.device)
-            self.process_batch(batch)
+    def _init_async_save(self):
+        self.save_executor = ThreadPoolExecutor(
+            max_workers=self.async_save_concurrency
+        )
 
-    def process_batch(self, batch):
+    def _finish_async_save(self):
+        try:
+            self.flush()
+        finally:
+            self.save_executor.shutdown()
+            self.save_executor = None
+
+    def process_batch(self, batch, data):
         """Processes a batch of data
 
         Arguments
         ---------
         batch: speechbrain.dataio.batch.PaddedBatch
             a batch
+        data : dict
+            the raw data dictionary (to update with extra features)
         """
         batch_dict = batch.as_dict()
         ids = batch_dict[self.id_key]
         features = self.pipeline.compute_outputs(batch_dict)
 
-        for item_id, item_features in zip(ids, undo_batch(features)):
-            self.save_fn(item_id, item_features, save_path=self.save_path)
+        for idx, (item_id, item_features) in enumerate(zip(ids, undo_batch(features)), start=1):
+            self._add_inline_features(item_id, item_features, data)
+            if self.async_save:
+                future = self.save_executor.submit(
+                    self.save_fn,
+                    item_id,
+                    item_features,
+                    save_path=self.save_path
+                )
+                self._async_save_futures[item_id] = future
+                if idx % self.async_save_batch_size == 0:
+                    self.flush()
+            else:
+                self.save_fn(item_id, item_features, save_path=self.save_path)
+
+    def flush(self):
+        """Flushes all futures that have been accumulated"""
+        concurrent.futures.wait(self._async_save_futures.values())
+        for item_id, future in self._async_save_futures.items():
+            exc = future.exception()
+            if exc is not None:
+                exc_info = (
+                    type(exc),
+                    exc,
+                    exc.__traceback__
+                )
+                logger.warn(
+                    "Saving extracted features for %s could not be completed: %s",
+                    item_id,
+                    str(exc),
+                    exc_info=exc_info
+                )
+        self._async_save_futures.clear()
+
+    def _add_inline_features(self, item_id, item_features, data):
+        item_data = data.get(item_id) if data is not None else None
+        for key in self.inline_keys:
+            if item_data is not None:
+                item_data[key] = item_features[key]
+            del item_features[key]
+        return item_features
 
     def add_dynamic_item(self, func, takes=None, provides=None):
         """Adds a dynamic item to be output
@@ -147,9 +216,18 @@ class FeatureExtractor:
         """
         self.pipeline.add_dynamic_item(func, takes, provides)
 
-    def set_output_features(self, keys):
-        """Sets the features to be output"""
-        self.pipeline.set_output_keys(keys)
+    def set_output_features(self, keys, inline_keys=None):
+        """Sets the features to be output
+
+        Arguments
+        ---------
+        keys : list
+            Keys to be output / saved
+        inline_keys : list, optional
+            The keys to be used inline (added to the data dictionary
+            rather than saved in flies)"""
+        self.inline_keys = inline_keys or []
+        self.pipeline.set_output_keys(keys + self.inline_keys)
 
 
 def save_pt(item_id, data, save_path):
@@ -318,16 +396,29 @@ class Freezer:
             return
         file_names = self.get_files()
         logger.info(
-            "Arhiving %d files from the prepared dataset in %s",
+            "Archiving %d files from the prepared dataset in %s",
             len(file_names),
             self.archive_path,
         )
-        with TarFile.open(self.archive_path, "w") as tar_file:
+        mode = self._get_archive_mode("w")
+        tmp_archive_path = self.save_path / self.archive_path.name
+        logger.info("Creating a temporary archive: %s", tmp_archive_path)
+        with tarfile.open(tmp_archive_path, mode) as tar_file:
             for file_name in file_names:
                 tar_file.add(
                     name=file_name,
                     arcname=file_name.relative_to(self.save_path),
                 )
+        logger.info("Copying %s to %s", tmp_archive_path, self.archive_path)
+        shutil.copy(tmp_archive_path, self.archive_path)
+        logger.info("Done copying, removing %s", tmp_archive_path)
+        os.remove(tmp_archive_path)
+
+    def _get_archive_mode(self, mode):
+        """Adds a suffix to the archive mode"""
+        if self.archive_path.name.endswith(".gz"):
+            mode = f"{mode}:gz"
+        return mode
 
     def unfreeze(self):
         """Unarchives pretrained files into save_path
@@ -346,7 +437,8 @@ class Freezer:
                 self.archive_path,
                 self.save_path,
             )
-            with TarFile.open(self.archive_path) as tar_file:
+            mode = self._get_archive_mode("r")
+            with tarfile.open(self.archive_path, mode) as tar_file:
                 tar_file.extractall(self.save_path)
             logger.info("Prepared dataset unpacked")
             result = True
@@ -376,3 +468,4 @@ class Freezer:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.freeze()
+

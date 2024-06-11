@@ -22,7 +22,7 @@ import re
 import speechbrain as sb
 from tqdm import tqdm
 from pathlib import Path
-from speechbrain.utils.data_utils import download_file
+from speechbrain.utils.data_utils import download_file, as_list
 from speechbrain.dataio.dataio import load_pkl, save_pkl
 from speechbrain.inference.text import GraphemeToPhoneme
 from unidecode import unidecode
@@ -147,7 +147,7 @@ def prepare_ljspeech(
     if not os.path.exists(save_folder):
         os.makedirs(save_folder)
 
-    # Setting output files
+    # Setting ouput files
     meta_csv = os.path.join(data_folder, METADATA_CSV)
     wavs_folder = os.path.join(data_folder, WAVS)
 
@@ -161,8 +161,8 @@ def prepare_ljspeech(
     pitch_folder = None
     # Setting up additional folders required for FastSpeech2
     if model_name is not None and "FastSpeech2" in model_name:
-        # This step requires phoneme alignments to be present in the data_folder
-        # We automatically download the alignments from https://www.dropbox.com/s/v28x5ldqqa288pu/LJSpeech.zip
+        # This step requires phoneme alignements to be present in the data_folder
+        # We automatically donwload the alignments from https://www.dropbox.com/s/v28x5ldqqa288pu/LJSpeech.zip
         # Download and unzip LJSpeech phoneme alignments from here: https://drive.google.com/drive/folders/1DBRkALpPd6FL9gjHMmMEdHODmkgNIIK4
         alignment_URL = (
             "https://www.dropbox.com/s/v28x5ldqqa288pu/LJSpeech.zip?dl=1"
@@ -171,7 +171,7 @@ def prepare_ljspeech(
             data_folder, "TextGrid", "LJSpeech"
         )
         download_file(
-            alignment_URL, data_folder + "/alignments.zip", unpack=True
+            alignment_URL, data_folder + "/alligments.zip", unpack=True
         )
 
         duration_folder = os.path.join(data_folder, "durations")
@@ -213,7 +213,7 @@ def prepare_ljspeech(
     if "train" in splits:
         prepare_json(
             model_name,
-            data_split["train"],            
+            data_split["train"],
             save_json_train,
             data_folder,
             wavs_folder,
@@ -360,7 +360,7 @@ def split_sets(data_folder, splits, split_ratio, frozen_split_path):
         the path to the frozen split file
 
     Returns
-    -------
+    ------
     dictionary containing train, valid, and test splits.
     """
     meta_csv = os.path.join(data_folder, METADATA_CSV)
@@ -372,9 +372,12 @@ def split_sets(data_folder, splits, split_ratio, frozen_split_path):
     if frozen_split_path is not None:
         frozen_split_path = Path(frozen_split_path)
         if frozen_split_path.exists():
+            logger.info("Using frozen split at %s", str(frozen_split_path))
             with open(frozen_split_path, "r") as frozen_split_file:
                 data_split = json.load(frozen_split_file)
             return data_split, meta_csv
+        else:
+            logger.info("Frozen split %s does not exist", str(frozen_split_path))
 
     index_for_sessions = []
     session_id_start = "LJ001"
@@ -488,6 +491,10 @@ def prepare_json(
         model or the path to it
     device : str
         Device for to be used for computation (used as required)
+
+    Returns
+    -------
+    None
     """
 
     logger.info(f"preparing {json_file}.")
@@ -612,6 +619,7 @@ def prepare_json(
                 wavs_folder, pitch_folder
             )
             if not os.path.isfile(pitch_file):
+
                 if torchaudio.__version__ < "2.1":
                     pitch = torchaudio.functional.compute_kaldi_pitch(
                         waveform=audio,
@@ -757,10 +765,10 @@ def get_last_phoneme_info(words_seq, phones_seq):
     phones_seq : tier
         phoneme tier from a TextGrid file
 
-  Returns
-  -------
-  last_phoneme_flags : list
-      each tuple of the returned list has this format: (phoneme, flag)
+    Returns
+    -------
+    last_phoneme_flags : list
+        each tuple of the returned list has this format: (phoneme, flag)
     """
 
     # Gets all phoneme objects for the entire sequence
@@ -839,6 +847,9 @@ def custom_clean(text, model_name):
     return text
 
 
+INLINE_FEATURES = ["audio_ssl_len"]
+
+
 def prepare_features(
     data, data_folder, save_path, features, context, options=None, device="cpu"
 ):
@@ -848,8 +859,15 @@ def prepare_features(
     ---------
     data: dict
         a preprocessed dataset
+    data_folder : str
+        the data folder
+    save_folder : str
+        the folder where features will be saved
+    context : dict
+        context data
     features: list
-        the list of feature extractions to be performed"""
+        the list of feature extractions to be performed
+    """
     dataset = DynamicItemDataset(data)
     feature_extractor = FeatureExtractor(
         save_path=save_path,
@@ -858,6 +876,10 @@ def prepare_features(
         dataloader_opts=options.get("dataloader_opts", {}),
         device=device,
     )
+    token_model_kwargs = options.get("token_model_kwargs", {})
+    ssl_layers = options.get("ssl_model_layers") or options.get("token_model_layers")
+    if ssl_layers is not None:
+        ssl_layers = as_list(ssl_layers)
 
     @sb.utils.data_pipeline.takes("wav")
     @sb.utils.data_pipeline.provides("sig")
@@ -865,7 +887,8 @@ def prepare_features(
         """Load the audio signal. """
         wav = wav.replace("{data_root}", data_folder)
         sig = sb.dataio.dataio.read_audio(wav)
-        return sig
+
+        yield sig
 
     dataset.add_dynamic_item(audio_pipeline)
 
@@ -883,19 +906,39 @@ def prepare_features(
     @sb.utils.data_pipeline.provides("audio_tokens", "audio_emb")
     def token_pipeline(sig):
         with torch.no_grad():
-            tokens, emb = context.token_model.encode(
-                sig.data.unsqueeze(1), sig.lengths
+            result = context.token_model(
+                sig.data, sig.lengths, **token_model_kwargs
             )
-            tokens = tokens.int()
+            # TODO: Clean this up
+            if torch.is_tensor(result):
+                tokens = result
+                # Note: Dummy embedding - meaning embeddings are not available
+                emb = torch.zeros((len(sig.data), 1, 1), device=sig.data.device)
+            else:
+                tokens, emb = result[:2]
+                tokens = tokens.int()
             if tokens.dim() < 3:
                 tokens = tokens.unsqueeze(-1)
             yield PaddedData(tokens, sig.lengths)
             yield PaddedData(emb, sig.lengths)
 
+    @sb.utils.data_pipeline.takes("sig_resampled")
+    @sb.utils.data_pipeline.provides("audio_ssl", "audio_ssl_len")
+    def ssl_pipeline(sig):
+        ssl_raw = context.ssl_model(
+            sig.data, sig.lengths
+        )
+        ssl = ssl_raw[ssl_layers].permute(1, 2, 0, 3)
+        yield PaddedData(ssl, sig.lengths)
+        yield (sig.lengths * ssl.size(1)).tolist()
+
     feature_extractor.add_dynamic_item(resample_pipeline)
     feature_extractor.add_dynamic_item(token_pipeline)
-    feature_extractor.set_output_features(features)
-    feature_extractor.extract(dataset)
+    feature_extractor.add_dynamic_item(ssl_pipeline)
+    feature_keys = [key for key in features if key not in INLINE_FEATURES]
+    inline_keys = [key for key in features if key in INLINE_FEATURES]
+    feature_extractor.set_output_features(feature_keys, inline_keys=inline_keys)
+    feature_extractor.extract(dataset, data)
 
 
 def get_context(extract_features, extract_features_opts, device):
@@ -922,4 +965,6 @@ def get_context(extract_features, extract_features_opts, device):
     context = {}
     if any(key in extract_features for key in ["audio_tokens", "audio_emb"]):
         context["token_model"] = extract_features_opts["token_model"].to(device)
+    if "audio_ssl" in extract_features:
+        context["ssl_model"] = extract_features_opts["ssl_model"].to(device)
     return SimpleNamespace(**context)

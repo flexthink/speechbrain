@@ -334,7 +334,5 @@ def _unpack_feature(feature):
         The feature to un-batch
     """
     if isinstance(feature, PaddedData):
-        device = feature.data.device
-        feature = undo_padding(feature.data, feature.lengths)
-        feature = [torch.tensor(item, device=device) for item in feature]
+        feature = undo_padding(feature.data, feature.lengths, keep_tensor=True)
     return feature

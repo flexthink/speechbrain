@@ -346,7 +346,7 @@ def dataio_prepare(hparams):
     silence_padding = silence_padding.cpu()
     silence_padding_len = int(math.ceil(hparams["silence_padding"]))
     bos_width = hparams.get("bos_width", 1)
-    audio_features = "audio_tokens" if representation_mode == RepresentationMode.DISCRETE else "audio_emb"
+    audio_features = "audio_tokens" if representation_mode == RepresentationMode.DISCRETE else "audio_ssl"
     audio_bos_prefix = (
         torch.ones(bos_width, hparams["audio_tokens_per_step"]) * hparams["bos_index"]
     )
@@ -593,7 +593,7 @@ if __name__ == "__main__":
     representation_mode = RepresentationMode(
         hparams.get("representation_mode", RepresentationMode.DISCRETE)
     )
-    audio_features = "audio_tokens" if representation_mode == RepresentationMode.DISCRETE else "audio_emb"
+    audio_features = "audio_tokens" if representation_mode == RepresentationMode.DISCRETE else "audio_ssl"
     if not hparams["skip_prep"]:
         with hparams["freezer"]:
             run_on_main(
