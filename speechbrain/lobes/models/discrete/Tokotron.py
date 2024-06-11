@@ -436,7 +436,7 @@ class TokotronTransformerAutoregressiveInference(nn.Module):
         self.max_steps = max_steps
         self.audio_token_shift = audio_token_shift
         self.show_inference_progress = show_inference_progress
-        self.representation_mode = representation_mode
+        self.representation_mode = RepresentationMode(representation_mode)
         self.audio_dim = audio_dim
 
     def bind(self, model):
@@ -514,7 +514,7 @@ class TokotronTransformerAutoregressiveInference(nn.Module):
                 )
                 audio_tokens_out = step_out.out
                 if self.representation_mode == RepresentationMode.DISCRETE:
-                    audio_tokens_out = audio_tokens_out.argmax(-1)                               
+                    audio_tokens_out = audio_tokens_out.argmax(-1)
 
                 # The model outputs predictions without BOS. Add the BOS back for the
                 # following step
@@ -564,6 +564,7 @@ class TokotronTransformerAutoregressiveInference(nn.Module):
             audio_tokens_out = audio_tokens_out[:, :max_inferred_len]  - self.audio_token_shift
             if self.representation_mode == RepresentationMode.CONTINUOUS:
                 audio_tokens_out = bipolar_compression_inv(audio_tokens_out)
+
             # Compute relative lengths
             length = length_abs.float() / audio_tokens_out.size(1)
 
@@ -819,7 +820,7 @@ class TokotronForwardInference(nn.Module):
         self.gate = None
         self.eos_mode = EosMode(eos_mode)
         self.eos_index = eos_index
-        self.representation_mode = representation_mode
+        self.representation_mode = RepresentationMode(representation_mode)
 
     def bind(self, model=None):
         """Binds this inference implementation to a model
@@ -1110,7 +1111,7 @@ class TokotronTransformerModel(nn.Module):
                 d_model, max_audio_length
             )
         self.compression_model = compression_model
-        self.representation_mode = representation_mode
+        self.representation_mode = RepresentationMode(representation_mode)
 
         if inference is None:
             inference = TokotronTransformerAutoregressiveInference(
