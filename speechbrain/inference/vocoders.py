@@ -432,7 +432,7 @@ class HierarchicalUnitWrapper(torch.nn.Module):
     def __init__(self, model, available_layers, num_units, layers=None, offset=0):
         super().__init__()
         self.model = model if isinstance(model, torch.nn.Module) else model()
-        self.device = next(iter(param for param in model.parameters())).device
+        self.device = next(iter(param for param in self.model.parameters())).device
         self.available_layers = _parse_layer_list(available_layers)
         if layers is None:
             self.layers = self.available_layers
