@@ -13,6 +13,8 @@ from .common import InstallCommandError, TTSInferenceResult
 from importlib import import_module
 from speechbrain.utils.data_utils import batch_pad_right
 from speechbrain.dataio.dataio import clean_padding
+from encodec import EncodecModel
+from encodec.utils import convert_audio
 from torch import nn
 import logging
 import pathlib
@@ -81,6 +83,7 @@ class VALLEX(nn.Module):
         num_head=16,
         num_layers=12,
         num_quantizers=8,
+        target_bandwidth=6.0,
         prefix_mode=1,
         preset="neutral",
         device="cpu"
@@ -102,6 +105,7 @@ class VALLEX(nn.Module):
         self.num_head = num_head
         self.num_layers = num_layers
         self.num_quantizers = num_quantizers
+        self.target_bandwidth = target_bandwidth
         self.prefix_mode = prefix_mode
         self.preset = preset
         self.device = device
@@ -159,6 +163,10 @@ class VALLEX(nn.Module):
         self.collater = data_collation.get_text_token_collater()
         self.collater.pad_symbol = 0
 
+        # Encodec (audo tokenizer)
+        self.encodec = EncodecModel.encodec_model_24khz()
+        self.encodec.set_target_bandwidth(self.target_bandwidth)
+
         # VALL-E X
         models_vallex = import_module("models.vallex")
         self.model = models_vallex.VALLE(
@@ -206,7 +214,7 @@ class VALLEX(nn.Module):
 
     def get_preset_audio_prompt(self, preset):
         """Retrieves the pre-set audio prompt
-        
+
         Arguments
         ---------
         present : str
@@ -218,14 +226,46 @@ class VALLEX(nn.Module):
             torch.from_numpy(data["text_tokens"]).to(self.device)
         )
 
-    def get_audio_prompts(self, spk):
-        """Prepares audio prompts
-        
+    def get_waveform_audio_prompt(self, wav, text, language=None):
+        """Converts an audio-text pair to a VALLE-X prompt
+
         Arguments
         ---------
-        spk : str, optional
+        wav : torch.Tensor
+            A raw audio waveform tensor
+        text : str
+            The text annotation
+        language : str
+            The language identifier. If omitted, the default language is used
+
+        Results
+        -------
+        wav : torch.Tensor
+            """
+        if language is None:
+            language = self.language
+        lang_token = get_language_token(language)
+        text_prompt = "".join(["_", lang_token, text, lang_token])
+        text_tokens, _ = self.tokenizer.tokenize(text=text_prompt)
+        text_tokens = torch.tensor(text_tokens, device=self.device).unsqueeze(0)
+        while wav.dim() < 3:
+            wav = wav.unsqueeze(0)
+        audio_tokens, _ = self.encodec.encode(wav)[0]
+        audio_tokens = audio_tokens.transpose(-1, -2)
+        return audio_tokens, text_tokens
+
+    def get_audio_prompts(self, spk, language):
+        """Prepares audio prompts
+
+        Arguments
+        ---------
+        spk : str|tuple, optional
             One of the identifiers supported by Vall-E X
-        
+            or a (wav, text) tuple for voice cloning
+
+        language : str, optional
+            a language identifier
+
         Returns
         -------
         audio_tokens : torch.Tensor
@@ -237,6 +277,9 @@ class VALLEX(nn.Module):
             audio_tokens, text_tokens = self.get_preset_audio_prompt(self.preset)
         elif isinstance(spk, str):
             audio_tokens, text_tokens = self.get_preset_audio_prompt(self.preset)
+        elif isinstance(spk, tuple):
+            wav, text = spk
+            audio_tokens, text_tokens = self.get_waveform_audio_prompt(wav, text, language=language)
         else:
             raise ValueError("Unsupported speaker prompt")
         return audio_tokens, text_tokens
@@ -270,7 +313,7 @@ class VALLEX(nn.Module):
             self.tokenizer.tokenize(text=f"_{item}".strip())
             for item in prompt_text
         ]
-        audio_prompt_tokens, audio_prompt_text_tokens = self.get_audio_prompts(spk)
+        audio_prompt_tokens, audio_prompt_text_tokens = self.get_audio_prompts(spk, language)
 
         # Batch inference is not supported because of an implementation issue
         # in the underlying library

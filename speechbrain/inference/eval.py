@@ -796,6 +796,7 @@ class EvaluationBrain:
         self.tracker = Tracker(
             file_name=self.get_tracker_file_name()
         )
+        self.on_evaluation_start(dataset)
         if self.hparams.eval_samples is not None:
             dataset = dataset.filtered_sorted(select_n=self.hparams.eval_samples)
         dataset = self.tracker.filter(dataset)
@@ -818,8 +819,31 @@ class EvaluationBrain:
         for batch in tqdm(loader_it, desc="Evaluation", total=batch_count):
             self.evaluate_batch(batch)
         self.evaluate_bulk()
+        self.on_evaluation_end(dataset)
         self.write_summary()
         logger.info("Evaluation done")
+
+    def on_evaluation_start(self, dataset):
+        """Invoked at the beginning of the evaluation cycle. The default
+        implementation is a no-op
+
+        Arguments
+        ---------
+        dataset : speechbrain.dataio.dataset.DynamicItemDataset
+            a dataset
+        """
+        pass
+
+    def on_evaluation_end(self, dataset):
+        """Invoked at the beginning of the evaluation cycle. The default
+        implementation is a no-op
+
+        Arguments
+        ---------
+        dataset : speechbrain.dataio.dataset.DynamicItemDataset
+            a dataset
+        """
+        pass
 
     def create_reports(self):
         """Creates report files and report writers"""

@@ -1,0 +1,25 @@
+seed: 74443
+source: null
+tts_save_path: null
+data_folder: !PLACEHOLDER
+model_sample_rate: 24000
+output_folder: results/vallex
+prepare_save_folder: !ref <data_folder>/prepared
+prepare_skip_ignore_folders: False
+splits: ["valid", "test"]
+frozen_split_path: null
+split_ratio: [90, 5, 5]
+train_json: !ref <prepare_save_folder>/train.json
+valid_json: !ref <prepare_save_folder>/valid.json
+test_json: !ref <prepare_save_folder>/test.json
+sorting: ascending
+
+model: !new:speechbrain.lobes.models.externaltts.vallex.VALLEX
+  source: !ref <source>
+  savedir: !ref <tts_save_path>
+
+modules:
+  model: !ref <model>
+
+model_args:
+  language: en
