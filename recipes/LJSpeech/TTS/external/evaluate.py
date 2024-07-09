@@ -28,10 +28,12 @@ class TTSEvaluationBrain(EvaluationBrain):
             data["sig"],
             orig_freq=self.hparams.sample_rate,
             new_freq=self.hparams.model_sample_rate,
-        )
+        ).to(self.device)
         self.spk = (wav, data["label_norm"])
+        self.modules.model.to(self.device)
 
     def create_samples(self, batch):
+        batch = batch.to(self.device)
         result = self.modules.model(
             text=batch.label_norm,
             spk=self.spk,
@@ -181,5 +183,5 @@ if __name__ == "__main__":
 
     dataset = dataio_prepare(hparams)
 
-    brain = TTSEvaluationBrain(hparams)
+    brain = TTSEvaluationBrain(hparams, device=run_opts.get("device", "cpu"))
     brain.evaluate(dataset)

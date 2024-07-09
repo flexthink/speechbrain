@@ -124,7 +124,14 @@ class VALLEX(nn.Module):
             # Clone the Git repository
             logger.info("Cloning the repo")
             cmd = shlex.join(
-                ["git", "clone", self.source]
+                [
+                    "git",
+                    "-C",
+                    str(self.savedir.parent),
+                    "clone",
+                    self.source,
+                    self.savedir.name
+                ]
             )
             out, err, code = run_shell(cmd)
             if code != 0:
@@ -136,10 +143,12 @@ class VALLEX(nn.Module):
             logger.info("Installing dependencies")
             reqs_path = self.savedir / "requirements.txt"
             cmd = shlex.join(
-                "pip",
-                "install",
-                "-r",
-                str(reqs_path)
+                [
+                    "pip",
+                    "install",
+                    "-r",
+                    str(reqs_path)
+                ]
             )
             out, err, code = run_shell(cmd)
             if code != 0:
@@ -343,7 +352,7 @@ class VALLEX(nn.Module):
         text_tokens, text_tokens_lens = self.collater([text])
         enroll_x_lens = audio_prompt_text_tokens.shape[1]
         text_token_cat_lens = text_tokens_lens + enroll_x_lens
-        text_tokens_cat = torch.cat([audio_prompt_text_tokens, text_tokens], dim=-1)
+        text_tokens_cat = torch.cat([audio_prompt_text_tokens, text_tokens.to(self.device)], dim=-1)
         encoded_frames = self.model.inference(
             text_tokens_cat.to(self.device),
             text_token_cat_lens.to(self.device),
@@ -357,6 +366,9 @@ class VALLEX(nn.Module):
         )
         return encoded_frames[0]
 
+    def to(self, device):
+        super().to(device)
+        self.device = device
 
 def get_language_token(language):
     return f"[{language.upper()}]"
