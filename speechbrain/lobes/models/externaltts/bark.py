@@ -1,5 +1,5 @@
 """
-A wrapper for the implementation of VALL-E X
+A wrapper for the implementation of Bark
 
 https://github.com/Plachtaa/VALL-E-X
 
@@ -7,7 +7,10 @@ Authors
  * Artem Ploujnikov 2024
 """
 
+import torch
 from torch import nn
+from .common import InstallCommandError, TTSInferenceResult
+
 
 try:
     from transformers import AutoProcessor, AutoModel
@@ -36,13 +39,19 @@ class Bark(nn.Module):
         The default speaker identifier
         It may contain a {language} placeholder, which,
         if encountered, will be replaced with the language
-        identifier"""
+        identifier
+    default_language : str
+        The default language code
+    device : str
+        The device to use
+    """
     def __init__(
         self,
         source=None,
         savedir=None,
         default_spk=None,
         default_language="en",
+        device="cpu",
     ):
         super().__init__()
         if source is None:
@@ -55,6 +64,7 @@ class Bark(nn.Module):
         self.model = AutoModel.from_pretrained(source)
         self.default_spk = default_spk
         self.default_language = default_language
+        self.device = device
 
     def forward(self, text, spk=None, language=None):
         """Performs inference
@@ -78,12 +88,38 @@ class Bark(nn.Module):
         if language is None:
             language = self.default_language
         spk = spk.format(language=language)
+        text = ["Cat", "Elephant"] # TODO: Remove
         inputs = self.processor(
             text,
             voice_preset=spk
         )
-        wav = self.model.generate(
+        inputs = self._to_device(inputs)
+        wav, length_abs = self.model.generate(
             **inputs,
-            do_sample=True
+            do_sample=True,
+            return_output_lengths=True,
         )
-        return wav
+        length = torch.tensor(length_abs, device=self.device) / wav.size(1)
+        return TTSInferenceResult(
+            wav=wav,
+            length=length,
+            tokens=None
+        )
+
+    def _to_device(self, inputs):
+        if torch.is_tensor(inputs):
+            result = inputs.to(self.device)
+        elif hasattr(inputs, "items"):
+            result = {
+                key: self._to_device(value)
+                for key, value in inputs.items()
+            }
+        else:
+            result = inputs
+        return result
+    
+    def to(self, device, *args, **kwargs):
+        self.device = device
+        return super().to(device, *args, **kwargs)
+
+            
