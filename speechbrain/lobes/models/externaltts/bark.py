@@ -88,7 +88,6 @@ class Bark(nn.Module):
         if language is None:
             language = self.default_language
         spk = spk.format(language=language)
-        text = ["Cat", "Elephant"] # TODO: Remove
         inputs = self.processor(
             text,
             voice_preset=spk
