@@ -13,6 +13,7 @@ train_json: !ref <prepare_save_folder>/train.json
 valid_json: !ref <prepare_save_folder>/valid.json
 test_json: !ref <prepare_save_folder>/test.json
 sorting: ascending
+spk: v2/en_speaker_9
 
 model: !new:speechbrain.lobes.models.externaltts.bark.Bark
   source: !ref <source>

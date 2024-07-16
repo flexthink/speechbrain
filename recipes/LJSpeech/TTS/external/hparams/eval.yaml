@@ -10,6 +10,7 @@ eval_asr_source: !apply:speechbrain.utils.hparams.choice
   choices:
     encoder_decoder: speechbrain/asr-transformer-transformerlm-librispeech
     whisper: openai/whisper-small
+eval_asr_beam_size: 66
 evaluations: utmos,asr
 output_folder: !PLACEHOLDER
 pretrained_model_save_folder: null
@@ -31,6 +32,7 @@ eval_asr: !apply:speechbrain.utils.hparams.choice
       sample_rate: !ref <eval_sample_rate>
       overrides:
         lm_weight: 0.0
+        test_beam_size: !ref <eval_asr_beam_size>
     whisper: !name:speechbrain.inference.eval.WhisperASRSpeechEvaluator
       source: !ref <eval_asr_source>
       sample_rate: !ref <eval_sample_rate>

@@ -9,7 +9,7 @@ Authors
 
 import torch
 from torch import nn
-from .common import InstallCommandError, TTSInferenceResult
+from .common import TTSInferenceResult
 
 
 try:
@@ -28,7 +28,7 @@ DEFAULT_VOICE_PRESET = "v2/{language}_speaker_1"
 
 class Bark(nn.Module):
     """A wrapper for the Bark TTS model
-    
+
     Arguments
     ---------
     source : str, optional
@@ -116,9 +116,7 @@ class Bark(nn.Module):
         else:
             result = inputs
         return result
-    
+
     def to(self, device, *args, **kwargs):
         self.device = device
         return super().to(device, *args, **kwargs)
-
-            
