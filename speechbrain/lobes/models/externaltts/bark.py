@@ -83,7 +83,7 @@ class Bark(nn.Module):
         wav : torch.Tensor
             Returns the synthesized waveform
         """
-        if spk is not None:
+        if spk is None:
             spk = self.default_spk
         if language is None:
             language = self.default_language

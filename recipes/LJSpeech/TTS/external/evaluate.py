@@ -48,9 +48,6 @@ class TTSEvaluationBrain(EvaluationBrain):
         ).to(self.device)
         return (wav, data["label_norm"])
 
-
-
-
     def create_samples(self, batch):
         batch = batch.to(self.device)
         result = self.modules.model(
