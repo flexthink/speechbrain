@@ -38,9 +38,13 @@ import torch.nn.functional as F
 from torchaudio import transforms
 
 import speechbrain as sb
+import logging
 from speechbrain.nnet.CNN import Conv1d, Conv2d, ConvTranspose1d
 
 LRELU_SLOPE = 0.1
+
+
+logger = logging.getLogger(__name__)
 
 
 def dynamic_range_compression(x, C=1, clip_val=1e-5):
@@ -641,6 +645,10 @@ class UnitHifiganGenerator(HifiganGenerator):
         enable multi speaker training
     normalize_speaker_embeddings: bool
         enable normalization of speaker embeddings
+    num_embeddings : int
+        the backwards compatibility name for vocab_size.
+        It is deprecated and will be removed in a later
+        version
 
     Example
     -------
@@ -689,6 +697,7 @@ class UnitHifiganGenerator(HifiganGenerator):
         multi_speaker=False,
         normalize_speaker_embeddings=False,
         skip_token_embedding=False,
+        num_embeddings=None,
     ):
         super().__init__(
             in_channels,
@@ -703,6 +712,9 @@ class UnitHifiganGenerator(HifiganGenerator):
             cond_channels,
             conv_post_bias,
         )
+        if num_embeddings is not None:
+            logger.warning("num_embeddings is deprecated, please use vocab_size")
+            vocab_size = num_embeddings
         self.unit_embedding = torch.nn.Embedding(vocab_size, embedding_dim)
         self.attn_pooling = torch.nn.Sequential(
             torch.nn.Linear(embedding_dim, attn_dim),
