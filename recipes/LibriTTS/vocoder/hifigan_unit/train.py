@@ -4,7 +4,7 @@ For more details about hifi-gan: https://arxiv.org/pdf/2010.05646.pdf
 For more details about speech synthesis using self-supervised representations: https://arxiv.org/pdf/2104.00355.pdf
 
 To run this recipe, do the following:
-> python train.py hparams/train.yaml --data_folder=/path/to/LJspeech
+> python train.py hparams/train.yaml --data_folder=/path/to/LibriTTS
 
 Authors
  * Jarod Duret 2023
@@ -80,7 +80,7 @@ class HifiGanBrain(sb.Brain):
         batch = batch.to(self.device)
 
         x, _ = batch.code
-        y, y_lens = batch.sig
+        y, _ = batch.sig
 
         # Hold on to the batch for the inference sample. This is needed because
         # the infernece sample is run from on_stage_end only, where
@@ -402,7 +402,7 @@ def dataio_prepare(hparams):
     """
     segment_size = hparams["segment_size"]
     code_hop_size = hparams["code_hop_size"]
-    codes_folder = pl.Path(hparams["codes_save_folder"])
+    code_folder = pl.Path(hparams["codes_folder"])
 
     # Define audio pipeline:
     @sb.utils.data_pipeline.takes("id", "wav", "segment")
@@ -415,7 +415,7 @@ def dataio_prepare(hparams):
             hparams["sample_rate"],
         )(audio)
 
-        code = np.load(codes_folder / f"{utt_id}.npy")
+        code = np.load(code_folder / f"{utt_id}.npy")
 
         num_layer = len(hparams["layer"])
         offsets = np.arange(num_layer) * hparams["num_clusters"]
@@ -483,24 +483,30 @@ if __name__ == "__main__":
         overrides=overrides,
     )
 
-    from ljspeech_prepare import prepare_ljspeech
+    from libritts_prepare import prepare_libritts
 
     sb.utils.distributed.run_on_main(
-        prepare_ljspeech,
+        prepare_libritts,
         kwargs={
             "data_folder": hparams["data_folder"],
-            "save_folder": hparams["save_folder"],
-            "splits": hparams["splits"],
+            "save_json_train": hparams["train_json"],
+            "save_json_valid": hparams["valid_json"],
+            "save_json_test": hparams["test_json"],
+            "sample_rate": hparams["sample_rate"],
             "split_ratio": hparams["split_ratio"],
-            "seed": hparams["seed"],
+            "libritts_subsets": hparams["libritts_subsets"],
+            "train_split": hparams["train_split"],
+            "valid_split": hparams["valid_split"],
+            "test_split": hparams["test_split"],
+            "model_name": "HiFi-GAN",
             "skip_prep": hparams["skip_prep"],
         },
     )
 
-    from extract_code import extract_ljspeech
+    from extract_code import extract_libritts
 
     sb.utils.distributed.run_on_main(
-        extract_ljspeech,
+        extract_libritts,
         kwargs={
             "data_folder": hparams["save_folder"],
             "splits": hparams["splits"],
@@ -510,8 +516,7 @@ if __name__ == "__main__":
             "encoder_type": hparams["encoder_type"],
             "encoder_source": hparams["encoder_hub"],
             "layer": hparams["layer"],
-            "encoder_save_folder": hparams["encoder_save_folder"],
-            "codes_save_folder": hparams["codes_save_folder"],
+            "save_folder": hparams["save_folder"],
             "sample_rate": hparams["sample_rate"],
             "skip_extract": hparams["skip_extract"],
         },

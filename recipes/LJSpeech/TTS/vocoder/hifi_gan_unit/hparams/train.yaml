@@ -22,19 +22,25 @@ use_tensorboard: False
 #################################
 # Data files and pre-processing #
 #################################
-data_folder: !PLACEHOLDER # e.g, /datasets/ljspeech 16k!
+data_folder: !PLACEHOLDER # e.g, /datasets/ljspeech
 train_json: !ref <save_folder>/train.json
 valid_json: !ref <save_folder>/valid.json
 test_json: !ref <save_folder>/test.json
 
-splits: ["train", "valid"]
-split_ratio: [90, 10]
+splits: ["train", "valid", "test"]
+split_ratio: [80, 10, 10]
 skip_prep: False
 
-kmeans_folder: !PLACEHOLDER # e.g, ../../quantization/results/kmeans/4321/save
-codes_folder: !ref <save_folder>/codes
-encoder_hub: facebook/hubert-base-ls960
-layer: 6
+kmeans_folder: speechbrain/SSL_Quantization
+kmeans_dataset: LibriSpeech-100-360-500
+codes_save_folder: !ref <save_folder>/codes
+encoder_type: HuBERT # one of [HuBERT, Wav2Vec2, WavLM]
+encoder_hub: facebook/hubert-large-ll60k
+encoder_save_folder: !ref <save_folder>/ssl_encoder
+layer: [1, 3, 7, 12, 18, 23]
+num_clusters: 1000
+skip_extract: False
+
 
 ################################
 # Audio Parameters             #
@@ -43,7 +49,7 @@ layer: 6
 segment_size: 8960
 code_hop_size: 320
 sample_rate: 16000
-
+layer_drop: True
 
 hop_length: 256
 win_length: 1024
@@ -82,10 +88,10 @@ test_dataloader_opts:
 ################################
 # Model Parameters and model   #
 ################################
-duration_predictor: True
+duration_predictor: False
 
 # embedding params
-num_embeddings: 101 # K-means size + 1 for padding
+vocab_size: 6001 # K-means size * num layer + 1 for padding 1000x6+1
 embedding_dim: 128
 
 # generator params
@@ -139,7 +145,7 @@ generator: !new:speechbrain.lobes.models.HifiGAN.UnitHifiganGenerator
   inference_padding: !ref <inference_padding>
   cond_channels: !ref <cond_channels>
   conv_post_bias: !ref <conv_post_bias>
-  num_embeddings: !ref <num_embeddings>
+  vocab_size: !ref <vocab_size>
   embedding_dim: !ref <embedding_dim>
   duration_predictor: !ref <duration_predictor>
   var_pred_hidden_dim: !ref <var_pred_hidden_dim>
@@ -168,7 +174,7 @@ l1_spec_loss: !new:speechbrain.lobes.models.HifiGAN.L1SpecLoss
   mel_normalized: !ref <mel_normalized>
   power: !ref <power>
   dynamic_range_compression: !ref <dynamic_range_compression>
-mseg_dur_loss: True
+mseg_dur_loss: False
 
 generator_loss: !new:speechbrain.lobes.models.HifiGAN.GeneratorLoss
   stft_loss: !ref <stft_loss>
