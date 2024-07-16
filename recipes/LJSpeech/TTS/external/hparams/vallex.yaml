@@ -13,6 +13,7 @@ train_json: !ref <prepare_save_folder>/train.json
 valid_json: !ref <prepare_save_folder>/valid.json
 test_json: !ref <prepare_save_folder>/test.json
 sorting: ascending
+spk: random
 
 model: !new:speechbrain.lobes.models.externaltts.vallex.VALLEX
   source: !ref <source>

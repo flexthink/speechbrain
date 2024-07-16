@@ -18,6 +18,7 @@ spk: v2/en_speaker_9
 model: !new:speechbrain.lobes.models.externaltts.bark.Bark
   source: !ref <source>
   savedir: !ref <tts_save_path>
+  default_spk: !ref <spk>
 
 modules:
   model: !ref <model>

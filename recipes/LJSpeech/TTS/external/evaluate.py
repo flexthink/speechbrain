@@ -19,6 +19,23 @@ class TTSEvaluationBrain(EvaluationBrain):
     external (i.e. non-SpeechBrain) TTS systems"""
 
     def on_evaluation_start(self, dataset):
+        if self.hparams.spk == "random":
+            self.spk = self.select_random_spk()
+        else:
+            self.spk = self.hparams.spk
+        self.modules.model.to(self.device)
+
+    def select_random_spk(self):
+        """Selects a random item from the dataset
+        for a speaker prompt
+
+        Returns
+        -------
+        wav : torch.Tensor
+            The waveform
+        text : str
+            The transcription of the waveform
+        """
         generator = torch.Generator()
         generator.manual_seed(self.hparams.seed)
         data_idx = torch.randint(0, len(dataset), (1,), generator=generator).item()
@@ -29,8 +46,10 @@ class TTSEvaluationBrain(EvaluationBrain):
             orig_freq=self.hparams.sample_rate,
             new_freq=self.hparams.model_sample_rate,
         ).to(self.device)
-        self.spk = (wav, data["label_norm"])
-        self.modules.model.to(self.device)
+        return (wav, data["label_norm"])
+
+
+
 
     def create_samples(self, batch):
         batch = batch.to(self.device)
