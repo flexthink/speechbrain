@@ -42,7 +42,7 @@ class Mars(nn.Module):
             temperature=temperature,
             freq_penalty=freq_penalty,
         )
-    
+
     def forward(self, text, spk=None, language=None):
         """Performs inference
 
@@ -82,6 +82,9 @@ class Mars(nn.Module):
         tokens, _ = batch_pad_right(
             [item_tokens for item_tokens, _ in results]
         )
+        device = next(self.parameters()).device
+        wav = wav.to(device)
+        spk = spk.to(device)
         return TTSInferenceResult(
             wav=wav,
             length=length,
