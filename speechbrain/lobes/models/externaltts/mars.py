@@ -84,7 +84,8 @@ class Mars(nn.Module):
         )
         device = next(self.parameters()).device
         wav = wav.to(device)
-        spk = spk.to(device)
+        length = length.to(device)
+        tokens = tokens.to(device)
         return TTSInferenceResult(
             wav=wav,
             length=length,
