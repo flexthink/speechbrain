@@ -9,19 +9,23 @@ Authors:
 from speechbrain.dataio.dataset import FilteredSortedDynamicItemDataset
 from speechbrain.inference.interfaces import Pretrained
 from speechbrain.inference.ASR import EncoderDecoderASR
+from speechbrain.lobes.models.eval.utmos import UTMOSModel
 from speechbrain.lobes.models.huggingface_transformers import Whisper
 from speechbrain.decoders.seq2seq import S2SWhisperGreedySearch
 from speechbrain.dataio.batch import PaddedBatch, undo_batch
+from speechbrain.dataio.dataio import length_to_mask, write_audio
 from speechbrain.dataio.dataloader import make_dataloader
 from speechbrain.utils.metric_stats import ErrorRateStats
-from speechbrain.dataio.dataio import write_audio
+from speechbrain.utils.data_utils import pad_right_to
+from speechbrain.utils.fetching import fetch
+
 from collections import namedtuple
 from pathlib import Path
 from types import SimpleNamespace
 from torch.nn import ModuleDict
 from tqdm.auto import tqdm
+
 import csv
-import os
 import math
 import json
 import torch
@@ -29,8 +33,6 @@ import torchaudio
 import re
 import string
 import logging
-import shutil
-import subprocess
 
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,15 @@ RE_PUNCTUATION = re.compile(
 SpeechEvaluationResult = namedtuple(
     "SpeechEvaluationResult", ["score", "details"]
 )
+
+
+has_transformers = False
+try:
+    from transformers import AutoModelForAudioXVector
+    has_transformers = True
+except ImportError:
+    logger.warning("transformers library not found - some evaluators may be disabled")
+
 
 
 class SpeechEvaluator:
@@ -606,128 +617,119 @@ class BulkSpeechEvaluator:
         raise NotImplementedError()
 
 
-class UTMOSSpeechEvaluator(BulkSpeechEvaluator):
-    """An evaluation wrapper for UTMOS
+class UTMOSSpeechEvaluator(SpeechEvaluator):
+    """The UTMOS speech evaluator wrapper
 
     Github: https://github.com/sarulab-speech/UTMOS22
     HuggingFace: https://huggingface.co/spaces/sarulab-speech/UTMOS-demo
 
+
     Arguments
     ---------
-    model_path : str | path-like
-        The path where the HuggingFace repository was extracted
-    output_folder : str | path-like
-        The folder where results will be output
-    ckpt_path : str | path-like
-        The path to the checkpoint to be used
-    script : str | path-like
-        The path to the evaluation script, defaults to the bundled
-        predict.py
-    python : str | path-like, optional
-        The path to the Python interpreter to be used, defaults to
-        "python". Depending on the environment, it might need to be
-        changed (e.g. to "python3" or an absolute path to the interpreter)
-    use_python : bool
-        Whether to launch the script using python. This flag will need to be
-        set to False in environments where running UTMOS requires a wrapper shell
-        script (e.g. to initialize a different Python virtual environment from
-        the one in which SpeechBrain is running)
-    tmp_folder : str | path-like, optional
-        The temporary folder where files will be copied for evaluation. If
-        omitted, it will be set to output_folder. This can be useful on
-        compute environments that provide fast local storage (e.g. certain
-        compute clusters)
+    source : str, optional
+        The WavLM source
+    save_path : str | path-like, optional
+        The path where the model will be saved
+    featurs_dim : int, optional
+        The features dimension
+    num_domains : int, optional
+        The number of domains
+    domain_dim : int, optional
+        The dimension of each domain
+    num_judges : int, optional
+        The number of "judges"
+    judge_dim : int, optional
+        The dimension of each judge
+    decoder_hidden_size : int, optional
+        The size of the decoder hidden state
+    run_opts: dict, optional
+        The run options
     """
-
     def __init__(
         self,
-        model_path,
-        output_folder,
-        ckpt_path,
-        script="predict.py",
-        python="python",
-        use_python=True,
-        batch_size=8,
-        tmp_folder=None,
+        source=None,
+        sample_rate=None,
+        save_path=None,
+        model_name=None,
+        model_url=None,
+        domain_id=None,
+        judge_id=None,
+        run_opts=None,
     ):
-        self.output_folder = Path(output_folder)
-        rand = torch.randint(1, 999999999, (1,)).item()
-        if tmp_folder is None:
-            tmp_folder = self.output_folder
-        else:
-            tmp_folder = Path(tmp_folder)
-        self.eval_path = (tmp_folder / f"eval_{rand}").absolute()
-        self.model_path = Path(model_path).absolute()
-        script = self.model_path / script
-        self.script = script
-        self.ckpt_path = Path(ckpt_path).absolute()
-        self.batch_size = batch_size
-        self.python = python
-        self.use_python = use_python
+        super().__init__(sample_rate=sample_rate)
+        self.model = UTMOSModel(
+            source=source,
+            save_path=save_path,
+        )
+        if run_opts is not None:
+            device = run_opts.get("device")
+            if device:
+                self.model = self.model.to(device)
+        fetch(model_name, model_url, save_path)
+        model_path = Path(save_path) / model_name
+        state_dict = torch.load(model_path)
+        self.model.load_state_dict(state_dict)
+        self.model.eval()
 
-    def evaluate_files(self, file_names, text, file_names_ref=None):
-        """Evaluates multiple files
+        self.domain_id = domain_id
+        self.judge_id = judge_id
+
+    def evaluate(self, wavs, length, text=None, wavs_ref=None, length_ref=None, sample_rate=None, sample_rate_ref=None):
+        """Evaluates a batch of waveforms using UTMOS
 
         Arguments
         ---------
-        file_names : list
-            A list of files
+        wavs: torch.Tensor
+            the waveforms to evaluate
 
-        text : list
-            File transcripts (not required for all evaluators)
-            Not used in this evaluator
+        length: torch.Tensor
+            relative lengths (a 1-D tensor)
 
-        file_names_ref : list, optional
-            A list of reference files / ground truths (if applicable)
-            Not used in this evaluator
+        text : list, optional
+            Ground truth text. Ignored for UTMOS.
+
+        wavs_ref : torch.Tensor
+            the reference waveforms. Ignored for UTMOS.
+
+        length_ref : torch.Tensor
+            the reference waveform lengths. Ignored for UTMOS.
+
+        sample_rate : int, optional
+            The sample rate of the audio. If not provided,
+            the audio is assumed to be at the same sample
+            rate as the model
+
+        sample_rate_ref : int, optional
+            The sample rate of the reference samples. Ignored for UTMOS.
+        
+        run_opts : dict
+            Run options
 
         Returns
         -------
         result : SpeechEvaluationResult
-            a consolidated evaluation result
+            an aggregated speech evaluation result with a score
+            for each item
         """
-        current_path = os.getcwd()
-        try:
-            self.eval_path.mkdir(parents=True, exist_ok=True)
-            logger.info("Copying the files to '%s'", self.eval_path)
-            for file_name in file_names:
-                target_file_name = self.eval_path / Path(file_name).name
-                shutil.copy(file_name, target_file_name)
+        wavs = self.resample(wavs, sample_rate=sample_rate)
+        domain_id, judge_id = None, None
+        if self.domain_id is not None:
+            domain_id = torch.ones(len(wavs), device=wavs.device) * self.domain_id
+        if self.judge_id is not None:
+            judge_id = torch.ones(len(wavs), device=wavs.device) * self.judge_id
 
-            logger.info("Running evaluation")
-            result_path = self.eval_path / "result.txt"
-            os.chdir(self.model_path)
-            cmd = [
-                str(self.script),
-                "--mode",
-                "predict_dir",
-                "--bs",
-                str(self.batch_size),
-                "--inp_dir",
-                str(self.eval_path),
-                "--out_path",
-                str(result_path),
-                "--ckpt_path",
-                str(self.ckpt_path),
-            ]
-            if self.use_python:
-                cmd = [self.python] + cmd
+        scores = self.model(
+            wav=wavs,
+            domain_id=domain_id,
+            judge_id=judge_id
+        )
+        return SpeechEvaluationResult(
+            score=scores,
+            details={
+                "utmos": scores
+            }
+        )
 
-            output = subprocess.check_output(cmd)
-            logger.info("Evaluation finished, output: %s", output)
-            file_names = [path.name for path in self.eval_path.glob("*.wav")]
-            with open(result_path) as result_path:
-                scores = [float(line.strip()) for line in result_path]
-            score_map = dict(zip(file_names, scores))
-            scores_ordered = [
-                score_map[Path(file_name).name] for file_name in file_names
-            ]
-            return SpeechEvaluationResult(
-                scores_ordered, {"utmos": scores_ordered}
-            )
-        finally:
-            os.chdir(current_path)
-            shutil.rmtree(self.eval_path)
 
 class EvaluationBrain:
     """A wrapper similar to the core Brain class that runs standalone evaluation
@@ -1190,3 +1192,108 @@ def flatten(value):
         key: item_value.item() if torch.is_tensor(item_value) else item_value
         for key, item_value in value.items()
     }
+
+
+class SpkSimWavLM(SpeechEvaluator):
+    """A speaker similarity evaluator based on WavLM / XVector
+
+    Arguments
+    ---------
+    source : str
+        The model hub to use
+    savedir : str
+        The path where the model will be saved
+    model_sample_rate : int, optional
+        The sample rate to which all samples will be resampled
+        before being processed
+    """
+    def __init__(
+        self,
+        source,
+        savedir,
+        model_sample_rate=16000,
+        run_opts=None,
+        *args,
+        **kwargs
+    ):
+        if not has_transformers:
+            raise ValueError(
+                "Unable to use the SpkSimWavLM evaluator because the "
+                "transformers library is not enabled"
+            )
+        if run_opts is None:
+            run_opts = {}
+        device = run_opts.get("device")
+        self.model = AutoModelForAudioXVector.from_pretrained(
+            source, cache_dir=savedir,
+            *args,
+            **kwargs
+        )
+        if device is not None:
+            self.model = self.model.to(device)
+
+        self.model.eval()
+        self.model_sample_rate = model_sample_rate
+        self.device = next(self.model.parameters()).device
+
+    def evaluate(
+        self,
+        wavs,
+        length,
+        text=None,
+        wavs_ref=None,
+        length_ref=None,
+        sample_rate=None,
+        sample_rate_ref=None,
+    ):
+        # Resample
+        if sample_rate is not None:
+            wavs = torchaudio.functional.resample(
+                wavs,
+                orig_freq=sample_rate,
+                new_freq=self.model_sample_rate
+            )
+        if sample_rate_ref is not None:
+            wavs_ref = torchaudio.functional.resample(
+                wavs_ref,
+                orig_freq=sample_rate,
+                new_freq=self.model_sample_rate
+            )
+
+        # Concatenate
+        batch_size, wavs_max_len = wavs.shape
+        _, wavs_ref_max_len = wavs_ref.shape
+        length_abs = length * wavs_max_len
+        length_ref_abs = length_ref * wavs_ref_max_len        
+        max_len = max(wavs_max_len, wavs_ref_max_len)
+        wavs, _ = pad_right_to(
+            wavs,
+            (batch_size, max_len)
+        )
+        wavs_ref, _ = pad_right_to(
+            wavs_ref,
+            (batch_size, max_len)
+        )
+        audio = torch.cat([wavs, wavs_ref])
+
+        length_cat_abs = torch.cat([length_abs, length_ref_abs])
+        # Attention mask
+        attention_mask = None
+        attention_mask = length_to_mask(
+            length_cat_abs.int()
+        ).long()  # 0 for masked tokens
+        # Forward
+        embs = self.model(
+            input_values=audio,
+            attention_mask=attention_mask,
+            output_attentions=False,
+        ).embeddings
+        hyp_embs, ref_embs = embs.split([len(wavs), len(wavs_ref)])
+        scores = torch.nn.functional.cosine_similarity(
+            hyp_embs, ref_embs, dim=-1
+        )
+
+        return SpeechEvaluationResult(
+            scores,
+            {"score": scores}
+        )

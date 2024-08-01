@@ -11,16 +11,16 @@ eval_asr_source: !apply:speechbrain.utils.hparams.choice
     encoder_decoder: speechbrain/asr-transformer-transformerlm-librispeech
     whisper: openai/whisper-small
 eval_asr_beam_size: 66
+eval_utmos_source: chaanks/wav2vec2-small
+eval_utmos_save_path: !ref <pretrained_model_save_folder>/utmos
+eval_utmos_model_name: utmos.ckpt
+eval_utmos_model_url: https://huggingface.co/chaanks/UTMOS/resolve/main
+eval_utmos_domain_id: null
+eval_utmos_judge_id: null    
 evaluations: utmos,asr
 output_folder: !PLACEHOLDER
 pretrained_model_save_folder: null
 tmp_folder: null
-utmos_batch_size: 8
-utmos_model_path: null
-utmos_ckpt_name: epoch=3-step=7459.ckpt
-utmos_ckpt_path: !ref <utmos_model_path>/<utmos_ckpt_name>
-utmos_use_python: True
-utmos_script: predict.py
 skip_prep: False
 
 
@@ -38,18 +38,17 @@ eval_asr: !apply:speechbrain.utils.hparams.choice
       sample_rate: !ref <eval_sample_rate>
       savedir: !ref <pretrained_model_save_folder>
 
+eval_utmos: !name:speechbrain.inference.eval.UTMOSSpeechEvaluator
+  source: !ref <eval_utmos_source>
+  save_path: !ref <eval_utmos_save_path>
+  model_name: !ref <eval_utmos_model_name>
+  model_url: !ref <eval_utmos_model_url>
+  domain_id: !ref <eval_utmos_domain_id>
+  judge_id: !ref <eval_utmos_judge_id>
+
 evaluators:
   asr: !ref <eval_asr>
-
-bulk_evaluators:
-  utmos: !name:speechbrain.inference.eval.UTMOSSpeechEvaluator
-    model_path: !ref <utmos_model_path>
-    output_folder: !ref <output_folder>
-    ckpt_path: !ref <utmos_ckpt_path>
-    batch_size: !ref <utmos_batch_size>
-    script: !ref <utmos_script>
-    use_python: !ref <utmos_use_python>
-    tmp_folder: !ref <tmp_folder>
+  utmos: !ref <eval_utmos>  
 
 eval_summary:
   asr:
