@@ -1,5 +1,5 @@
 """
-A wrapper for the implementation of VALL-E X
+A wrapper for the open-source implementation of VALL-E X
 
 https://github.com/Plachtaa/VALL-E-X
 
@@ -14,7 +14,6 @@ from importlib import import_module
 from speechbrain.utils.data_utils import batch_pad_right
 from speechbrain.dataio.dataio import clean_padding
 from encodec import EncodecModel
-from encodec.utils import convert_audio
 from torch import nn
 import logging
 import pathlib
@@ -300,7 +299,11 @@ class VALLEX(nn.Module):
         ---------
         text : list
             A list of strings (raw text)
-        spk : torch.Tensor | list
+        spk : str | tuple
+            The speaker identity - a pre-defined preset or a (wav, text)
+            tupple
+        language : str
+            The language code (if used in a multilingual context)
 
 
         Returns
@@ -349,6 +352,24 @@ class VALLEX(nn.Module):
         )
 
     def _inference(self, text, audio_prompt_tokens, audio_prompt_text_tokens, prompt_language, text_language):
+        """Performs inference via Vall-E X
+
+        Arguments
+        ---------
+        text : str
+            The inference text
+        audio_prompt_tokens : torch.Tensor
+            The tokens corresponding to the audio prompt (for the speaker's voice, etc)
+        audio_prompt_text_tokens : torch.Tensor
+            The text tokens corresponding to the audio prompt
+        prompt_language : str
+            The language of the prompt
+
+        Returns
+        -------
+        encoded_frames : torch.Tensor
+            Speech tokens of the synthesized segment
+        """
         text_tokens, text_tokens_lens = self.collater([text])
         enroll_x_lens = audio_prompt_text_tokens.shape[1]
         text_token_cat_lens = text_tokens_lens + enroll_x_lens
@@ -370,5 +391,17 @@ class VALLEX(nn.Module):
         super().to(device)
         self.device = device
 
+
 def get_language_token(language):
+    """Computes the language token for the specified language identifier
+    
+    Arguments
+    ---------
+    language : str
+        The language code
+    
+    Returns
+    -------
+    language_token : str
+        The language token correspndoing to the language code"""
     return f"[{language.upper()}]"
