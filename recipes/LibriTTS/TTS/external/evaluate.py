@@ -180,19 +180,23 @@ if __name__ == "__main__":
         overrides=overrides,
     )
 
-    from ljspeech_prepare import prepare_ljspeech
+    from libritts_prepare import prepare_libritts
+    # Data preparation, to be run on only one process.
     if not hparams["skip_prep"]:
         run_on_main(
-            prepare_ljspeech,
+            prepare_libritts,
             kwargs={
                 "data_folder": hparams["data_folder"],
                 "save_folder": hparams["prepare_save_folder"],
-                "splits": hparams["splits"],
-                "split_ratio": hparams["split_ratio"],
+                "save_json_train": hparams["train_json"],
+                "save_json_valid": hparams["valid_json"],
+                "save_json_test": hparams["test_json"],
+                "sample_rate": hparams["sample_rate"],
+                "train_split": hparams["train_split"],
+                "valid_split": hparams["valid_split"],
+                "test_split": hparams["test_split"],
                 "seed": hparams["seed"],
-                "model_name": "tokotron",
-                "skip_ignore_folders": hparams["prepare_skip_ignore_folders"],
-                "frozen_split_path": hparams.get("frozen_split_path"),
+                "model_name": hparams["model"].__class__.__name__,
                 "device": run_opts.get("device", "cpu"),
             },
         )
