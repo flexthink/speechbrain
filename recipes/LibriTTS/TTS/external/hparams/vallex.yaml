@@ -7,13 +7,25 @@ output_folder: results/vallex
 prepare_save_folder: !ref <data_folder>/prepared
 prepare_skip_ignore_folders: False
 splits: ["valid", "test"]
-frozen_split_path: null
-split_ratio: [90, 5, 5]
+data_mode: lite
 train_json: !ref <prepare_save_folder>/train.json
 valid_json: !ref <prepare_save_folder>/valid.json
 test_json: !ref <prepare_save_folder>/test.json
+train_split: !apply:speechbrain.utils.hparams.choice
+  value: !ref <data_mode>
+  choices:
+    lite: ["train-clean-100"]
+    clean: ["train-clean-100", "train-clean-360"]
+    full: ["train-clean-100", "train-clean-360", "train-other-500"]
+valid_split: ["dev-clean"]
+test_split: ["test-clean"]
 sorting: ascending
 spk: random
+
+freezer: !new:speechbrain.dataio.preparation.Freezer
+    save_path: !ref <prepare_save_folder>
+    archive_path: !ref <prepare_archive_path>
+
 
 model: !new:speechbrain.lobes.models.externaltts.vallex.VALLEX
   source: !ref <source>
