@@ -264,6 +264,7 @@ def create_json(
     """
 
     # Downloads and initializes the G2P model to compute the phonemes if data is being prepared for Tacotron2 experiments
+    g2p = None
     if model_name == "Tacotron2":
         logger.info(
             "Computing phonemes for labels using SpeechBrain G2P. This may take a while."
@@ -322,7 +323,7 @@ def create_json(
         }
 
         # Characters are used for Tacotron2, phonemes may be needed for other models
-        if model_name not in ["Tacotron2", "HiFi-GAN"]:
+        if model_name not in ["Tacotron2", "HiFi-GAN"] and g2p is not None:
             # Computes phoneme labels using SpeechBrain G2P and keeps the punctuations
             phonemes = _g2p_keep_punctuations(g2p, normalized_text)
             json_dict[uttid].update({"label_phoneme": phonemes})
