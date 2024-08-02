@@ -22,11 +22,6 @@ test_split: ["test-clean"]
 sorting: ascending
 spk: random
 
-freezer: !new:speechbrain.dataio.preparation.Freezer
-    save_path: !ref <prepare_save_folder>
-    archive_path: !ref <prepare_archive_path>
-
-
 model: !new:speechbrain.lobes.models.externaltts.vallex.VALLEX
   source: !ref <source>
   savedir: !ref <tts_save_path>

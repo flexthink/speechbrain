@@ -215,8 +215,9 @@ if __name__ == "__main__":
     )
 
     from libritts_prepare import prepare_libritts
-    # Data preparation, to be run on only one process.
+    # Data preparation, to be run on only one process.    
     if not hparams["skip_prep"]:
+        eval_dataset = hparams["eval_dataset"]
         run_on_main(
             prepare_libritts,
             kwargs={
@@ -226,9 +227,9 @@ if __name__ == "__main__":
                 "save_json_valid": hparams["valid_json"],
                 "save_json_test": hparams["test_json"],
                 "sample_rate": hparams["sample_rate"],
-                "train_split": hparams["train_split"],
-                "valid_split": hparams["valid_split"],
-                "test_split": hparams["test_split"],
+                "train_split": hparams["train_split"] if eval_dataset == "train" else None,
+                "valid_split": hparams["valid_split"] if eval_dataset == "valid" else None,
+                "test_split": hparams["test_split"] if eval_dataset == "test" else None,
                 "seed": hparams["seed"],
                 "model_name": hparams["model"].__class__.__name__,
                 "device": run_opts.get("device", "cpu"),
