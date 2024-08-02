@@ -342,6 +342,7 @@ def create_json(
         )
 
     # Writes the dictionary to the json file
+    Path(json_file).parent.mkdir(parents=True, exist_ok=True)
     with open(json_file, mode="w") as json_f:
         json.dump(json_dict, json_f, indent=2)
 
