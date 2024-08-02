@@ -643,7 +643,7 @@ class UTMOSSpeechEvaluator(SpeechEvaluator):
     def __init__(
         self,
         source=None,
-        sample_rate=None,
+        sample_rate=16000,
         save_path=None,
         model_name=None,
         model_url=None,
