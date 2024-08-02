@@ -129,7 +129,7 @@ def dataio_prepare(hparams):
         replacements={"data_root": data_folder},
         output_keys=["uttid", "label"],
     )
-    dataset = select_subset(eval_dataset, hparams)
+    dataset = select_subset(dataset, hparams)
     dataset.add_dynamic_item(label_norm_pipeline)
     dataset.add_dynamic_item(audio_ref_pipeline)
     dataset.set_output_keys(
