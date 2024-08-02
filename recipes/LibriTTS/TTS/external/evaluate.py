@@ -8,6 +8,7 @@ import torchaudio
 
 from hyperpyyaml import load_hyperpyyaml
 from speechbrain.inference.eval import EvaluationBrain
+from speechbrain.dataio.dataset import FilteredSortedDynamicItemDataset
 from speechbrain.utils.distributed import run_on_main
 from pathlib import Path
 
@@ -128,6 +129,7 @@ def dataio_prepare(hparams):
         replacements={"data_root": data_folder},
         output_keys=["uttid", "label"],
     )
+    dataset = select_subset(eval_dataset, hparams)
     dataset.add_dynamic_item(label_norm_pipeline)
     dataset.add_dynamic_item(audio_ref_pipeline)
     dataset.set_output_keys(
@@ -141,6 +143,38 @@ def dataio_prepare(hparams):
             sort_key="label_norm_length", reverse=True
         )
     return dataset
+
+
+def select_subset(dataset, hparams):
+    """Selects a subset of the dataset provided, if specified.
+    The selection is controlled by a hyperparameter named
+    eval_subset, which is expected to list the IDs of the
+    data items on which evaluation will take place, one per line
+
+    Arguments
+    ---------
+    dataset : speechbrain.dataio.dataset.DynamicItemDataset
+        A dataset
+    hparams : dict
+        A hyperparameters file
+
+    Returns
+    -------
+    subset : dataset
+        The dataset, filtered down if applicable
+    """
+    eval_subset_path = hparams.get("eval_subset")
+    if eval_subset_path is not None:
+        eval_subset_path = Path(eval_subset_path)
+        if not eval_subset_path.exists():
+            raise ValueError(f"eval_subset {eval_subset_path} does not exist")
+        with open(eval_subset_path) as eval_subset_file:
+            eval_subset_ids = [line.strip() for line in eval_subset_file]
+        subset = FilteredSortedDynamicItemDataset(dataset, eval_subset_ids)
+    else:
+        subset = dataset
+    return subset
+
 
 
 if __name__ == "__main__":
