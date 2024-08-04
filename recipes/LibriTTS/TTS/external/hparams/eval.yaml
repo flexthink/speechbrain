@@ -2,6 +2,7 @@ batch_size: 4
 eval_dataset: valid
 eval_suffix: ""
 eval_sample_rate: 16000
+eval_spk_sim_sample_rate: 16000
 sample_rate: 22050
 pretrained_model_save_folder: null
 eval_samples: null
@@ -18,7 +19,8 @@ eval_utmos_model_url: https://huggingface.co/chaanks/UTMOS/resolve/main
 eval_utmos_domain_id: null
 eval_utmos_judge_id: null    
 eval_asr_beam_size: 66
-evaluations: utmos,asr
+eval_spk_sim_source: microsoft/wavlm-base-sv
+evaluations: utmos,asr,spk_sim
 output_folder: !PLACEHOLDER
 tmp_folder: null
 skip_prep: False
@@ -38,7 +40,6 @@ eval_asr: !apply:speechbrain.utils.hparams.choice
       sample_rate: !ref <eval_sample_rate>
       savedir: !ref <pretrained_model_save_folder>
 
-
 eval_utmos: !name:speechbrain.inference.eval.UTMOSSpeechEvaluator
   source: !ref <eval_utmos_source>
   save_path: !ref <eval_utmos_save_path>
@@ -47,13 +48,20 @@ eval_utmos: !name:speechbrain.inference.eval.UTMOSSpeechEvaluator
   domain_id: !ref <eval_utmos_domain_id>
   judge_id: !ref <eval_utmos_judge_id>
 
+eval_spk_sim: !name:speechbrain.inference.eval.SpkSimWavLM
+  source: !ref <eval_spk_sim_source>
+  savedir: !ref <pretrained_model_save_folder>
+  model_sample_rate: !ref <eval_spk_sim_sample_rate>
 
 evaluators:
   asr: !ref <eval_asr>
   utmos: !ref <eval_utmos>
+  spk_sim: !ref <eval_spk_sim>
 
 eval_summary:
   asr:
     descriptive: ["wer", "cer", "wer_ref", "cer_ref", "dwer", "dcer"]
   utmos:
     descriptive: ["utmos"]
+  spk_sim:
+    descriptive: ["score"]
