@@ -41,6 +41,7 @@ def prepare_libritts(
     train_split=None,
     valid_split=None,
     test_split=None,
+    min_utterance_length=1.0,
     seed=1234,
     model_name=None,
     extract_features=None,
@@ -78,6 +79,8 @@ def prepare_libritts(
         List of librispeech subsets to use (e.g., dev-clean) for the experiment validation stage.
     test_split : list
         List of librispeech subsets to use (e.g., test-clean) for the experiment testing stage.
+    min_utterance_length : float
+        The minimum utterance length to filter. If None is specified,
     seed : int
         Seed value
     model_name : str
@@ -116,6 +119,7 @@ def prepare_libritts(
             wav_list,
             save_json_train,
             sample_rate,
+            min_utterance_length,
             model_name,
             extract_features,
             extract_features_context,
@@ -130,6 +134,7 @@ def prepare_libritts(
             wav_list,
             save_json_valid,
             sample_rate,
+            min_utterance_length,
             model_name,
             extract_features,
             extract_features_context,
@@ -144,6 +149,7 @@ def prepare_libritts(
             wav_list,
             save_json_test,
             sample_rate,
+            min_utterance_length,
             model_name,
             extract_features,
             extract_features_context,
@@ -231,6 +237,7 @@ def create_json(
     wav_list,
     json_file,
     sample_rate,
+    min_utterance_length=1.0,
     model_name=None,
     extract_features=None,
     extract_features_context=None,
@@ -282,7 +289,7 @@ def create_json(
         duration = signal.shape[1] / sig_sr
 
         # TODO add better way to filter short utterances
-        if duration < 1.0:
+        if min_utterance_length is not None and duration < min_utterance_length:
             continue
 
         # Manipulates path to get relative path and uttid

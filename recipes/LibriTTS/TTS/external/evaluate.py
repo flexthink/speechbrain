@@ -232,6 +232,7 @@ if __name__ == "__main__":
                 "test_split": hparams["test_split"] if eval_dataset == "test" else None,
                 "seed": hparams["seed"],
                 "model_name": hparams["model"].__class__.__name__,
+                "min_utterance_length": None,
                 "device": run_opts.get("device", "cpu"),
             },
         )
