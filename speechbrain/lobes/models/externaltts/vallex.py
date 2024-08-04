@@ -345,6 +345,7 @@ class VALLEX(nn.Module):
         features = self.vocos.codes_to_features(frames)
         wav = self.vocos.decode(features, bandwidth_id=torch.tensor([2], device=self.device))
         wav = clean_padding(wav, length)
+        length = length.to(self.device)
         return TTSInferenceResult(
             wav=wav,
             length=length,
