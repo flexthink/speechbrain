@@ -9,6 +9,7 @@ Authors
 from torch import nn
 from .common import TTSInferenceResult
 from speechbrain.utils.data_utils import batch_pad_right
+from speechbrain.utils.data_utils import undo_padding
 import torch
 
 
@@ -26,6 +27,8 @@ class Mars(nn.Module):
         top_k=100,
         temperature=0.7,
         freq_penalty=3,
+        offset=0.3,
+        sample_rate=24000,
     ):
         super().__init__()
         if source is None:
@@ -42,6 +45,8 @@ class Mars(nn.Module):
             temperature=temperature,
             freq_penalty=freq_penalty,
         )
+        self.offset = offset
+        self.sample_rate = sample_rate
 
     def forward(self, text, spk=None, language=None):
         """Performs inference
@@ -67,14 +72,22 @@ class Mars(nn.Module):
             Raw tokens
         """
         spk_wav, spk_text = spk
+        if not isinstance(spk_text, list):
+            spk_wav = [spk_wav] * len(text)
+            spk_text = [spk_text] * len(text)
+        else:
+            spk_wav_data, spk_wav_lengths = spk_wav
+            spk_wav = undo_padding(spk_wav_data, spk_wav_lengths)
+
         results = [
             self.model.tts(
                 sample,
-                spk_wav,
-                spk_text,
+                item_spk_wav,
+                item_spk_text,
                 cfg=self.cfg
             )
-            for sample in text
+            for sample, item_spk_wav, item_spk_text
+            in zip(text, spk_wav, spk_text)
         ]
         wav, length = batch_pad_right(
             [item_wav for _, item_wav in results]
@@ -86,6 +99,13 @@ class Mars(nn.Module):
         wav = wav.to(device)
         length = length.to(device)
         tokens = tokens.to(device)
+
+        offset_frames = int(self.offset * self.sample_rate)
+        wav_len = wav.size(1)
+        wav_new_len = wav_len - offset_frames
+        length = (length * wav_len - offset_frames) / wav_new_len
+        wav = wav[:, offset_frames:]
+
         return TTSInferenceResult(
             wav=wav,
             length=length,
