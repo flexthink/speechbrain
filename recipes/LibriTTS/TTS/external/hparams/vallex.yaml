@@ -20,14 +20,19 @@ train_split: !apply:speechbrain.utils.hparams.choice
 valid_split: ["dev-clean"]
 test_split: ["test-clean"]
 sorting: ascending
-spk: random
+spk: random_match
+offset: 0.3
 
 model: !new:speechbrain.lobes.models.externaltts.vallex.VALLEX
   source: !ref <source>
   savedir: !ref <tts_save_path>
+  offset: !ref <offset>
 
 modules:
   model: !ref <model>
 
 model_args:
   language: en
+
+spk_sampler: !name:speechbrain.dataio.sampler.ReproducibleRandomSampler
+    seed: !ref <seed>  

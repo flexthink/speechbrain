@@ -84,7 +84,9 @@ class VALLEX(nn.Module):
         num_quantizers=8,
         target_bandwidth=6.0,
         prefix_mode=1,
+        offset=0.0,
         preset="neutral",
+        sample_rate=24000,
         device="cpu"
     ):
         super().__init__()
@@ -113,6 +115,8 @@ class VALLEX(nn.Module):
         if ckpt_path is None:
             ckpt_path = self.savedir / "checkpoints" / DEFAULT_CHECKPOINT
         self.load_ckpt(ckpt_path)
+        self.sample_rate = sample_rate
+        self.offset = offset
 
     def install(self):
         if self.is_installed():
@@ -262,7 +266,7 @@ class VALLEX(nn.Module):
         audio_tokens = audio_tokens.transpose(-1, -2)
         return audio_tokens, text_tokens
 
-    def get_audio_prompts(self, spk, language):
+    def get_audio_prompts(self, spk, language, count):
         """Prepares audio prompts
 
         Arguments
@@ -272,7 +276,10 @@ class VALLEX(nn.Module):
             or a (wav, text) tuple for voice cloning
 
         language : str, optional
-            a language identifier
+            a language identifier,
+        
+        count : int
+            the number of items
 
         Returns
         -------
@@ -281,15 +288,30 @@ class VALLEX(nn.Module):
         text_tokens : torch.Tensor
             The encoded text corresponding to the prompt
         """
+        multiple = False
         if spk is None:
             audio_tokens, text_tokens = self.get_preset_audio_prompt(self.preset)
         elif isinstance(spk, str):
             audio_tokens, text_tokens = self.get_preset_audio_prompt(self.preset)
         elif isinstance(spk, tuple):
             wav, text = spk
-            audio_tokens, text_tokens = self.get_waveform_audio_prompt(wav, text, language=language)
+            if isinstance(text, list):
+                prompts = [
+                    self.get_waveform_audio_prompt(item_wav, item_text, language=language)
+                    for item_wav, item_text in zip(wav, text)
+                ]
+                audio_tokens = [item for item, _ in prompts]
+                text_tokens = [item for _, item in prompts]
+                multiple = True
+            else:
+                audio_tokens, text_tokens = self.get_waveform_audio_prompt(wav, text, language=language)
         else:
             raise ValueError("Unsupported speaker prompt")
+
+        if not multiple:
+            audio_tokens = [audio_tokens] * count
+            text_tokens = [text_tokens] * count
+        
         return audio_tokens, text_tokens
 
     def forward(self, text, spk=None, language=None):
@@ -325,7 +347,7 @@ class VALLEX(nn.Module):
             self.tokenizer.tokenize(text=f"_{item}".strip())
             for item in prompt_text
         ]
-        audio_prompt_tokens, audio_prompt_text_tokens = self.get_audio_prompts(spk, language)
+        audio_prompt_tokens, audio_prompt_text_tokens = self.get_audio_prompts(spk, language, len(text))
 
         # Batch inference is not supported because of an implementation issue
         # in the underlying library
@@ -333,12 +355,13 @@ class VALLEX(nn.Module):
         encoded_frames_items = [
             self._inference(
                 text=item,
-                audio_prompt_tokens=audio_prompt_tokens,
-                audio_prompt_text_tokens=audio_prompt_text_tokens,
+                audio_prompt_tokens=item_audio_prompt_tokens,
+                audio_prompt_text_tokens=item_audio_prompt_text_tokens,
                 prompt_language=language,
                 text_language=item_lang
             )
-            for item, item_lang in prompt_token_lang
+            for (item, item_lang), item_audio_prompt_tokens, item_audio_prompt_text_tokens
+            in zip(prompt_token_lang, audio_prompt_tokens, audio_prompt_text_tokens)
         ]
         encoded_frames, length = batch_pad_right(encoded_frames_items)
         frames = encoded_frames.permute(2, 0, 1)
@@ -346,6 +369,11 @@ class VALLEX(nn.Module):
         wav = self.vocos.decode(features, bandwidth_id=torch.tensor([2], device=self.device))
         wav = clean_padding(wav, length)
         length = length.to(self.device)
+        offset_frames = int(self.offset * self.sample_rate)
+        wav_len = wav.size(1)
+        wav_new_len = wav_len - offset_frames
+        length = (length * wav_len - offset_frames) / wav_new_len
+        wav = wav[:, offset_frames:]
         return TTSInferenceResult(
             wav=wav,
             length=length,

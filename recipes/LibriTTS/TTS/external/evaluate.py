@@ -6,6 +6,7 @@ import logging
 import torch
 import torchaudio
 
+from functools import partial
 from hyperpyyaml import load_hyperpyyaml
 from speechbrain.inference.eval import EvaluationBrain
 from speechbrain.dataio.dataset import FilteredSortedDynamicItemDataset
@@ -51,9 +52,14 @@ class TTSEvaluationBrain(EvaluationBrain):
 
     def create_samples(self, batch):
         batch = batch.to(self.device)
+        spk = (
+            (batch.sig_random_match, batch.text_random_match)
+            if self.hparams.spk == "random_match"
+            else self.spk
+        )
         result = self.modules.model(
             text=batch.label_norm,
-            spk=self.spk,
+            spk=spk,
             **self.hparams.model_args
         )
         details = {"tokens": result.tokens}
@@ -132,9 +138,51 @@ def dataio_prepare(hparams):
     dataset = select_subset(dataset, hparams)
     dataset.add_dynamic_item(label_norm_pipeline)
     dataset.add_dynamic_item(audio_ref_pipeline)
-    dataset.set_output_keys(
-        ["uttid", "label_norm_eval", "label_norm", "label_norm_length", "sig"]
-    )
+
+    output_keys = [
+        "uttid", "label_norm_eval", "label_norm", "label_norm_length", "sig"
+    ]
+
+    if hparams["spk"] == "random_match":
+        spk_idx, spk_samplers = group_by_speaker(
+            dataset,
+            hparams
+        )
+        spk_sample = {}
+
+        def spk_random_match(uttid, dataset, spk_sample):
+            # Sample a speaker-matched embedding
+            selected_idx = spk_sample[uttid]
+
+            # Retrieve the embedding value from the dataset
+            with dataset.output_keys_as(["sig", "label_norm_eval"]):
+                sig = dataset[selected_idx]["sig"]
+                text = dataset[selected_idx]["label_norm_eval"]
+            yield sig
+            yield text
+
+        spk_emb_random_match_pipeline = partial(
+            spk_random_match,
+            spk_sample=spk_sample,
+            dataset=dataset.filtered_sorted(),
+        )
+        resample_fn = partial(
+            resample_spk,
+            spk_idx=spk_idx,
+            sample=spk_sample,
+            dataset=dataset,
+            spk_samplers=spk_samplers
+        )
+        resample_fn(epoch=0)
+
+        dataset.add_dynamic_item(
+            func=spk_emb_random_match_pipeline,
+            takes=["uttid"],
+            provides=["sig_random_match", "text_random_match"],
+        )
+        output_keys = output_keys + ["sig_random_match", "text_random_match"]
+
+    dataset.set_output_keys(output_keys)
 
     if hparams["sorting"] == "ascending":
         dataset = dataset.filtered_sorted(sort_key="label_norm_length")
@@ -175,6 +223,83 @@ def select_subset(dataset, hparams):
         subset = dataset
     return subset
 
+
+def group_by_speaker(dataset, hparams):
+    """Groups utterance IDs in a dataset by speaker, for selection. The selection
+    is stable based on the seed - calling this method multiple times will always
+    result in the same order
+
+    Arguments
+    ---------
+    dataset : torch.Tensor
+        the dataset from which to select items
+    hparams : dict
+        hyperparameters
+    
+    Returns
+    -------
+    spk_idx : dict
+        a str -> int dictionary with a list of utterance indexes
+        for every speaker
+    spk_samplers : dict
+        a reproducible sampler for every speaker
+    spk_samplers_it : dict
+        an iterator for each sampler
+    """
+    spk_idx = {}
+    spk_samplers = {}
+    speakers = []
+    generator = torch.Generator()
+    generator.manual_seed(hparams["seed"])
+
+    # Group by speaker
+    with dataset.output_keys_as(["spk_id"]):
+        for idx, item in enumerate(dataset):
+            spk_id = item["spk_id"]
+            if spk_id not in spk_idx:
+                spk_idx[spk_id] = []
+            spk_idx[spk_id].append(idx)
+            speakers.append(spk_id)
+
+    # Create a reproducible sampler
+    for spk_id in speakers:
+        sampler = hparams["spk_sampler"](data_source=spk_idx[spk_id])
+        spk_samplers[spk_id] = sampler
+
+    return spk_idx, spk_samplers
+
+
+def resample_spk(sample, spk_idx, spk_samplers, dataset, epoch):
+    """Selects new samples
+
+    Arguments
+    ---------
+    spk_idx : dict
+        Data item indexes grouped by speaker
+    spk_samplers : dict
+        A sampler for each speaker
+    spk_samplers_it : dict
+        An iterator for each speaker
+    epoch : int
+        The epoch number
+
+    Returns
+    -------
+    sample : dict
+        a dictionary with uttids as keys and matching
+        indexes as values
+    """
+    if epoch is None:
+        epoch = 0
+    spk_samplers_it = {}
+    for spk_id, sampler in spk_samplers.items():
+        sampler.set_epoch(epoch)
+        spk_samplers_it[spk_id] = iter(sampler)
+    with dataset.output_keys_as(["uttid", "spk_id"]):
+        for item in dataset:
+            spk_item_idx = next(spk_samplers_it[item["spk_id"]])
+            dataset_item_idx = spk_idx[item["spk_id"]][spk_item_idx]
+            sample[item["uttid"]] = dataset_item_idx
 
 
 if __name__ == "__main__":
