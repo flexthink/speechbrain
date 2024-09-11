@@ -12,6 +12,7 @@ from pathlib import Path
 from .common import InstallCommandError, TTSInferenceResult
 from importlib import import_module
 from speechbrain.utils.data_utils import batch_pad_right
+from speechbrain.utils.data_utils import undo_padding
 from speechbrain.dataio.dataio import clean_padding
 from encodec import EncodecModel
 from torch import nn
@@ -295,7 +296,9 @@ class VALLEX(nn.Module):
             audio_tokens, text_tokens = self.get_preset_audio_prompt(self.preset)
         elif isinstance(spk, tuple):
             wav, text = spk
+            # TODO: Fix vectorization - this is not efficient
             if isinstance(text, list):
+                wav = undo_padding(wav.data, wav.lengths)
                 prompts = [
                     self.get_waveform_audio_prompt(item_wav, item_text, language=language)
                     for item_wav, item_text in zip(wav, text)
