@@ -251,15 +251,18 @@ def group_by_speaker(dataset, hparams):
     speakers = []
     generator = torch.Generator()
     generator.manual_seed(hparams["seed"])
+    min_length = hparams.get("spk_match_min_length")
 
     # Group by speaker
-    with dataset.output_keys_as(["spk_id"]):
+    with dataset.output_keys_as(["spk_id", "label"]):
         for idx, item in enumerate(dataset):
+            if min_length is not None and len(item["label"]) < min_length:
+                continue
             spk_id = item["spk_id"]
             if spk_id not in spk_idx:
                 spk_idx[spk_id] = []
+                speakers.append(spk_id)
             spk_idx[spk_id].append(idx)
-            speakers.append(spk_id)
 
     # Create a reproducible sampler
     for spk_id in speakers:
