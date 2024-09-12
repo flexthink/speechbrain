@@ -184,12 +184,20 @@ def dataio_prepare(hparams):
 
     dataset.set_output_keys(output_keys)
 
+    key_test = {}
+    min_length = hparams.get("min_length")
+    if min_length:
+        key_test = {
+            "label": lambda label: len(label) >= min_length
+        }
     if hparams["sorting"] == "ascending":
-        dataset = dataset.filtered_sorted(sort_key="label_norm_length")
+        dataset = dataset.filtered_sorted(sort_key="label_norm_length", key_test=key_test)
     elif hparams["sorting"] == "descending":
         dataset = dataset.filtered_sorted(
-            sort_key="label_norm_length", reverse=True
+            sort_key="label_norm_length", reverse=True, key_test=key_test
         )
+    else:
+        dataset = dataset.filtered_sorted(key_test=key_test)
     return dataset
 
 
