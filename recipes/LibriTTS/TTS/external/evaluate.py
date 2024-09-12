@@ -254,15 +254,24 @@ def group_by_speaker(dataset, hparams):
     min_length = hparams.get("spk_match_min_length")
 
     # Group by speaker
+    longest = {}
+    spk_set = set([])
     with dataset.output_keys_as(["spk_id", "label"]):
         for idx, item in enumerate(dataset):
+            spk_id = item["spk_id"]
+            length = len(item["label"])
+            longest[spk_id] = max(length, longest.get(spk_id, 0))
             if min_length is not None and len(item["label"]) < min_length:
                 continue
-            spk_id = item["spk_id"]
             if spk_id not in spk_idx:
                 spk_idx[spk_id] = []
                 speakers.append(spk_id)
             spk_idx[spk_id].append(idx)
+            spk_set.add(spk_id)
+
+    missing = spk_set - set(spk_idx.keys())
+    for spk_id in missing:
+        spk_set.add(longest[spk_id])
 
     # Create a reproducible sampler
     for spk_id in speakers:
