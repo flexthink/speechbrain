@@ -271,7 +271,8 @@ def group_by_speaker(dataset, hparams):
 
     missing = spk_set - set(spk_idx.keys())
     for spk_id in missing:
-        spk_set.add(longest[spk_id])
+        spk_idx[spk_id] = [longest[spk_id]]
+        speakers.append(spk_id)
 
     # Create a reproducible sampler
     for spk_id in speakers:
