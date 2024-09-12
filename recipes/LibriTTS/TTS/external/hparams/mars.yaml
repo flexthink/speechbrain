@@ -22,7 +22,7 @@ valid_split: ["dev-clean"]
 test_split: ["test-clean"]
 sorting: ascending
 spk: random_match
-offset: 0.3
+offset: 0.0
 spk_match_min_length: 10
 min_length: 10
 
