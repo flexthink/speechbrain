@@ -255,23 +255,26 @@ def group_by_speaker(dataset, hparams):
 
     # Group by speaker
     longest = {}
+    longest_idx = {}
     spk_set = set([])
     with dataset.output_keys_as(["spk_id", "label"]):
         for idx, item in enumerate(dataset):
             spk_id = item["spk_id"]
             length = len(item["label"])
-            longest[spk_id] = max(length, longest.get(spk_id, 0))
+            spk_set.add(spk_id)
+            if length > longest.get(spk_id, 0):
+                longest[spk_id] = length
+                longest_idx[spk_id] = idx
             if min_length is not None and len(item["label"]) < min_length:
                 continue
             if spk_id not in spk_idx:
                 spk_idx[spk_id] = []
                 speakers.append(spk_id)
             spk_idx[spk_id].append(idx)
-            spk_set.add(spk_id)
 
     missing = spk_set - set(spk_idx.keys())
     for spk_id in missing:
-        spk_idx[spk_id] = [longest[spk_id]]
+        spk_idx[spk_id] = [longest_idx[spk_id]]
         speakers.append(spk_id)
 
     # Create a reproducible sampler
@@ -280,6 +283,12 @@ def group_by_speaker(dataset, hparams):
         spk_samplers[spk_id] = sampler
 
     return spk_idx, spk_samplers
+
+
+def looping_iterator(items):
+    while True:
+        for item in iter(items):
+            yield item
 
 
 def resample_spk(sample, spk_idx, spk_samplers, dataset, epoch):
@@ -307,7 +316,7 @@ def resample_spk(sample, spk_idx, spk_samplers, dataset, epoch):
     spk_samplers_it = {}
     for spk_id, sampler in spk_samplers.items():
         sampler.set_epoch(epoch)
-        spk_samplers_it[spk_id] = iter(sampler)
+        spk_samplers_it[spk_id] = looping_iterator(sampler)
     with dataset.output_keys_as(["uttid", "spk_id"]):
         for item in dataset:
             spk_item_idx = next(spk_samplers_it[item["spk_id"]])
