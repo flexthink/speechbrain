@@ -71,6 +71,7 @@ class Mars(nn.Module):
         tokens : torch.Tensor
             Raw tokens
         """
+        device = next(self.parameters()).device
         spk_wav, spk_text = spk
         if not isinstance(spk_text, list):
             spk_wav = [spk_wav] * len(text)
@@ -79,23 +80,31 @@ class Mars(nn.Module):
             spk_wav_data, spk_wav_lengths = spk_wav
             spk_wav = undo_padding(spk_wav_data, spk_wav_lengths)
 
-        results = [
-            self.model.tts(
-                sample,
-                item_spk_wav,
-                item_spk_text,
-                cfg=self.cfg
-            )
-            for sample, item_spk_wav, item_spk_text
-            in zip(text, spk_wav, spk_text)
-        ]
+        try:
+            results = [
+                self.model.tts(
+                    sample,
+                    item_spk_wav,
+                    item_spk_text,
+                    cfg=self.cfg
+                )
+                for sample, item_spk_wav, item_spk_text
+                in zip(text, spk_wav, spk_text)
+            ]
+        except RuntimeError as e:
+            if "kernel" not in str(e).lower():
+                raise
+            # Failure to produce any samples, zero length
+            results = [
+                (torch.zeros(100, device=device),
+                 torch.zeros(8192, device=device))
+            ] * len(text)
         wav, length = batch_pad_right(
             [item_wav for _, item_wav in results]
         )
         tokens, _ = batch_pad_right(
             [item_tokens for item_tokens, _ in results]
         )
-        device = next(self.parameters()).device
         wav = wav.to(device)
         length = length.to(device)
         tokens = tokens.to(device)
