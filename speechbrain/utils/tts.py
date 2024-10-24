@@ -256,8 +256,8 @@ class TTSProgressReport:
         """
         details = {
             "ids": ids,
-            "alignments": list(alignments),
-            "p_eos": list(p_eos),
+            "alignments": list(alignments) if alignments is not None else None,
+            "p_eos": list(p_eos)if p_eos is not None else None,
         }
         if self.details is None:
             self.details = details
