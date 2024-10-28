@@ -682,6 +682,8 @@ class UnitHifiganGenerator(HifiganGenerator):
     pooling_type: str, optional
         The type of pooling to use. Must be one of ["attention", "sum", "none"].
         Defaults to "attention" for scalable vocoder.
+    num_embeddings : int
+        Same as vocab_size, preserved only for legacy support
 
     Example
     -------
@@ -731,6 +733,7 @@ class UnitHifiganGenerator(HifiganGenerator):
         normalize_speaker_embeddings=False,
         skip_token_embedding=False,
         pooling_type="attention",
+        num_embeddings=None,
     ):
         super().__init__(
             in_channels,
@@ -745,6 +748,8 @@ class UnitHifiganGenerator(HifiganGenerator):
             cond_channels,
             conv_post_bias,
         )
+        if num_embeddings is not None:
+            vocab_size = num_embeddings
         self.unit_embedding = torch.nn.Embedding(vocab_size, embedding_dim)
         self.pooling_type = pooling_type
         if pooling_type == "attention":
