@@ -750,6 +750,9 @@ def apply_overfit_test(hparams, dataset):
             dataset_eval = dataset_train.filtered_sorted(
                 select_n=hparams["overfit_test_sample_count"]
             )
+            dataset_eval.set_output_keys(list(dataset["valid"].pipeline.output_mapping))
+            for dynamic_item in dataset["valid"].pipeline.dynamic_items:
+                dataset_eval.add_dynamic_item(dynamic_item)
             result = {
                 "train": dataset_train,
                 "valid": dataset_eval,
