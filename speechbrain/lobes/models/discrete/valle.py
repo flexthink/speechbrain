@@ -576,7 +576,7 @@ class VALLE(nn.Module):
         x_lens_abs = (x_lens * x.shape[1]).int()
         results = [
             self._infer(
-                x=x_item.unsqueeze(0),
+                x=x_item[:x_item_len].unsqueeze(0),
                 x_lens=x_item_len.unsqueeze(0),
                 y=y,
                 enroll_x_lens=enroll_x_lens,
@@ -648,8 +648,8 @@ class VALLE(nn.Module):
             prompt_language = 0
         if text_language is None:
             text_language = 0            
-        prompt_language_id = torch.LongTensor([prompt_language], device=x.device)
-        text_language_id = torch.LongTensor([text_language], device=x.device)
+        prompt_language_id = torch.tensor([prompt_language], device=x.device, dtype=torch.long)
+        text_language_id = torch.tensor([text_language], device=x.device, dtype=torch.long)
         x[:, :enroll_x_lens, :] += self.ar_language_embedding(prompt_language_id)
         x[:, enroll_x_lens:, :] += self.ar_language_embedding(text_language_id)
         x = self.ar_text_prenet(x)
