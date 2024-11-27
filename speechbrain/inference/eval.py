@@ -782,6 +782,10 @@ class EvaluationBrain:
             ckpt = self.hparams.checkpointer.recover_if_possible()
             if not ckpt:
                 raise ValueError("Unable to recover the checkpoint")
+        if self.hparams.eval_samples is not None:
+            dataset = dataset.filtered_sorted(
+                select_n=self.hparams.eval_samples
+            )            
         self.modules.model.eval()
         self.tracker = Tracker(
             file_name=self.get_tracker_file_name()
