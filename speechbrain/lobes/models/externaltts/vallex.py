@@ -380,7 +380,7 @@ class VALLEX(nn.Module):
         return TTSInferenceResult(
             wav=wav,
             length=length,
-            tokens=frames
+            tokens=frames.transpose(-1, -2)
         )
 
     def _inference(self, text, audio_prompt_tokens, audio_prompt_text_tokens, prompt_language, text_language):

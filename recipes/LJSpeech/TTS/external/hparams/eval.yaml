@@ -22,6 +22,7 @@ output_folder: !PLACEHOLDER
 pretrained_model_save_folder: null
 tmp_folder: null
 skip_prep: False
+eval_perf: False
 
 
 eval_asr: !apply:speechbrain.utils.hparams.choice

@@ -24,6 +24,7 @@ evaluations: utmos,asr,spk_sim
 output_folder: !PLACEHOLDER
 tmp_folder: null
 skip_prep: False
+eval_perf : False
 
 
 eval_asr: !apply:speechbrain.utils.hparams.choice

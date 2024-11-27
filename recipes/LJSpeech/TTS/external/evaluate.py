@@ -5,11 +5,15 @@ import sys
 import logging
 import torch
 import torchaudio
+import csv
 
 from hyperpyyaml import load_hyperpyyaml
 from speechbrain.inference.eval import EvaluationBrain
 from speechbrain.utils.distributed import run_on_main
 from pathlib import Path
+from torch.utils.flop_counter import FlopCounterMode
+from contextlib import nullcontext
+
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +53,32 @@ class TTSEvaluationBrain(EvaluationBrain):
         return (wav, data["label_norm"])
 
     def create_samples(self, batch):
+        stats = {}
+        if self.hparams.eval_perf:
+            flop_counter = FlopCounterMode()
+        else:
+            flop_counter = nullcontext()
+
         batch = batch.to(self.device)
-        result = self.modules.model(
-            text=batch.label_norm,
-            spk=self.spk,
-            **self.hparams.model_args
-        )
-        details = {"tokens": result.tokens}
+        with flop_counter:
+            result = self.modules.model(
+                text=batch.label_norm,
+                spk=self.spk,
+                **self.hparams.model_args
+            )
+            details = {"tokens": result.tokens}
+
+        if self.hparams.eval_perf:
+            total_flops = flop_counter.get_total_flops()
+            steps = result.tokens.size(1)
+            stats = {
+                "infer_flops": total_flops,
+                "steps": steps,
+                "infer_flops_per_step": total_flops / steps,
+            }
+
+        details["perf_stats"] = stats
+
         return result.wav, result.length, details
 
 
