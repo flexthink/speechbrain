@@ -854,7 +854,7 @@ class EvaluationBrain:
             self.report_writers[evaluator_key] = writer
 
         if self.hparams.eval_perf:
-            self.perf_file = open(self.output_folder / "perf.csv", "w")
+            self.perf_file = open(self.output_folder / "perf.csv", "a+")
             self.perf_writer = csv.DictWriter(
                 self.perf_file,
                 [
