@@ -894,7 +894,7 @@ def concat_padded_features(
 
     out_shape = list(first_item.shape)
     out_shape[dim] = total_length
-    out = torch.zeros(out_shape).to(first_item.device)
+    out = torch.zeros(out_shape).to(first_item.device, dtype=feats[0].dtype)
     for item, item_in_start, item_in_end, item_out_start, item_out_end in zip(
         feats, in_start, in_end, out_start, out_end
     ):

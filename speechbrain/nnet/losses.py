@@ -13,6 +13,7 @@ import functools
 import math
 from collections import namedtuple
 from itertools import permutations
+from functools import partial
 
 import numpy as np
 import torch
@@ -334,7 +335,7 @@ def l1_loss(
 
 
 def mse_loss(
-    predictions, targets, length=None, allowed_len_diff=3, reduction="mean"
+    predictions, targets, length=None, mask=None, allowed_len_diff=3, reduction="mean"
 ):
     """Compute the true mean squared error, accounting for length differences.
 
@@ -346,6 +347,8 @@ def mse_loss(
         Target tensor with the same size as predicted tensor.
     length : torch.Tensor
         Length of each utterance for computing true error with a mask.
+    mask : torch.Tensor
+        A custom mask
     allowed_len_diff : int
         Length difference that will be tolerated before raising an exception.
     reduction : str
@@ -366,7 +369,7 @@ def mse_loss(
     predictions, targets = truncate(predictions, targets, allowed_len_diff)
     loss = functools.partial(torch.nn.functional.mse_loss, reduction="none")
     return compute_masked_loss(
-        loss, predictions, targets, length, reduction=reduction
+        loss, predictions, targets, length, mask=mask, reduction=reduction
     )
 
 
@@ -420,6 +423,7 @@ def nll_loss(
     log_probabilities,
     targets,
     length=None,
+    mask=None,
     label_smoothing=0.0,
     allowed_len_diff=3,
     weight=None,
@@ -436,6 +440,8 @@ def nll_loss(
         The targets, of shape [batch] or [batch, frames].
     length : torch.Tensor
         Length of each utterance, if frame-level loss is desired.
+    mask : torch.Tensor
+        A custom mask
     label_smoothing : float
         The amount of smoothing to apply to labels (default 0.0, no smoothing)
     allowed_len_diff : int
@@ -473,6 +479,7 @@ def nll_loss(
         log_probabilities,
         targets.long(),
         length,
+        mask=mask,
         label_smoothing=label_smoothing,
         reduction=reduction,
     )
@@ -482,6 +489,7 @@ def bce_loss(
     inputs,
     targets,
     length=None,
+    mask=None,
     weight=None,
     pos_weight=None,
     reduction="mean",
@@ -501,6 +509,8 @@ def bce_loss(
         The targets, of shape [batch] or [batch, frames].
     length : torch.Tensor
         Length of each utterance, if frame-level loss is desired.
+    mask: torch.Tensor  
+        A custom mask
     weight : torch.Tensor
         A manual rescaling weight if provided it’s repeated to match input
         tensor shape.
@@ -549,6 +559,7 @@ def bce_loss(
         inputs,
         targets.float(),
         length,
+        mask=mask,
         label_smoothing=label_smoothing,
         reduction=reduction,
     )
@@ -558,6 +569,7 @@ def kldiv_loss(
     log_probabilities,
     targets,
     length=None,
+    mask=None,
     label_smoothing=0.0,
     allowed_len_diff=3,
     pad_idx=0,
@@ -575,6 +587,8 @@ def kldiv_loss(
         The targets, of shape [batch] or [batch, frames].
     length : torch.Tensor
         Length of each utterance, if frame-level loss is desired.
+    mask : torch.Tensor
+        A custom mask
     label_smoothing : float
         The amount of smoothing to apply to labels (default 0.0, no smoothing)
     allowed_len_diff : int
@@ -631,7 +645,7 @@ def kldiv_loss(
         else:
             return loss
     else:
-        return nll_loss(log_probabilities, targets, length, reduction=reduction)
+        return nll_loss(log_probabilities, targets, length, mask=mask, reduction=reduction)
 
 
 def distance_diff_loss(
@@ -640,6 +654,8 @@ def distance_diff_loss(
     length=None,
     beta=0.25,
     max_weight=100.0,
+    gamma=1.0,
+    two_sided=False,
     reduction="mean",
 ):
     """A loss function that can be used in cases where a model outputs
@@ -648,7 +664,7 @@ def distance_diff_loss(
     truth is the precise values of the variable from a data sample.
 
     The loss is defined as
-    loss_i = p_i * exp(beta * |i - y|) - 1.
+    loss_i = p_i * (exp(beta * |i - y|) - 1.) * gamma
 
     The loss can also be used where outputs aren't probabilities, so long
     as high values close to the ground truth position and low values away
@@ -656,26 +672,39 @@ def distance_diff_loss(
 
     Arguments
     ---------
-    predictions: torch.Tensor
+    predictions : torch.Tensor
         a (batch x max_len) tensor in which each element is a probability,
         weight or some other value at that position
-    targets: torch.Tensor
-        a 1-D tensor in which each element is thr ground truth
-    length: torch.Tensor
+
+    targets : torch.Tensor
+        a 1-D tensor in which each elemnent is thr ground truth
+
+    length : torch.Tensor
         lengths (for masking in padded batches)
-    beta: torch.Tensor
-        a hyperparameter controlling the penalties. With a higher beta,
-        penalties will increase faster
+
+    beta : float
+        a hyperparameter controlling the penalties, an exponent multiplier.
+        With a higher beta, penalties will increase faster
+
     max_weight: torch.Tensor
         the maximum distance weight (for numerical stability in long sequences)
-    reduction: str
+
+    gamma : float
+        a global multiplier - used control the shape of the weighting function
+
+    two_sided : bool
+        if set to true, a penalty is added for outputting a low probability
+        close to the end
+
+    reduction : str
         Options are 'mean', 'batch', 'batchmean', 'sum'.
         See pytorch for 'mean', 'sum'. The 'batch' option returns
         one loss per item in the batch, 'batchmean' returns sum / batch size
 
     Returns
     -------
-    The masked loss.
+    loss : torch.Tensor
+        The computed loss value
 
     Example
     -------
@@ -691,8 +720,12 @@ def distance_diff_loss(
     tensor(0.2967)
     """
     return compute_masked_loss(
-        functools.partial(
-            _distance_diff_loss, beta=beta, max_weight=max_weight
+        partial(
+            _distance_diff_loss,
+            beta=beta,
+            max_weight=max_weight,
+            two_sided=two_sided,
+            gamma=gamma,
         ),
         predictions=predictions,
         targets=targets,
@@ -702,7 +735,32 @@ def distance_diff_loss(
     )
 
 
-def _distance_diff_loss(predictions, targets, beta, max_weight):
+def distance_diff_loss_ramp(beta, max_weight, gamma):
+    """For distance_diff_loss, calculates the number of steps from the ground truth
+    at which the weight reaches the maximum
+
+    Arguments
+    ---------
+    beta : float
+        A hyperparameter controlling the penalties. With a higher beta,
+        penalties will increase faster
+    max_weight : torch.Tensor
+        The maximum distance loss weight
+    gamma : float
+        A global linear multiplier - used control the shape of the weighting
+        function
+
+    Returns
+    -------
+    loss : torch.Tensor
+        The loss value
+    """
+    return math.log(max_weight / gamma - 1) / beta
+
+
+def _distance_diff_loss(
+    predictions, targets, beta, max_weight, gamma, two_sided=False
+):
     """Computes the raw (unreduced) distance difference loss
 
     Arguments
@@ -710,25 +768,42 @@ def _distance_diff_loss(predictions, targets, beta, max_weight):
     predictions: torch.Tensor
         a (batch x max_len) tensor in which each element is a probability,
         weight or some other value at that position
+
     targets: torch.Tensor
-        a 1-D tensor in which each element is thr ground truth
+        a 1-D tensor in which each elemnent is thr ground truth
+
     beta: torch.Tensor
         a hyperparameter controlling the penalties. With a higher beta,
         penalties will increase faster
+
     max_weight: torch.Tensor
         the maximum distance weight (for numerical stability in long sequences)
 
+    gamma : float
+        a global multiplier - used control the shape of the weighting function
+
+    two_sided : bool
+        if set to true, a penalty is added for outputting a low probability
+        close to the end
+
     Returns
     -------
-    The raw distance loss.
+    loss : torch.Tensor
+        The loss value
     """
     batch_size, max_len = predictions.shape
     pos_range = (torch.arange(max_len).unsqueeze(0).repeat(batch_size, 1)).to(
         predictions.device
     )
     diff_range = (pos_range - targets.unsqueeze(-1)).abs()
-    loss_weights = ((beta * diff_range).exp() - 1.0).clamp(max=max_weight)
-    return (loss_weights * predictions).unsqueeze(-1)
+    loss_weights = (((beta * diff_range).exp() - 1.0) * gamma).clamp(
+        max=max_weight
+    )
+    loss = loss_weights * predictions
+    if two_sided:
+        flip_loss = (max_weight - loss_weights) * (1 - predictions)
+        loss = loss + flip_loss
+    return loss
 
 
 def truncate(predictions, targets, allowed_len_diff=3):
@@ -768,6 +843,7 @@ def compute_masked_loss(
     predictions,
     targets,
     length=None,
+    mask=None,
     label_smoothing=0.0,
     mask_shape="targets",
     reduction="mean",
@@ -786,6 +862,8 @@ def compute_masked_loss(
     length : torch.Tensor
         Length of each utterance to compute mask. If None, global average is
         computed and returned.
+    mask : torch.Tensor
+        A custom mask
     label_smoothing: float
         The proportion of label smoothing. Should only be used for NLL loss.
         Ref: Regularizing Neural Networks by Penalizing Confident Output
@@ -812,16 +890,16 @@ def compute_masked_loss(
     # Compute, then reduce loss
     loss = loss_fn(predictions, targets)
 
-    if mask_shape == "targets":
-        mask_data = targets
-    elif mask_shape == "predictions":
-        mask_data = predictions
-    elif mask_shape == "loss":
-        mask_data = loss
-    else:
-        raise ValueError(f"Invalid mask_shape value {mask_shape}")
-
-    mask = compute_length_mask(mask_data, length)
+    if mask is None:
+        if mask_shape == "targets":
+            mask_data = targets
+        elif mask_shape == "predictions":
+            mask_data = predictions
+        elif mask_shape == "loss":
+            mask_data = loss
+        else:
+            raise ValueError(f"Invalid mask_shape value {mask_shape}")
+        mask = compute_length_mask(mask_data, length)
 
     loss *= mask
     return reduce_loss(
@@ -1979,3 +2057,5 @@ class LaplacianVarianceLoss(nn.Module):
         else:
             loss = laplacian.masked_select(mask).var()
         return -loss
+
+
