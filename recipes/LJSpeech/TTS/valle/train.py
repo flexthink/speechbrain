@@ -58,7 +58,8 @@ class VALLEBrain(sb.Brain):
         prompt, prompt_length = batch.prompt
         batch_size, prompt_max_len, num_tracks = prompt.shape
         nar_track = torch.randint(
-            1, num_tracks, (batch_size,)
+            1, num_tracks, (batch_size,),
+            device=self.device
         )
         logits_ar, logits_nar = self.modules.model(
             dec_seq=batch.prompt.data,
