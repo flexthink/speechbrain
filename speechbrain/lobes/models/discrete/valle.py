@@ -190,8 +190,8 @@ class ValleLM(nn.Module):
             maxlen = suffix.size(1)
 
         generated = {"token": [], "score": []}
-        finish_idx = torch.Tensor([-1], device=device).expand(opts.nbest).long()
-        prev_tok = torch.Tensor([opts.start], device=device).tile(opts.nbest, 1).long()
+        finish_idx = torch.tensor([-1], device=device).expand(opts.nbest).long()
+        prev_tok = torch.tensor([opts.start], device=device).tile(opts.nbest, 1).long()
         for step in range(maxlen):
             #  (3.2) AR loop
             prev_emb = self.emb(prev_tok)  # [B, 1, D]
