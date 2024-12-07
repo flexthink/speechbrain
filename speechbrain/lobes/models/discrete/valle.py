@@ -51,7 +51,8 @@ class ValleLM(nn.Module):
         ar_layer: int = 4,
         nar_layer: int = 4,
         n_ctx: int = 3000,
-        residual: bool = True
+        residual: bool = True,
+        dropout=0.0,
     ):
         """Initialize Vall-E model
 
@@ -73,7 +74,12 @@ class ValleLM(nn.Module):
             self.lm_head.weight = self.emb.weight
 
         self.ar_decoder = TransformerDecoder(
-            n_ctx=n_ctx, n_state=att_unit, n_head=head, n_layer=ar_layer, causal=True
+            n_ctx=n_ctx,
+            n_state=att_unit,
+            n_head=head,
+            n_layer=ar_layer,
+            causal=True,
+            dropout=dropout
         )
 
         self.nar_decoder = ValleNARDecoder(
@@ -83,6 +89,7 @@ class ValleLM(nn.Module):
             n_head=head,
             n_layer=nar_layer,
             causal=False,
+            dropout=dropout,
         )
 
         self.nq = nq
@@ -305,7 +312,7 @@ class ValleLM(nn.Module):
 
 
 class ResidualAttentionBlock(nn.Module):
-    def __init__(self, n_state: int, n_head: int, cross_attention: bool = False):
+    def __init__(self, n_state: int, n_head: int, cross_attention: bool = False, dropout=0.0):
         super().__init__()
 
         self.attn = MultiHeadAttention(n_state, n_head)
@@ -321,6 +328,7 @@ class ResidualAttentionBlock(nn.Module):
             Linear(n_state, n_mlp), nn.GELU(), Linear(n_mlp, n_state)
         )
         self.mlp_ln = LayerNorm(n_state)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(
         self,
@@ -329,10 +337,10 @@ class ResidualAttentionBlock(nn.Module):
         mask: Optional[Tensor] = None,
         kv_cache: Optional[dict] = None,
     ):
-        x = x + self.attn(self.attn_ln(x), mask=mask, kv_cache=kv_cache)[0]
+        x = x + self.dropout(self.attn(self.attn_ln(x), mask=mask, kv_cache=kv_cache)[0])
         if self.cross_attn:
-            x = x + self.cross_attn(self.cross_attn_ln(x), xa, kv_cache=kv_cache)[0]
-        x = x + self.mlp(self.mlp_ln(x))
+            x = x + self.dropout(self.cross_attn(self.cross_attn_ln(x), xa, kv_cache=kv_cache)[0])
+        x = x + self.dropout(self.mlp(self.mlp_ln(x)))
         return x
 
 
@@ -345,6 +353,7 @@ class TransformerDecoder(nn.Module):
         n_layer: int,
         causal: bool = True,
         layer_class=ResidualAttentionBlock,
+        dropout=0.0
     ):
         super().__init__()
 
@@ -352,7 +361,7 @@ class TransformerDecoder(nn.Module):
 
         self.blocks = nn.ModuleList(
             [
-                layer_class(n_state, n_head, cross_attention=False)
+                layer_class(n_state, n_head, cross_attention=False, dropout=dropout)
                 for _ in range(n_layer)
             ]
         )
@@ -394,7 +403,7 @@ class Linear(nn.Linear):
 
 
 class ResidualAttentionBlockAdaLM(ResidualAttentionBlock):
-    def __init__(self, n_state: int, n_head: int, cross_attention: bool = False):
+    def __init__(self, n_state: int, n_head: int, cross_attention: bool = False, dropout=0.9):
         super(ResidualAttentionBlockAdaLM, self).__init__(
             n_state=n_state,
             n_head=n_head,
@@ -404,6 +413,7 @@ class ResidualAttentionBlockAdaLM(ResidualAttentionBlock):
         for name, module in self.named_modules():
             if isinstance(module, nn.LayerNorm):
                 setattr(self, name, AdaLN(n_state))
+        self.dropout = nn.Dropout(dropout)
 
     def forward(
         self,
@@ -413,15 +423,15 @@ class ResidualAttentionBlockAdaLM(ResidualAttentionBlock):
         mask: Optional[Tensor] = None,
         kv_cache: Optional[dict] = None,
     ):
-        x = x + self.attn(self.attn_ln(x, level), mask=mask, kv_cache=kv_cache)[0]
+        x = x + self.dropout(self.attn(self.attn_ln(x, level), mask=mask, kv_cache=kv_cache)[0])
         if self.cross_attn:
             x = (
                 x
-                + self.cross_attn(self.cross_attn_ln(x, level), xa, kv_cache=kv_cache)[
-                    0
-                ]
+                + self.dropout(
+                    self.cross_attn(self.cross_attn_ln(x, level), xa, kv_cache=kv_cache)[0]
+                )
             )
-        x = x + self.mlp(self.mlp_ln(x, level))
+        x = x + self.dropout(self.mlp(self.mlp_ln(x, level)))
         return x
 
 
@@ -435,6 +445,7 @@ class ValleNARDecoder(TransformerDecoder):
         n_layer: int,
         causal: bool = True,
         layer_class=ResidualAttentionBlockAdaLM,
+        dropout=0.0
     ):
         super(ValleNARDecoder, self).__init__(
             n_ctx=n_ctx,
@@ -443,6 +454,7 @@ class ValleNARDecoder(TransformerDecoder):
             n_layer=n_layer,
             causal=causal,
             layer_class=layer_class,
+            dropout=dropout
         )
         self.level_emb = nn.Embedding(n_level, n_state)
         self.ln = AdaLN(n_state)
