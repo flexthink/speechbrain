@@ -95,13 +95,14 @@ special_tokens: ["<bos>", "<eos>", "<eot>"]
 special_num_tokens: 4
 
 # stages related parameters
-lr: 0.0005
-lr_warmup_steps: 10000
+lr: 0.002
+betas: [0.9, 0.95]
+lr_warmup_steps: 7000
 lr_annealing_mode: step
 
 # Feature parameters
 sample_rate: 22050
-model_sample_rate: 16000
+model_sample_rate: 24000
 max_audio_length: 1000
 max_length_ratio: 5.0
 text_max_length: 500
@@ -176,8 +177,8 @@ extract_features_opts:
 # Transformer
 d_model: 256
 nhead: 4
-num_layers_ar: 4
-num_layers_nar: 4
+num_layers_ar: 12
+num_layers_nar: 12
 activation: !name:torch.nn.GELU
 audio_num_tokens: 1000
 audio_dim: 1024
@@ -223,12 +224,10 @@ vocoder_continuous: !name:speechbrain.inference.vocoders.VocoderWrapper
         source: !ref <vocoder_src>
         savedir: !ref <vocoder_model_path>
 
-vocoder: !apply:speechbrain.utils.hparams.choice
-    value: !ref <representation_mode>
-    apply: True
-    choices:
-        discrete: !ref <vocoder_discrete>
-        continuous: !ref <vocoder_continuous>
+vocoder: !new:speechbrain.lobes.models.huggingface_transformers.vocos.Vocos
+    source: !ref <vocoder_src>
+    save_path: !ref <pretrained_model_save_folder>
+    bandwidth: !ref <bandwidth>
 
 emb:
     spk:
@@ -261,6 +260,7 @@ modules:
 # define two optimizers here for two-stage training
 opt_class: !name:torch.optim.Adam
     lr: !ref <lr>
+    betas: !ref <betas>
 
 compute_cost: !name:speechbrain.nnet.losses.nll_loss
 

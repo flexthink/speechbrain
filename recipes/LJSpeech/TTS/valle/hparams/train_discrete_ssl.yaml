@@ -99,7 +99,8 @@ special_tokens: ["<bos>", "<eos>", "<eot>"]
 special_num_tokens: 4
 
 # stages related parameters
-lr: 0.0005
+lr: 0.002
+betas: [0.9, 0.95]
 lr_warmup_steps: 10000
 lr_annealing_mode: step
 
@@ -295,6 +296,7 @@ modules:
 # define two optimizers here for two-stage training
 opt_class: !name:torch.optim.Adam
     lr: !ref <lr>
+    betas: !ref <betas>
 
 compute_cost: !name:speechbrain.nnet.losses.nll_loss
 
