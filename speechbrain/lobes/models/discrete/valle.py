@@ -56,15 +56,24 @@ class ValleLM(nn.Module):
     ):
         """Initialize Vall-E model
 
-        Args:
-            vocab_size (int): Dimention of vocabulary.
-            nq (int): Number of codes for each token / frame, usually for speech codec.
-            share_emb (bool): If true, share the embedding and lm_head weight.
-            att_unit (int): Dimention of Transformer attention.
-            head (int): Number of heads in Transformer attention.
-            ar_layer (int): Number of layers in AR Transformer.
-            nar_layer (int): Number of layers in NAR Transformer.
-            n_ctx (int): maximum context length of AR & NAR Transformer.
+        Arguments
+        ---------
+        vocab_size : int
+             Dimention of vocabulary.
+        nq : int
+            Number of codes for each token / frame, usually for speech codec.
+        share_emb : bool
+            If true, share the embedding and lm_head weight.
+        att_unit : int
+            Dimention of Transformer attention.
+        head : int
+            Number of heads in Transformer attention.
+        ar_layer : int
+            Number of layers in AR Transformer.
+        nar_layer : int
+            Number of layers in NAR Transformer.
+        n_ctx : int
+            maximum context length of AR & NAR Transformer.
         """
         super(ValleLM, self).__init__()
 
@@ -106,14 +115,20 @@ class ValleLM(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
         """Vall-E forward for training
 
-        Args:
-            dec_seq (LongTensor): Batch of decoder sequences (B, T, nq).
-            dec_seq_lengths (Tensor): Lengths of batched decoder sequences (B,).
-            enc_seq (LongTensor): Batch of encoder sequences (B, T, nq), keep
-                the interface, may not be used.
-            enc_seq_lengths (LongTensor): Lengths of batched encoder sequences (B,),
-                keep the interface, may not be used.
-            prefix_len (LongTensor): Lengths of condition part in dec_seq (B,).
+        Arguments
+        ---------
+        dec_seq : torch.LongTensor
+            Batch of decoder sequences (B, T, nq).
+        dec_seq_lengths : torch.Tensor
+            Lengths of batched decoder sequences (B,).
+        enc_seq : torch.LongTensor
+            Batch of encoder sequences (B, T, nq), keep
+            the interface, may not be used.
+        enc_seq_lengths : torch.LongTensor 
+            Lengths of batched encoder sequences (B,),
+            keep the interface, may not be used.
+        prefix_len : torch.LongTensor 
+            Lengths of condition part in dec_seq (B,).
         """
 
         assert dec_seq.dim() == 3
