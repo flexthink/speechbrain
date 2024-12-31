@@ -33,7 +33,7 @@ num_audio_samples: 32
 
 freeze_token_model: True
 token_model_src: "facebook/encodec_24khz"
-vocoder_model: "charactr/vocos-encodec-24khz"
+vocoder_src: "charactr/vocos-encodec-24khz"
 
 g2p_src: speechbrain/soundchoice-g2p
 token_model_kmeans_src: poonehmousavi/SSL_Quantization
@@ -41,28 +41,11 @@ token_model_kmeans_dataset: LibriSpeech-100-360-500
 ssl_model_layers: [1, 3, 7, 12, 18, 23]
 token_model_layers: !ref <ssl_model_layers>
 token_offset: 1
-vocoder_src_discrete: !apply:speechbrain.utils.hparams.choice
-    value: !ref <ssl_model_type>
-    choices:
-        wavlm: chaanks/hifigan-wavlm-l1-3-7-12-18-23-k1000-LibriTTS
-        hubert: chaanks/hifigan-hubert-l1-3-7-12-18-23-k1000-LibriTTS
-        wav2vec2: chaanks/hifigan-wav2vec-l1-3-7-12-18-23-k1000-LibriTTS
-vocoder_src_continous: !apply:speechbrain.utils.hparams.choice
-    value: !ref <ssl_model_type>
-    choices:
-        wavlm: chaanks/hifigan-wavlm-l1-3-7-12-18-23-LibriTTS
-        hubert: chaanks/hifigan-hubert-l1-3-7-12-18-23-LibriTTS
-        wav2vec2: chaanks/hifigan-wav2vec-l1-3-7-12-18-23-LibriTTS
-vocoder_src: !apply:speechbrain.utils.hparams.choice
-    value: !ref <representation_mode>
-    choices:
-        discrete: !ref <vocoder_src_discrete>
-        continuous: !ref <vocoder_src_continous>
+
 spk_emb_src: speechbrain/spkrec-ecapa-voxceleb-mel-spec
 use_spk_emb: False
 spk_emb_injection: null
 
-vocoder_available_layers: [1, 3, 7, 12, 18, 23]
 flip_layers: False
 
 splits: ["train", "valid", "test"]
@@ -210,25 +193,6 @@ attention_type: regularMHA
 
 ############################## models ################################
 
-vocoder_discrete: !name:speechbrain.inference.vocoders.HierarchicalUnitWrapper
-    model: !name:speechbrain.inference.vocoders.UnitHIFIGAN.from_hparams
-        source: !ref <vocoder_src>
-        savedir: !ref <vocoder_model_path>
-    available_layers: !ref <vocoder_available_layers>
-    layers: !ref <token_model_layers>
-    num_units: !ref <audio_num_tokens>
-    offset: !ref <token_offset>
-
-vocoder_continuous: !name:speechbrain.inference.vocoders.VocoderWrapper
-    model: !name:speechbrain.inference.vocoders.HIFIGAN.from_hparams
-        source: !ref <vocoder_src>
-        savedir: !ref <vocoder_model_path>
-
-vocoder: !new:speechbrain.lobes.models.huggingface_transformers.vocos.Vocos
-    source: !ref <vocoder_src>
-    save_path: !ref <pretrained_model_save_folder>
-    bandwidth: !ref <bandwidth>
-
 emb:
     spk:
         kind: "pretrained"
@@ -245,6 +209,11 @@ model: !new:speechbrain.lobes.models.discrete.valle.ValleLM # yamllint disable-l
     nar_layer: !ref <num_layers_nar>
     n_ctx: !ref <n_ctx>
     dropout: !ref <dropout>
+
+vocoder: !new:speechbrain.lobes.models.huggingface_transformers.vocos.Vocos
+    source: !ref <vocoder_src>
+    save_path: !ref <pretrained_model_save_folder>
+    bandwidth: !ref <bandwidth>
 
 inference_opts: !name:speechbrain.lobes.models.discrete.valle.SpeechLMInferenceOptions
     start: !ref <bos_index>

@@ -199,6 +199,8 @@ class VALLEBrain(sb.Brain):
                 if self.hparams.flip_layers:
                     audio_tokens = audio_tokens.flip(2)
                 wav = self.vocoder(audio_tokens, audio_length)
+                if isinstance(wav, tuple):
+                    wav = wav[0]
                 wav = wav.squeeze(1)
                 with self.hparams.progress_report:
                     # Save samples
