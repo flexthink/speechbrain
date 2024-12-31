@@ -212,8 +212,8 @@ extract_features_opts:
 # Transformer
 d_model: 256
 nhead: 4
-num_layers_ar: 4
-num_layers_nar: 4
+num_layers_ar: 12
+num_layers_nar: 12
 activation: !name:torch.nn.GELU
 audio_num_tokens: 1000
 audio_dim: 1024
