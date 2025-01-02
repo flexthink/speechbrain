@@ -156,6 +156,7 @@ extract_features_opts:
 ####################### Model parameters ###########################
 # Transformer
 d_model: 256
+share_emb: False
 nhead: 4
 num_layers_ar: 12
 num_layers_nar: 12
@@ -206,6 +207,7 @@ model: !new:speechbrain.lobes.models.discrete.valle.ValleLM # yamllint disable-l
     nar_layer: !ref <num_layers_nar>
     n_ctx: !ref <n_ctx>
     dropout: !ref <dropout>
+    share_emb: !ref <share_emb>
 
 vocoder: !new:speechbrain.lobes.models.huggingface_transformers.vocos.Vocos
     source: !ref <vocoder_src>
