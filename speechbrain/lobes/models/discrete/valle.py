@@ -103,6 +103,7 @@ class ValleLM(nn.Module):
 
         self.nq = nq
         self.residual = residual
+        self._initialize()
 
     def forward(
         self,
@@ -157,6 +158,15 @@ class ValleLM(nn.Module):
         logits_nar = self.lm_head(h_nar)  # [B, T, V]
 
         return logits_ar, logits_nar
+
+    def _initialize(self):
+        for m in self.modules():
+            if isinstance(m, torch.nn.Linear):
+                torch.nn.init.normal_(m.weight, mean=0.0, std=0.02)
+                if m.bias is not None:
+                    torch.nn.init.zeros_(m.bias)
+            elif isinstance(m, torch.nn.Embedding):
+                torch.nn.init.normal_(m.weight, mean=0.0, std=0.02)
 
     def prepare_input(self, dec_seq_emb, prefix_len, level):
         # (1) level mask, [B, 1, nq, 1], True is to include
