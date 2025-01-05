@@ -210,9 +210,9 @@ extract_features_opts:
 
 ####################### Model parameters ###########################
 # Transformer
-d_model: 256
+d_model: 512
 share_emb: False
-nhead: 4
+nhead: 8
 num_layers_ar: 12
 num_layers_nar: 12
 activation: !name:torch.nn.GELU
