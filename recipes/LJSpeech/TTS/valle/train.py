@@ -234,12 +234,22 @@ class VALLEBrain(sb.Brain):
             for prefix_item in prefix_items
         ]
         audio, audio_length = batch_pad_right(inferred_tokens)
-        audio = (audio - hparams["audio_token_shift"]).clip(0)
+        audio = (audio - hparams["audio_token_shift"] - self.offsets).clip(0)
         return audio, audio_length
-    
+
     def _get_inference_opts(self, prefix):
-        mask = torch.zeros(self.hparams.audio_tokens_per_step, self.hparams.vocab_size, device=prefix.device, dtype=bool)
-        mask[:, self.hparams.special_num_tokens:self.hparams.audio_token_shift] = True
+        idx = torch.arange(self.hparams.model_vocab_size, device=self.device)[None, :]
+        tracks = torch.arange(self.hparams.audio_tokens_per_step, device=self.device)[:, None]
+        track_start = (
+            self.hparams.text_num_tokens
+            + self.hparams.special_num_tokens
+            + tracks * self.hparams.audio_num_tokens
+        )
+        track_end = track_start + self.hparams.audio_num_tokens
+        mask = (
+            ((idx >= track_start) & (idx < track_end))
+            | (idx == self.hparams.bos_index)
+        )
         return self.hparams.inference_opts(
             masks=mask
         )
@@ -267,6 +277,10 @@ class VALLEBrain(sb.Brain):
         """
         if hasattr(self.modules.vocoder, "model"):
             self.modules.vocoder.model.device = self.device
+        self.offsets = get_offsets(
+            self.hparams.audio_num_tokens,
+            self.hparams.audio_tokens_per_step,
+        )[None, None, :].to(self.device)
         self.layer_idx = self._get_selected_layer_idx()
         self.nar_stage_generator = torch.Generator()
         self.nar_stage_generator.manual_seed(self.hparams.seed)
@@ -501,6 +515,10 @@ def dataio_prepare(hparams):
     }
     label_encoder = hparams["label_encoder"]
     input_feature = INPUT_FEATURE_MAP[hparams["input"]]
+    offsets = get_offsets(
+        hparams["audio_num_tokens"],
+        hparams["audio_tokens_per_step"]
+    ).unsqueeze(0)
 
     @sb.utils.data_pipeline.takes("label")
     @sb.utils.data_pipeline.provides("label_norm", "label_norm_eval")
@@ -510,7 +528,7 @@ def dataio_prepare(hparams):
         yield label_norm
         label_norm_eval = RE_PUNCTUATION.sub("", label_norm)
         yield label_norm_eval
-        
+
 
     @sb.utils.data_pipeline.takes(input_feature)
     @sb.utils.data_pipeline.provides("tokens")
@@ -538,9 +556,9 @@ def dataio_prepare(hparams):
             [
                 prefix,
                 torch.ones(1, num_tracks) * hparams["bos_index"],
-                audio + hparams["audio_token_shift"],
+                audio + hparams["audio_token_shift"] + offsets,
                 torch.ones(1, num_tracks) * hparams["eos_index"],
-            ]                
+            ]
         ).int()
         yield prompt
         yield len(prefix)
@@ -616,6 +634,19 @@ def dataio_prepare(hparams):
         )
     datasets["sample"] = select_sample(hparams, datasets)
     return datasets
+
+
+def get_offsets(vocab_size, tracks):
+    """Adds offsets to each track to treat the tokens as distinct
+    
+    Arguments
+    ---------
+    vocab_size : int
+        The vocabulary size, for each track
+    tracks : int
+        The number of tracks
+    """
+    return torch.arange(tracks) * vocab_size
 
 
 def select_sample(hparams, datasets):

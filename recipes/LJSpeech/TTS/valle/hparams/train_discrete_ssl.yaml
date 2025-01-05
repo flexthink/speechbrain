@@ -234,6 +234,12 @@ vocab_size: !apply:speechbrain.utils.hparams.choice
         text: !ref <text_num_tokens> + <audio_num_tokens> + <special_num_tokens>
         phonemes: !ref <phn_num_tokens> + <audio_num_tokens> + <special_num_tokens>
 
+model_vocab_size: !apply:speechbrain.utils.hparams.choice
+    value: !ref <input>
+    choices:
+        text: !ref <text_num_tokens> + (<audio_num_tokens> * <audio_tokens_per_step>) + <special_num_tokens>
+        phonemes: !ref <phn_num_tokens> + (<audio_num_tokens> * <audio_tokens_per_step>) + <special_num_tokens>
+
 audio_token_shift: !apply:speechbrain.utils.hparams.choice
     value: !ref <input>
     choices:
@@ -274,7 +280,7 @@ emb:
         injection: !ref <spk_emb_injection>
 
 model: !new:speechbrain.lobes.models.discrete.valle.ValleLM # yamllint disable-line rule:line-length
-    vocab_size: !ref <vocab_size>
+    vocab_size: !ref <model_vocab_size>
     nq: !ref <audio_tokens_per_step>
     att_unit: !ref <d_model>
     head: !ref <nhead>
