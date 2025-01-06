@@ -134,7 +134,6 @@ class VALLEBrain(sb.Brain):
             dim=2,
             index=nar_track[:, None, None].expand(batch_size, max_len, 1)
         )[:, 1:].squeeze(-1)
-
         prompt_max_len = prompt.size(1)
         length_mask = length_to_mask(prompt_length * prompt_max_len, prompt_max_len)
         prefix_mask = length_to_mask(prefix_length, prompt_max_len).logical_not()
@@ -164,7 +163,6 @@ class VALLEBrain(sb.Brain):
             mask=mask,
             reduction="batch",
         )
-
         loss = loss_ar + loss_nar
         return loss
 
@@ -245,11 +243,13 @@ class VALLEBrain(sb.Brain):
             + self.hparams.special_num_tokens
             + tracks * self.hparams.audio_num_tokens
         )
+        if self.hparams.flip_layers:
+            track_start = track_start.flip(0)
         track_end = track_start + self.hparams.audio_num_tokens
         mask = (
             ((idx >= track_start) & (idx < track_end))
             | (idx == self.hparams.bos_index)
-        )
+        ).logical_not()
         return self.hparams.inference_opts(
             masks=mask
         )
@@ -281,6 +281,8 @@ class VALLEBrain(sb.Brain):
             self.hparams.audio_num_tokens,
             self.hparams.audio_tokens_per_step,
         )[None, None, :].to(self.device)
+        if self.hparams.flip_layers:
+            self.offsets = self.offsets.flip(-1)
         self.layer_idx = self._get_selected_layer_idx()
         self.nar_stage_generator = torch.Generator()
         self.nar_stage_generator.manual_seed(self.hparams.seed)
@@ -519,6 +521,8 @@ def dataio_prepare(hparams):
         hparams["audio_num_tokens"],
         hparams["audio_tokens_per_step"]
     ).unsqueeze(0)
+    if hparams["flip_layers"]:
+        offsets = offsets.flip(-1)
 
     @sb.utils.data_pipeline.takes("label")
     @sb.utils.data_pipeline.provides("label_norm", "label_norm_eval")
