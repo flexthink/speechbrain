@@ -99,7 +99,7 @@ special_tokens: ["<bos>", "<eos>", "<eot>"]
 special_num_tokens: 4
 
 # stages related parameters
-lr: 0.002
+lr: 0.001
 betas: [0.9, 0.95]
 lr_warmup_steps: 10000
 lr_annealing_mode: step
@@ -212,6 +212,7 @@ extract_features_opts:
 # Transformer
 d_model: 512
 share_emb: False
+qk_norm: True
 nhead: 8
 num_layers_ar: 12
 num_layers_nar: 12
@@ -289,6 +290,7 @@ model: !new:speechbrain.lobes.models.discrete.valle.ValleLM # yamllint disable-l
     n_ctx: !ref <n_ctx>
     dropout: !ref <dropout>
     share_emb: !ref <share_emb>
+    qk_norm: !ref <qk_norm>
 
 inference_opts: !name:speechbrain.lobes.models.discrete.valle.SpeechLMInferenceOptions
     start: !ref <bos_index>
