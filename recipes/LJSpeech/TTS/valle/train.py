@@ -251,7 +251,7 @@ class VALLEBrain(sb.Brain):
             | (idx == self.hparams.bos_index)
         ).logical_not()
         return self.hparams.inference_opts(
-            masks=mask
+            masks=mask.unsqueeze(-1)
         )
     
     def use_audio_prompt(self, stage, audio):

@@ -26,7 +26,7 @@ from dataclasses import dataclass
 @dataclass
 class SpeechLMInferenceOptions:
     device: str = None
-    search_algo: str = "sampling"
+    search_algo: str = "topk_sampling"
     nbest: int = 1
     sampling_temperature: float = 1.0
     top_k: int = 20
@@ -183,11 +183,12 @@ class ValleLM(nn.Module):
         """
 
         # (1) initialization
-        cache = self.ar_decoder.init({})
+        cache = self.ar_decoder.init()
 
         # (2) auto-regressive prefix forward on first code layer
         prefix = prefix.expand(opts.nbest, -1, -1)
-        suffix = suffix.expand(opts.nbest, -1, -1)
+        if opts.search_algo == "teacher_force":
+            suffix = suffix.expand(opts.nbest, -1, -1)
         prefix_emb = self.emb(prefix).sum(dim=2)  # [B, T, D]
         _ = self.ar_decoder(prefix_emb, kv_cache=cache)
 
@@ -201,7 +202,7 @@ class ValleLM(nn.Module):
             maxlen = suffix.size(1)
         if maxlen + prefix.size(1) > self.n_ctx:
             maxlen = self.n_ctx - prefix.size(1)
-        logging.info(f"maxlen={maxlen}, minlen={minlen}, reflen={suffix.size(1)}")
+        logging.info(f"maxlen={maxlen}, minlen={minlen}")
 
         generated = {"token": [], "score": []}
         finish_idx = torch.Tensor([-1]).expand(opts.nbest).long().to(opts.device)
@@ -270,14 +271,16 @@ class ValleLM(nn.Module):
         valid_idx = finish_idx.ne(-1).nonzero(as_tuple=True)[0]
 
         if len(valid_idx) == 0:
-            self.ar_decoder.reset(cache)
+            self.ar_decoder.reset()
             logging.warning(f"No valid examples. Return None")
             return [], []
         elif len(valid_idx) < prefix.size(0):
             logging.info(f"Only {len(valid_idx)} of {prefix.size(0)} are valid")
 
         finish_idx = finish_idx[valid_idx]
-        prefix_emb, suffix = prefix_emb[valid_idx], suffix[valid_idx]
+        prefix_emb = prefix_emb[valid_idx]
+        if opts.search_algo == "teacher_force":
+            suffix = suffix[valid_idx]
         gen_tokens_ar = torch.cat(generated["token"], dim=1)[valid_idx].unsqueeze(
             2
         )  # [B, T, 1]
@@ -285,7 +288,7 @@ class ValleLM(nn.Module):
         gen_tokens_ar = gen_tokens_ar[:, : finish_idx.max() + 1]  # idx -> count
         gen_scores_ar = gen_scores_ar[:, : finish_idx.max() + 1]
 
-        self.ar_decoder.reset(cache)
+        self.ar_decoder.reset()
 
         # (4) non-auto-regressive loop on the remained code layers
         # (4.1) NAR initialization
@@ -447,6 +450,7 @@ class TransformerDecoder(nn.Module):
         self.ln = LayerNorm(n_state)
 
         self.causal = causal
+        self.kv_cache = None        
 
     def forward(
         self, x: Tensor, mask: torch.Tensor = None, kv_cache: Optional[dict] = None
@@ -462,6 +466,19 @@ class TransformerDecoder(nn.Module):
 
         x = self.ln(x)
         return x
+
+
+
+
+
+    def init(self):
+        self.kv_cache, self.hooks = install_kv_cache_hook(self, self.kv_cache)
+
+    def reset(
+        self,
+    ):
+        for hook in self.hooks:
+            hook.remove()
 
 
 class LayerNorm(nn.LayerNorm):
@@ -708,40 +725,72 @@ def install_kv_cache_hook(model, cache):
 def logits_to_tokens(
     logits: torch.Tensor,
     opts: SpeechLMInferenceOptions,
+    mask: torch.Tensor,
+    search_algo: str = None,
     allow_eos: bool = True,
     nq_level: int = None,
 ):
+    """
+    Select the generated tokens and their scores based on logits prediction.
+
+    logits (torch.Tensor), predicted logits, of size [B, T, nq, V]
+    opts (SpeechLMInferenceOptions): search options
+    mask (torch.Tensor): mask to specify valid tokens, of size [B, 1, nq, V]
+    search_algo (str): search algorithm
+    allow_eos (bool): whether to allow end-of-sentence prediction
+    nq_level (int or None): if not None, only conpute the specified codec level nq.
+
+    """
+
     assert logits.dim() == 4
+    search_algo = search_algo if search_algo is not None else opts.search_algo
+    neg_inf = torch.finfo(logits.dtype).min
 
     # (1) Apply mask
-    mask = opts.masks
-    if allow_eos:  # only predict eos in the first code
-        mask[..., 0, opts.eos] = False
     if nq_level is not None:
-        mask = mask[nq_level : nq_level + 1]
-    mask = mask.unsqueeze(0).unsqueeze(0)
-    logits = logits.masked_fill_(mask, -1e20)
+        mask = mask[:, :, nq_level : nq_level + 1]
+
+    if allow_eos:
+        mask = mask.clone()
+        mask[:, :, 0, opts.eos] = False
+
+    logits.masked_fill_(mask, neg_inf)
 
     # (2) token selection
-    topk_values, topk_indices = torch.topk(logits, opts.top_k, dim=-1)
-
-    if opts.search_algo in ["sampling"]:
-        logp = torch.softmax(topk_values / opts.sampling_temperature, dim=-1)
-        inner_indices = torch.multinomial(logp.flatten(end_dim=-2), num_samples=1).view(
-            logp[..., :1].size()
-        )
+    if search_algo in ["topk_sampling"]:
+        topk_values, topk_indices = torch.topk(logits, opts.top_k, dim=-1)
+        probs = torch.softmax(topk_values / opts.sampling_temperature, dim=-1)
+        inner_indices = torch.multinomial(
+            probs.flatten(end_dim=-2), num_samples=1
+        ).view(probs[..., :1].size())
         gen_token_idx = torch.gather(topk_indices, -1, inner_indices).squeeze(-1)
-        gen_token_score = torch.gather(topk_values, -1, inner_indices).squeeze(-1)
+        gen_token_score = torch.gather(probs, -1, inner_indices).squeeze(-1).log()
 
-    elif opts.search_algo in ["greedy_search", "teacher_force"]:
+    elif search_algo in ["topp_sampling"]:
+        probs = torch.softmax(logits / opts.sampling_temperature, dim=-1)
+        sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+        accum_probs = torch.cumsum(sorted_probs, dim=-1)
+        clip_probs = torch.where(accum_probs <= opts.top_p, sorted_probs, 0.0)
+        # always keep at least one candidate no matter what value it is
+        if torch.any(clip_probs[..., 0] == 0.0):
+            clip_probs[..., 0] = sorted_probs[..., 0]
+        clip_probs = clip_probs / clip_probs.sum(dim=-1, keepdim=True)
+        inner_indices = torch.multinomial(
+            clip_probs.flatten(end_dim=-2), num_samples=1
+        ).view(clip_probs[..., :1].size())
+        gen_token_idx = torch.gather(sorted_indices, -1, inner_indices).squeeze(-1)
+        gen_token_score = torch.gather(clip_probs, -1, inner_indices).squeeze(-1).log()
+
+    elif search_algo in ["greedy_search", "teacher_force"]:
+        probs = logits.softmax(dim=-1)
+        topk_values, topk_indices = torch.topk(logits, 1, dim=-1)
         gen_token_idx = topk_indices[:, :, :, 0]
-        gen_token_score = topk_values[:, :, :, 0]
+        gen_token_score = topk_values[:, :, :, 0].log()
 
     else:
         raise NotImplementedError(f"opts.search_algo={opts.search_algo}")
 
     return gen_token_idx, gen_token_score
-
 
 @torch.no_grad()
 def install_continuous_features(
