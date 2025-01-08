@@ -224,12 +224,16 @@ class VALLEBrain(sb.Brain):
         prefix, prefix_length = batch.prefix
         # NOTE: ESPNET VALL-E does not support batched inference
         prefix_items = undo_padding(prefix.int(), prefix_length)
-        inferred_tokens = [
+        inference_results = [
             self.modules.model.inference(
                 prefix=prefix_item.unsqueeze(0),
                 opts=self._get_inference_opts(prefix)
-            )[0][0]
+            )            
             for prefix_item in prefix_items
+        ]
+        inferred_tokens = [
+            result[0][0] if result[0] else torch.zeros(1000, self.hparams.audio_tokens_per_step)
+            for result in inference_results
         ]
         audio, audio_length = batch_pad_right(inferred_tokens)
         audio = (audio - hparams["audio_token_shift"] - self.offsets).clip(0)
@@ -249,12 +253,12 @@ class VALLEBrain(sb.Brain):
         mask = (
             ((idx >= track_start) & (idx < track_end))
             | (idx == self.hparams.bos_index)
-        ).logical_not()
+        ).logical_not().unsqueeze(1)
         return self.hparams.inference_opts(
-            masks=mask.unsqueeze(-1),
+            masks=mask,
             device=self.device,
         )
-    
+
     def use_audio_prompt(self, stage, audio):
         if not hasattr(self, "audio_prompt"):
             self.audio_prompt = {}

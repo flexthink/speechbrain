@@ -268,8 +268,15 @@ class ValleLM(nn.Module):
         logging.info(f"Terminate at steps: {finish_idx.cpu().tolist()}")
 
         # (3.4) finalize auto-regressive
-        valid_idx = finish_idx.ne(-1).nonzero(as_tuple=True)[0]
-
+        if opts.allow_invalid:
+            valid_idx = torch.arange(len(finish_idx), device=finish_idx.device)
+            finish_idx = torch.where(
+                finish_idx == -1,
+                step,
+                finish_idx
+            )
+        else:
+            valid_idx = finish_idx.ne(-1).nonzero(as_tuple=True)[0]
         if len(valid_idx) == 0:
             self.ar_decoder.reset()
             logging.warning(f"No valid examples. Return None")
@@ -308,6 +315,9 @@ class ValleLM(nn.Module):
 
         mask_cache = [mask_cache[0]] * prefix.size(1) + mask_cache
         vocab_mask = torch.cat(mask_cache, dim=1)
+        vocab_mask_shape = list(vocab_mask.shape)
+        vocab_mask_shape[2] = opts.nq
+        vocab_mask = vocab_mask.expand(vocab_mask_shape)
 
         # (4.2) NAR loop
         for step in range(1, opts.nq):
