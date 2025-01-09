@@ -158,7 +158,7 @@ class ValleLM(nn.Module):
         level_mask = level_mask.unsqueeze(1).unsqueeze(3).expand(dec_seq_emb.size())
 
         # (2) prefix mask, [B, T, 1, 1], True is the prefix
-        prefix_mask = length_to_mask(prefix_len, dec_seq_emb.size(1)).bool()
+        prefix_mask = length_to_mask(prefix_len * dec_seq_emb.size(1), dec_seq_emb.size(1)).bool()
         prefix_mask = prefix_mask.unsqueeze(2).unsqueeze(3).expand(dec_seq_emb.size())
 
         # (3) mask and then sum in nq-axis.
