@@ -488,12 +488,14 @@ class TransformerDecoder(nn.Module):
 
     def init(self):
         self.kv_cache, self.hooks = install_kv_cache_hook(self, self.kv_cache)
+        return self.kv_cache
 
     def reset(
         self,
     ):
         for hook in self.hooks:
             hook.remove()
+        self.kv_cache = None
 
 
 class LayerNorm(nn.LayerNorm):
