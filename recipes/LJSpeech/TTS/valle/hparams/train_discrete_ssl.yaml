@@ -304,7 +304,7 @@ modules:
     vocoder: !ref <vocoder>
 
 # define two optimizers here for two-stage training
-opt_class: !name:torch.optim.Adam
+opt_class: !name:torch.optim.AdamW
     lr: !ref <lr>
     betas: !ref <betas>
 
