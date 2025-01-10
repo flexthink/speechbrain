@@ -108,7 +108,7 @@ lr_annealing_mode: step
 sample_rate: 22050
 model_sample_rate: 16000
 max_audio_length: 1000
-max_length_ratio: 5.0
+max_length_ratio: 10.0
 text_max_length: 500
 n_ctx: !ref <max_audio_length> + <text_max_length>
 infer_max_audio_length: !ref <max_audio_length>
