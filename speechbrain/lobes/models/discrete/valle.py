@@ -37,7 +37,6 @@ class SpeechLMInferenceOptions:
     masks: torch.Tensor = None
     nq: int = None
     allow_invalid: bool = True
-    enable_modality_switch = False
 
 
 class ValleLM(nn.Module):
@@ -208,10 +207,7 @@ class ValleLM(nn.Module):
         generated = {"token": [], "score": []}
         finish_idx = torch.Tensor([-1]).expand(opts.nbest).long().to(opts.device)
         prev_tok = torch.Tensor([opts.start]).tile(opts.nbest, 1).long().to(opts.device)
-        if opts.enable_modality_switch:
-            modality_index = prev_tok.flatten()
-        else:
-            modality_index = torch.tensor([0], device=prev_tok.device)
+        modality_index = prev_tok.flatten()
         mask = modality_index_to_mask(modality_index, opts)
         mask_cache = []
 
@@ -240,19 +236,18 @@ class ValleLM(nn.Module):
 
             # (3.3) detect modality swtich
             mask_cache.append(mask.clone())
-            if opts.enable_modality_switch:
-                modality_change_mask = torch.logical_and(
-                    prev_tok[:, 0] >= 32,
-                    prev_tok[:, 0] < 64,
+            modality_change_mask = torch.logical_and(
+                prev_tok[:, 0] >= 32,
+                prev_tok[:, 0] < 64,
+            )
+            if torch.any(modality_change_mask):
+                modality_index = torch.where(
+                    modality_change_mask,
+                    prev_tok[:, 0],
+                    modality_index,
                 )
-                if torch.any(modality_change_mask):
-                    modality_index = torch.where(
-                        modality_change_mask,
-                        prev_tok[:, 0],
-                        modality_index,
-                    )
-                    mask = modality_index_to_mask(modality_index, opts)
-                    logging.warning(f"Step {step}: change modality index {modality_index}")
+                mask = modality_index_to_mask(modality_index, opts)
+                logging.warning(f"Step {step}: change modality index {modality_index}")
 
             # (3.4) detect ended hypotheses.
             finish_idx = torch.where(
@@ -318,11 +313,8 @@ class ValleLM(nn.Module):
         mask = mask.unsqueeze(1).unsqueeze(1)
         generated = {"token": [], "score": []}
 
-        if opts.enable_modality_switch:
-            mask_cache = [mask_cache[0]] * prefix.size(1) + mask_cache
-            vocab_mask = torch.cat(mask_cache, dim=1)
-        else:
-            vocab_mask = opts.masks.squeeze(1).unsqueeze(0).unsqueeze(0)
+        mask_cache = [mask_cache[0]] * prefix.size(1) + mask_cache
+        vocab_mask = torch.cat(mask_cache, dim=1)
 
         # (4.2) NAR loop
         for step in range(1, opts.nq):

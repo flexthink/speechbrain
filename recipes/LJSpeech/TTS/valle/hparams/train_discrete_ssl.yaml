@@ -101,7 +101,7 @@ special_num_tokens: 4
 # stages related parameters
 lr: 0.001
 betas: [0.9, 0.95]
-lr_warmup_steps: 10000
+lr_warmup_steps: 70000
 lr_annealing_mode: step
 
 # Feature parameters
@@ -210,10 +210,10 @@ extract_features_opts:
 
 ####################### Model parameters ###########################
 # Transformer
-d_model: 512
+d_model: 1024
 share_emb: False
 qk_norm: True
-nhead: 8
+nhead: 16
 num_layers_ar: 12
 num_layers_nar: 12
 activation: !name:torch.nn.GELU

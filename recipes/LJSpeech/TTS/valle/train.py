@@ -125,40 +125,37 @@ class VALLEBrain(sb.Brain):
         prompt, prompt_length = batch.prompt
         prefix_length = batch.prefix_length
 
-        logits_ar = self.hparams.log_softmax(logits_ar)
-        logits_nar = self.hparams.log_softmax(logits_nar)
+        logits_ar_sm = self.hparams.log_softmax(logits_ar)
+        logits_nar_sm = self.hparams.log_softmax(logits_nar)
         batch_size, max_len, _ = prompt.shape
         targets_ar = prompt[:, 1:, 0]
-        targets_nar = torch.gather(
-            prompt,
-            dim=2,
-            index=nar_track[:, None, None].expand(batch_size, max_len, 1)
-        )[:, 1:].squeeze(-1)
+        batch_idx = torch.arange(batch_size, device=prompt.device)
+        targets_nar = prompt[batch_idx, 1:, nar_track]
         prompt_max_len = prompt.size(1)
         length_mask = length_to_mask(prompt_length * prompt_max_len, prompt_max_len)
         prefix_mask = length_to_mask(prefix_length, prompt_max_len).logical_not()
         mask = (length_mask * prefix_mask)[:, 1:]
 
         loss_ar = self.hparams.compute_cost(
-            log_probabilities=logits_ar,
+            log_probabilities=logits_ar_sm,
             targets=targets_ar,
             mask=mask
         )
         self.loss_metric_ar.append(
             ids=batch.uttid,
-            log_probabilities=logits_ar,
+            log_probabilities=logits_ar_sm,
             targets=targets_ar,
             mask=mask,
             reduction="batch",
         )
         loss_nar = self.hparams.compute_cost(
-            log_probabilities=logits_nar,
+            log_probabilities=logits_nar_sm,
             targets=targets_nar,
             mask=mask,
         )
         self.loss_metric_nar.append(
             ids=batch.uttid,
-            log_probabilities=logits_nar,
+            log_probabilities=logits_nar_sm,
             targets=targets_nar,
             mask=mask,
             reduction="batch",
@@ -253,9 +250,11 @@ class VALLEBrain(sb.Brain):
         mask = (
             ((idx >= track_start) & (idx < track_end))
             | (idx == self.hparams.bos_index)
-        ).logical_not().unsqueeze(1)
+        ).logical_not()
         return self.hparams.inference_opts(
-            masks=mask,
+            masks={
+                self.hparams.bos_index: mask
+            },
             device=self.device,
         )
 
