@@ -481,7 +481,7 @@ class S2SWhisperGreedySearcher(S2SGreedySearcher):
         max_length = getattr(decoder_config, "max_length", None)
         if max_length is None:
             max_length = getattr(decoder_config, "max_target_positions", None)
-        self.max_attn_tokens = self.model.model.decoder.config.max_length
+        self.max_attn_tokens = max_length
         self.sample_len = sample_len or self.max_attn_tokens // 2
 
         self.initial_tokens = self._get_initial_tokens()
