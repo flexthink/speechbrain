@@ -233,6 +233,14 @@ def prepare_json(
         tgt_audio = f"{tgt_audio_folder}/{session_id}.mp3.wav"
         src_audio = f"{src_audio_folder}/{session_id}.mp3"
 
+        if not pl.Path(src_audio).exists():
+            logger.warning("%s does not exist", src_audio)
+            continue
+
+        if not pl.Path(tgt_audio).exists():
+            logger.warning("%s does not exist", tgt_audio)
+            continue
+
         src_sig, sr = audio_io.load(src_audio)
         duration = src_sig.shape[1] / sr
 
