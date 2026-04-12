@@ -51,6 +51,7 @@ def prepare_cvss(
     splits=["train", "valid", "test"],
     seed=1234,
     skip_prep=False,
+    ignore_folders=True,
 ):
     """
     Prepares the csv files for the CVSS datasets.
@@ -109,7 +110,7 @@ def prepare_cvss(
     save_json_test = pl.Path(save_folder) / "test.json"
 
     # Check if this phase is already done (if so, skip it)
-    if skip(splits, save_folder, conf):
+    if skip(splits, save_folder, conf, ignore_folders):
         logger.info("Skipping preparation, completed in previous run.")
         return
 
@@ -124,6 +125,8 @@ def prepare_cvss(
             tgt_audio_train,
             src_validated,
             tgt_train,
+            src_data_folder=src_data_folder,
+            tgt_data_folder=tgt_data_folder,
         )
     if "valid" in splits:
         prepare_json(
@@ -132,6 +135,8 @@ def prepare_cvss(
             tgt_audio_valid,
             src_validated,
             tgt_valid,
+            src_data_folder=src_data_folder,
+            tgt_data_folder=tgt_data_folder,            
         )
         prepare_json(
             save_json_valid_small,
@@ -140,6 +145,8 @@ def prepare_cvss(
             src_validated,
             tgt_valid,
             limit_to_n_sample=SMALL_EVAL_SIZE,
+            src_data_folder=src_data_folder,
+            tgt_data_folder=tgt_data_folder,
         )
     if "test" in splits:
         prepare_json(
@@ -148,12 +155,14 @@ def prepare_cvss(
             tgt_audio_test,
             src_validated,
             tgt_test,
+            src_data_folder=src_data_folder,
+            tgt_data_folder=tgt_data_folder,
         )
 
     save_pkl(conf, save_opt)
 
 
-def skip(splits, save_folder, conf):
+def skip(splits, save_folder, conf, ignore_folders=True):
     """
     Detects if the cvss data_preparation has been already done.
     If the preparation has been done, we can skip it.
@@ -192,6 +201,10 @@ def skip(splits, save_folder, conf):
     if skip is True:
         if os.path.isfile(save_opt):
             opts_old = load_pkl(save_opt)
+            if ignore_folders:
+                conf, opts_old = [
+                    _remove_folders(opts) for opts in [conf, opts_old]
+                ]                                    
             if opts_old == conf:
                 skip = True
             else:
@@ -200,6 +213,12 @@ def skip(splits, save_folder, conf):
             skip = False
     return skip
 
+def _remove_folders(conf: dict):
+    return {
+        key: value
+        for key, value in conf.items()
+        if not key.endswith("_folder")
+    }
 
 def prepare_json(
     json_file,
@@ -208,6 +227,8 @@ def prepare_json(
     src_validated,
     tgt_split,
     limit_to_n_sample=None,
+    src_data_folder=None,
+    tgt_data_folder=None,
 ):
     """
     Creates json file.
@@ -249,6 +270,14 @@ def prepare_json(
 
         if duration < 1.5 or len(tgt_text) < 10:
             continue
+        if src_data_folder is not None:
+            src_audio = src_audio.replace(
+                src_data_folder, r"{src_data_root}",
+            )
+        if tgt_audio_folder is not None:
+            tgt_audio = tgt_audio.replace(
+                tgt_data_folder, r"{tgt_data_root}", # type: ignore
+            )
 
         json_dict[session_id] = {
             "src_audio": src_audio,
