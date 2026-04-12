@@ -479,6 +479,10 @@ def dataio_prepare(hparams):
     for split in hparams["splits"]:
         datasets[split] = sb.dataio.dataset.DynamicItemDataset.from_json(
             json_path=hparams[f"{split}_json"],
+            replacements={
+                "src_data_folder": hparams["src_data_folder"],
+                "tgt_data_folder": hparams["tgt_data_folder"],
+            },
             dynamic_items=[
                 src_audio_pipeline,
                 tgt_audio_pipeline,
