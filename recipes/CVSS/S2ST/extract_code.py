@@ -221,6 +221,9 @@ def extract_cvss(
         for key in tqdm(meta_json.keys()):
             item = meta_json[key]
             wav = item["tgt_audio"]
+            wav = wav.format(
+                tgt_data_root=data_folder
+            )
             with torch.no_grad():
                 info = audio_io.info(wav)
                 audio = sb.dataio.dataio.read_audio(wav)
