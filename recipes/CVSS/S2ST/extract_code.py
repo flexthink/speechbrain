@@ -115,6 +115,7 @@ def extract_cvss(
     save_folder,
     sample_rate=16000,
     skip_extract=False,
+    tgt_data_folder=None
 ):
     """
     Extract speech units for HiFi-GAN training on the CVSS datasets.
@@ -156,6 +157,8 @@ def extract_cvss(
     ... )
     """
     logger = setup_logger()
+    if tgt_data_folder is None:
+        tgt_data_folder = data_folder
 
     if skip_extract:
         return
@@ -222,7 +225,7 @@ def extract_cvss(
             item = meta_json[key]
             wav = item["tgt_audio"]
             wav = wav.format(
-                tgt_data_root=data_folder
+                tgt_data_root=tgt_data_folder
             )
             with torch.no_grad():
                 info = audio_io.info(wav)
