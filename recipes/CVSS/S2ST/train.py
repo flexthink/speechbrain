@@ -600,6 +600,7 @@ if __name__ == "__main__":
             "save_folder": hparams["save_folder"],
             "sample_rate": hparams["sample_rate"],
             "skip_extract": hparams["skip_extract"],
+            "tgt_data_folder": hparams["tgt_data_folder"],
         },
     )
 
